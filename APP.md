@@ -63,6 +63,48 @@ if __name__ == "__main__":
 - Each tool needs a `description` for the AI to understand when to use it
 
 ---
+
+## Local Development (Focus Apps)
+
+You can run your MCP server locally on your machine instead of deploying to the device as well. This is great for fast iteration during development.
+
+### 1. Run the server locally
+
+```bash
+cd your-app-directory
+python app.py
+```
+
+You should see:
+```
+Starting MCP server on 0.0.0.0:8000
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+
+### 2. Get your machine's IP
+
+```bash
+# macOS
+ipconfig getifaddr en0
+
+# Linux
+hostname -I | awk '{print $1}'
+```
+
+### 3. Add MCP in TruffleOS Settings
+
+Go to Settings → Add New MCP and enter:
+
+| Field | Value |
+|-------|-------|
+| **Name** | Your App Name |
+| **Server URL** | `192.168.X.X` (your IP from step 2) |
+| **Port** | `8000` |
+| **Path** | `mcp` |
+
+Now you can use your tools immediately without deploying. Changes to your code take effect as soon as you restart `python app.py`.
+
+---
  
 ## Background Apps
 
