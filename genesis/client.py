@@ -170,6 +170,101 @@ class TruffleClient:
                     raise
         raise RuntimeError("upload failed after retries")
 
+    def _load_icon(self, icon: str | Path | bytes | None) -> bytes | None:
+        if icon is None:
+            return None
+        if isinstance(icon, bytes):
+            return icon
+        path = Path(icon).expanduser()
+        if path.exists() and path.is_file():
+            return path.read_bytes()
+        return None
+
+    async def finish_foreground(
+        self,
+        name: str,
+        cmd: str,
+        args: list[str],
+        cwd: str = "/",
+        env: list[str] | None = None,
+        description: str = "",
+        icon: str | Path | bytes | None = None,
+    ) -> FinishBuildSessionResponse:
+        if not self.stub or not self.app_uuid:
+            raise RuntimeError("no active build session")
+        req = FinishBuildSessionRequest()
+        req.app_uuid = self.app_uuid
+        req.discard = False
+        req.foreground.metadata.name = name
+        if description:
+            req.foreground.metadata.description = description
+        icon_data = self._load_icon(icon)
+        if icon_data:
+            req.foreground.metadata.icon.png_data = icon_data
+        req.process.cmd = cmd
+        req.process.args.extend(args)
+        if env:
+            req.process.env.extend(env)
+        req.process.cwd = cwd
+        resp: FinishBuildSessionResponse = await self.stub.Builder_FinishBuildSession(
+            req, metadata=self._metadata
+        )
+        self.app_uuid = None
+        self.access_path = None
+        if resp.HasField("error"):
+            raise RuntimeError(f"finish failed: {resp.error.error} - {resp.error.details}")
+        return resp
+
+    async def finish_background(
+        self,
+        name: str,
+        cmd: str,
+        args: list[str],
+        cwd: str = "/",
+        env: list[str] | None = None,
+        description: str = "",
+        icon: str | Path | bytes | None = None,
+        schedule: str = "interval",
+        interval_seconds: int = 60,
+        daily_start_hour: int | None = None,
+        daily_start_minute: int = 0,
+        daily_end_hour: int | None = None,
+        daily_end_minute: int = 0,
+    ) -> FinishBuildSessionResponse:
+        if not self.stub or not self.app_uuid:
+            raise RuntimeError("no active build session")
+        req = FinishBuildSessionRequest()
+        req.app_uuid = self.app_uuid
+        req.discard = False
+        req.background.metadata.name = name
+        if description:
+            req.background.metadata.description = description
+        icon_data = self._load_icon(icon)
+        if icon_data:
+            req.background.metadata.icon.png_data = icon_data
+        if schedule == "always":
+            req.background.runtime_policy.always.SetInParent()
+        elif schedule == "interval":
+            req.background.runtime_policy.interval.duration.seconds = interval_seconds
+            if daily_start_hour is not None and daily_end_hour is not None:
+                req.background.runtime_policy.interval.schedule.daily_window.daily_start_time.hour = daily_start_hour
+                req.background.runtime_policy.interval.schedule.daily_window.daily_start_time.minute = daily_start_minute
+                req.background.runtime_policy.interval.schedule.daily_window.daily_end_time.hour = daily_end_hour
+                req.background.runtime_policy.interval.schedule.daily_window.daily_end_time.minute = daily_end_minute
+        req.process.cmd = cmd
+        req.process.args.extend(args)
+        if env:
+            req.process.env.extend(env)
+        req.process.cwd = cwd
+        resp: FinishBuildSessionResponse = await self.stub.Builder_FinishBuildSession(
+            req, metadata=self._metadata
+        )
+        self.app_uuid = None
+        self.access_path = None
+        if resp.HasField("error"):
+            raise RuntimeError(f"finish failed: {resp.error.error} - {resp.error.details}")
+        return resp
+
     async def discard(self) -> FinishBuildSessionResponse | None:
         if not self.stub or not self.app_uuid:
             return None

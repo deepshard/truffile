@@ -12,3 +12,15 @@ source .venv/bin/activate
 pip install -e .
 ```
 imports working
+
+
+buid an app using 
+APP.MD
+cli coming soon
+
+
+upload apps
+```bash
+python deploy_test.py ambient ./example-apps/ambient/hedge
+python deploy_test.py focus ./example-apps/ambient/finance
+```
