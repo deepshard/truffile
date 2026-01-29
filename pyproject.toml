@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"
+fallback_version = "0.1.dev0"
+version_file = "genesis/_version.py"
+
+[project]
+name = "genesis"
+dynamic = ["version"]
+description = "Genesis the TruffleOS SDK - Connect and deploy apps to Truffle devices"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "grpcio>=1.60.0",
+    "protobuf>=4.25.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "grpcio-tools>=1.60.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["genesis*", "truffle*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.pyi", "py.typed"]
