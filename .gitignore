@@ -1,3 +1,4 @@
 .venv/
 truffle/
 *.egg-info
+__pycache__/
