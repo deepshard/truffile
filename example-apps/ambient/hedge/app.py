@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger("hedge")
 logger.setLevel(logging.DEBUG)
 
-API_KEY = os.getenv("ALPHAVANTAGE_API_KEY", "JJ3Z7KZVSHIB09WP")
+API_KEY = os.getenv("ALPHAVANTAGE_API_KEY", "go get your key dudes")
 TICKERS = os.getenv("HEDGE_TICKERS", "AAPL,MSFT,GOOGL,IREN").split(",")
 BASE_URL = "https://www.alphavantage.co/query"
 

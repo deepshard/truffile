@@ -5,7 +5,7 @@ from typing import List
 from mcp.server.fastmcp import FastMCP
 from abrasive.extract import extract_content_from_url
 
-PERPLEXITY_KEY = "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"
+PERPLEXITY_KEY = "you thought"
 class PerplexitySearcher:
     def __init__(self, key : str = PERPLEXITY_KEY):
         self.system_prompt = "You provide concise and accurate answers to queries, aim for recent information. This is presented to another LLM which will use it to help a user. Cite sources where possible and format your answer in markdown."

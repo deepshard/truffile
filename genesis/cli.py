@@ -101,12 +101,16 @@ async def cmd_connect(args, storage: StorageService) -> int:
         ip = await resolve_mdns(hostname)
         spinner.stop(success=True)
     except RuntimeError:
-        spinner.fail(f"Could not find {device_name}")
+        spinner.fail(f"Could not resolve {device_name}.local")
         print()
-        print(f"  {C.DIM}Make sure:{C.RESET}")
-        print(f"  {C.DIM}{DOT} {device_name} is powered on{C.RESET}")
-        print(f"  {C.DIM}{DOT} Device is connected to WiFi{C.RESET}")
+        print(f"  {C.DIM}Try running:{C.RESET}")
+        print(f"    {C.CYAN}ping {device_name}.local{C.RESET}")
+        print()
+        print(f"  {C.DIM}If ping fails, check:{C.RESET}")
+        print(f"  {C.DIM}{DOT} Device is powered on and connected to WiFi{C.RESET}")
         print(f"  {C.DIM}{DOT} Your computer is on the same network{C.RESET}")
+        print(f"  {C.DIM}{DOT} mDNS is working{C.RESET}")
+        print()
         return 1
     
     address = f"{ip}:80"
@@ -213,35 +217,35 @@ def check_python_syntax(file_path: Path) -> tuple[bool, str]:
         return False, f"Line {e.lineno}: {e.msg}"
 
 
-def validate_app_dir(app_dir: Path, app_type: str) -> tuple[bool, dict | None, list[str]]:
+def validate_app_dir(app_dir: Path) -> tuple[bool, dict | None, str | None, list[str]]:
+    """Validate app directory and return (valid, config, app_type, warnings)."""
     warnings = []
     
     truffile = app_dir / "truffile.yaml"
     if not truffile.exists():
         error(f"No truffile.yaml found in {app_dir}")
-        return False, None, warnings
+        return False, None, None, warnings
     
     try:
         with open(truffile) as f:
             config = yaml.safe_load(f)
     except yaml.YAMLError as e:
         error(f"Invalid truffile.yaml: {e}")
-        return False, None, warnings
+        return False, None, None, warnings
     
     meta = config.get("metadata", {})
     if not meta.get("name"):
         error("metadata.name is required in truffile.yaml")
-        return False, None, warnings
+        return False, None, None, warnings
     
-    cfg_type = meta.get("type", "")
-    if app_type == "ambient" and cfg_type not in ("background", "ambient", ""):
-        error(f"This is a {cfg_type} app, not an ambient app")
-        print(f"  {C.DIM}Use: genesis deploy focus {app_dir.name}{C.RESET}")
-        return False, None, warnings
-    elif app_type == "focus" and cfg_type not in ("foreground", "focus", ""):
-        error(f"This is a {cfg_type} app, not a focus app")
-        print(f"  {C.DIM}Use: genesis deploy ambient {app_dir.name}{C.RESET}")
-        return False, None, warnings
+    cfg_type = meta.get("type", "").lower()
+    if cfg_type in ("background", "ambient"):
+        app_type = "ambient"
+    elif cfg_type in ("foreground", "focus"):
+        app_type = "focus"
+    else:
+        app_type = "focus"
+        warnings.append(f"No type specified in truffile.yaml, defaulting to focus")
     
     icon_file = meta.get("icon_file")
     if icon_file:
@@ -251,20 +255,26 @@ def validate_app_dir(app_dir: Path, app_type: str) -> tuple[bool, dict | None, l
     else:
         warnings.append("No icon specified in truffile.yaml")
     
+    # Check files - either in steps or top-level files:
+    files_to_check = []
     for step in config.get("steps", []):
         if step.get("type") == "files":
-            for f in step.get("files", []):
-                src = app_dir / f["source"]
-                if not src.exists():
-                    error(f"Source file not found: {src}")
-                    return False, None, warnings
-                if src.suffix == ".py":
-                    ok, err = check_python_syntax(src)
-                    if not ok:
-                        error(f"Syntax error in {src.name}: {err}")
-                        return False, None, warnings
+            files_to_check.extend(step.get("files", []))
+    # Also check top-level files: (simplified format)
+    files_to_check.extend(config.get("files", []))
     
-    return True, config, warnings
+    for f in files_to_check:
+        src = app_dir / f["source"]
+        if not src.exists():
+            error(f"Source file not found: {src}")
+            return False, None, None, warnings
+        if src.suffix == ".py":
+            ok, err = check_python_syntax(src)
+            if not ok:
+                error(f"Syntax error in {src.name}: {err}")
+                return False, None, None, warnings
+    
+    return True, config, app_type, warnings
 
 
 async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_type: str, device: str, interactive : bool = False) -> int:
@@ -291,38 +301,54 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
     spinner.stop(success=True)
     print(f"  {C.DIM}Session: {client.app_uuid}{C.RESET}")
     if not interactive:
+        # Collect all files to upload (from steps or top-level)
+        files_to_upload = []
         for step in config.get("steps", []):
             if step.get("type") == "files":
-                for f in step.get("files", []):
-                    src = app_dir / f["source"]
-                    dest = f["destination"]
-                    spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
-                    spinner.start()
-                    result = await client.upload(src, dest)
-                    spinner.stop(success=True)
-                    print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
-                    
-            elif step.get("type") == "bash":
-                step_name = step.get("name", "bash")
-                info(f"Running: {step_name}")
-                async for ev, data in client.exec_stream(step["run"], cwd=cwd):
-                    if ev == "log":
-                        try:
-                            import json
-                            obj = json.loads(data)
-                            line = obj.get("line", "")
-                        except Exception:
-                            line = data
-                        print(f"  {C.DIM}{line}{C.RESET}")
-                    elif ev == "exit":
-                        try:
-                            import json
-                            code = int(json.loads(data).get("code", 0))
-                            if code != 0:
-                                error(f"Exit code: {code}")
-                                raise RuntimeError(f"Step '{step_name}' failed with exit code {code}")
-                        except (ValueError, KeyError):
-                            pass
+                files_to_upload.extend(step.get("files", []))
+        # Also check top-level files: (simplified format)
+        files_to_upload.extend(config.get("files", []))
+        
+        # Upload all files
+        for f in files_to_upload:
+            src = app_dir / f["source"]
+            dest = f["destination"]
+            spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
+            spinner.start()
+            result = await client.upload(src, dest)
+            spinner.stop(success=True)
+            print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
+        
+        # Collect all bash commands (from steps or top-level run:)
+        bash_commands = []
+        for step in config.get("steps", []):
+            if step.get("type") == "bash":
+                bash_commands.append((step.get("name", "bash"), step["run"]))
+        # Also check top-level run: (simplified format)
+        if config.get("run"):
+            bash_commands.append(("Install dependencies", config["run"]))
+        
+        # Run all bash commands
+        for step_name, run_cmd in bash_commands:
+            info(f"Running: {step_name}")
+            async for ev, data in client.exec_stream(run_cmd, cwd=cwd):
+                if ev == "log":
+                    try:
+                        import json
+                        obj = json.loads(data)
+                        line = obj.get("line", "")
+                    except Exception:
+                        line = data
+                    print(f"  {C.DIM}{line}{C.RESET}")
+                elif ev == "exit":
+                    try:
+                        import json
+                        code = int(json.loads(data).get("code", 0))
+                        if code != 0:
+                            error(f"Exit code: {code}")
+                            raise RuntimeError(f"Step '{step_name}' failed with exit code {code}")
+                    except (ValueError, KeyError):
+                        pass
     else:
         tty_task = asyncio.create_task(_run_ws_term(str(client.http_base or "").replace("http://","ws://").replace("https://","wss://") + "/term"))
         await tty_task
@@ -375,8 +401,8 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
 
 
 async def cmd_deploy(args, storage: StorageService) -> int:
-    app_type = args.type
-    app_dir = Path(args.path).resolve()
+    app_path = args.path if args.path else "."
+    app_dir = Path(app_path).resolve()
     do_cool_ass_terminal_shit = args.interactive == True 
     if do_cool_ass_terminal_shit:
         info("doing cool ahh terminal shi")
@@ -384,9 +410,9 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         error(f"{app_dir} is not a valid directory")
         return 1
     
-    info(f"Validating {app_type} app in {app_dir.name}")
-    valid, config, warnings = validate_app_dir(app_dir, app_type)
-    if not valid:
+    info(f"Validating app in {app_dir.name}")
+    valid, config, app_type, warnings = validate_app_dir(app_dir)
+    if not valid or not app_type:
         return 1
     
     for w in warnings:
@@ -409,8 +435,9 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     try:
         ip = await resolve_mdns(f"{device}.local")
         spinner.stop(success=True)
-    except RuntimeError as e:
-        spinner.fail(str(e))
+    except RuntimeError:
+        spinner.fail(f"Could not resolve {device}.local")
+        print(f"  {C.DIM}Try: ping {device}.local{C.RESET}")
         return 1
     
     address = f"{ip}:80"
@@ -643,12 +670,13 @@ def print_help():
     print(f"{C.BOLD}Commands:{C.RESET}")
     print(f"  {C.BLUE}connect{C.RESET} <device>         Connect to a Truffle device")
     print(f"  {C.BLUE}disconnect{C.RESET} <device|all>  Disconnect and clear credentials")
-    print(f"  {C.BLUE}deploy{C.RESET} <type> <path>     Deploy an app to the device")
+    print(f"  {C.BLUE}deploy{C.RESET} [path]            Deploy an app (reads type from truffile.yaml)")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
     print(f"  {C.DIM}genesis connect truffle-6272{C.RESET}")
-    print(f"  {C.DIM}genesis deploy ambient ./my-app{C.RESET}")
+    print(f"  {C.DIM}genesis deploy ./my-app{C.RESET}")
+    print(f"  {C.DIM}genesis deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
     print(f"  {C.DIM}genesis list apps{C.RESET}")
     print()
 
@@ -672,9 +700,8 @@ def main() -> int:
     p_disconnect.add_argument("target", nargs="?")
 
     p_deploy = subparsers.add_parser("deploy", add_help=False)
-    p_deploy.add_argument("type", choices=["ambient", "focus"], nargs="?")
-    p_deploy.add_argument("path", nargs="?")
-    p_deploy.add_argument("-i", "--interactive", action="store_true",  help="Install dependencies before deploying")
+    p_deploy.add_argument("path", nargs="?", default=".")
+    p_deploy.add_argument("-i", "--interactive", action="store_true", help="Interactive terminal mode")
 
     p_list = subparsers.add_parser("list", add_help=False)
     p_list.add_argument("what", choices=["apps", "devices"], nargs="?")
@@ -694,11 +721,6 @@ def main() -> int:
         if not args.target:
             error("Missing device name")
             print(f"  {C.DIM}Usage: genesis disconnect <device|all>{C.RESET}")
-            return 1
-    elif args.command == "deploy":
-        if not args.type or not args.path:
-            error("Missing arguments")
-            print(f"  {C.DIM}Usage: genesis deploy <ambient|focus> <path>{C.RESET}")
             return 1
     elif args.command == "list":
         if not args.what:

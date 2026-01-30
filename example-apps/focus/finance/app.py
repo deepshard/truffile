@@ -1,7 +1,7 @@
 import requests
 from mcp.server.fastmcp import FastMCP
 
-API_KEY = "JJ3Z7KZVSHIB09WP"
+API_KEY = "nope"
 BASE_URL = "https://www.alphavantage.co/query"
 
 HOST = "0.0.0.0"

