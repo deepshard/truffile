@@ -3,6 +3,8 @@ import asyncio
 import ast
 import signal
 import sys
+import threading
+import time
 from pathlib import Path
 
 import yaml
@@ -11,91 +13,180 @@ from genesis.storage import StorageService
 from genesis.client import TruffleClient, resolve_mdns, NewSessionStatus
 
 
+# ANSI colors
+class C:
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+
+# Icons
+MUSHROOM = "🍄‍🟫"
+CHECK = "✓"
+CROSS = "✗"
+ARROW = "→"
+DOT = "•"
+WARN = "⚠"
+
+
+class Spinner:
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    
+    def __init__(self, message: str):
+        self.message = message
+        self.running = False
+        self.thread = None
+        self.frame_idx = 0
+    
+    def _spin(self):
+        while self.running:
+            frame = self.FRAMES[self.frame_idx % len(self.FRAMES)]
+            sys.stdout.write(f"\r{C.CYAN}{frame}{C.RESET} {self.message}")
+            sys.stdout.flush()
+            self.frame_idx += 1
+            time.sleep(0.08)
+    
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._spin, daemon=True)
+        self.thread.start()
+    
+    def stop(self, success: bool = True):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=0.2)
+        icon = f"{C.GREEN}{CHECK}{C.RESET}" if success else f"{C.RED}{CROSS}{C.RESET}"
+        sys.stdout.write(f"\r{icon} {self.message}\n")
+        sys.stdout.flush()
+    
+    def fail(self, message: str | None = None):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=0.2)
+        msg = message or self.message
+        sys.stdout.write(f"\r{C.RED}{CROSS}{C.RESET} {msg}\n")
+        sys.stdout.flush()
+
+
+def error(msg: str):
+    print(f"{C.RED}{CROSS} Error:{C.RESET} {msg}")
+
+
+def warn(msg: str):
+    print(f"{C.YELLOW}{WARN} Warning:{C.RESET} {msg}")
+
+
+def success(msg: str):
+    print(f"{C.GREEN}{CHECK}{C.RESET} {msg}")
+
+
+def info(msg: str):
+    print(f"{C.CYAN}{DOT}{C.RESET} {msg}")
+
+
 async def cmd_connect(args, storage: StorageService) -> int:
     device_name = args.device
     
-    print(f"Connecting to {device_name}...")
+    spinner = Spinner(f"Resolving {device_name}.local")
+    spinner.start()
     
     hostname = f"{device_name}.local"
     try:
         ip = await resolve_mdns(hostname)
-    except RuntimeError as e:
-        print(f"Could not find device: {e}")
+        spinner.stop(success=True)
+    except RuntimeError:
+        spinner.fail(f"Could not find {device_name}")
         print()
-        print("Make sure:")
-        print(f"  - {device_name} is powered on")
-        print("  - Device is connected to WiFi")
-        print("  - Your computer is on the same network")
+        print(f"  {C.DIM}Make sure:{C.RESET}")
+        print(f"  {C.DIM}{DOT} {device_name} is powered on{C.RESET}")
+        print(f"  {C.DIM}{DOT} Device is connected to WiFi{C.RESET}")
+        print(f"  {C.DIM}{DOT} Your computer is on the same network{C.RESET}")
         return 1
     
     address = f"{ip}:80"
     existing_token = storage.get_token(device_name)
     
     if existing_token:
-        print("Validating existing token...")
+        spinner = Spinner("Validating existing token")
+        spinner.start()
         client = TruffleClient(address, existing_token)
         try:
             await client.connect()
             if await client.check_auth():
+                spinner.stop(success=True)
                 storage.set_last_used(device_name)
-                print(f"Already connected to {device_name}")
+                success(f"Already connected to {C.BOLD}{device_name}{C.RESET}")
                 await client.close()
                 return 0
-            print("Token invalid, re-authenticating...")
+            spinner.fail("Token invalid, re-authenticating")
         except Exception:
-            pass
+            spinner.fail("Token validation failed")
         finally:
             await client.close()
     
     print()
-    print("Make sure you have:")
-    print("  - Onboarded with the Truffle app")
-    print("  - Your User ID from the recovery codes")
+    print(f"  {C.DIM}Make sure you have:{C.RESET}")
+    print(f"  {C.DIM}{DOT} Onboarded with the Truffle app{C.RESET}")
+    print(f"  {C.DIM}{DOT} Your User ID from the recovery codes{C.RESET}")
     print()
     
-    user_id = input("Enter your User ID: ").strip()
+    try:
+        user_id = input(f"{C.CYAN}?{C.RESET} Enter your User ID: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        raise KeyboardInterrupt()
     if not user_id:
-        print("User ID is required")
+        error("User ID is required")
         return 1
+    
+    spinner = Spinner("Connecting to device")
+    spinner.start()
     
     client = TruffleClient(address, token="")
     try:
         await client.connect()
+        spinner.stop(success=True)
     except Exception as e:
-        print(f"Failed to connect to device: {e}")
+        spinner.fail(f"Failed to connect: {e}")
         return 1
     
     print()
-    print("Requesting authorization...")
-    print("Please approve the connection request on your Truffle device")
-    print("(waiting for approval...)")
+    info("Requesting authorization...")
+    print(f"  {C.DIM}Please approve on your Truffle device{C.RESET}")
+    
+    spinner = Spinner("Waiting for approval")
+    spinner.start()
     
     try:
         status, token = await client.register_new_session(user_id)
     except Exception as e:
-        print(f"Failed to register: {e}")
+        spinner.fail(f"Failed to register: {e}")
         await client.close()
         return 1
     
     await client.close()
     
     if status.error == NewSessionStatus.NEW_SESSION_SUCCESS and token:
+        spinner.stop(success=True)
         storage.set_token(device_name, token)
         storage.set_last_used(device_name)
         print()
-        print(f"Connected to {device_name}")
+        success(f"Connected to {C.BOLD}{device_name}{C.RESET}")
         return 0
     elif status.error == NewSessionStatus.NEW_SESSION_TIMEOUT:
-        print()
-        print("Approval timed out. Please try again.")
+        spinner.fail("Approval timed out")
         return 1
     elif status.error == NewSessionStatus.NEW_SESSION_REJECTED:
-        print()
-        print("Request was rejected.")
+        spinner.fail("Request was rejected")
         return 1
     else:
-        print()
-        print(f"Failed to authenticate: {status.error}")
+        spinner.fail(f"Authentication failed: {status.error}")
         return 1
 
 
@@ -103,12 +194,12 @@ def cmd_disconnect(args, storage: StorageService) -> int:
     target = args.target
     if target == "all":
         storage.clear_all()
-        print("All device credentials cleared")
+        success("All device credentials cleared")
     else:
         if storage.remove_device(target):
-            print(f"Disconnected from {target} (credentials cleared)")
+            success(f"Disconnected from {C.BOLD}{target}{C.RESET}")
         else:
-            print(f"No credentials found for {target}")
+            error(f"No credentials found for {target}")
     return 0
 
 
@@ -127,29 +218,29 @@ def validate_app_dir(app_dir: Path, app_type: str) -> tuple[bool, dict | None, l
     
     truffile = app_dir / "truffile.yaml"
     if not truffile.exists():
-        print(f"Error: No truffile.yaml found in {app_dir}")
+        error(f"No truffile.yaml found in {app_dir}")
         return False, None, warnings
     
     try:
         with open(truffile) as f:
             config = yaml.safe_load(f)
     except yaml.YAMLError as e:
-        print(f"Error: Invalid truffile.yaml: {e}")
+        error(f"Invalid truffile.yaml: {e}")
         return False, None, warnings
     
     meta = config.get("metadata", {})
     if not meta.get("name"):
-        print("Error: metadata.name is required in truffile.yaml")
+        error("metadata.name is required in truffile.yaml")
         return False, None, warnings
     
     cfg_type = meta.get("type", "")
     if app_type == "ambient" and cfg_type not in ("background", "ambient", ""):
-        print(f"Error: This is a {cfg_type} app, not an ambient app")
-        print(f"  Use: genesis deploy focus {app_dir.name}")
+        error(f"This is a {cfg_type} app, not an ambient app")
+        print(f"  {C.DIM}Use: genesis deploy focus {app_dir.name}{C.RESET}")
         return False, None, warnings
     elif app_type == "focus" and cfg_type not in ("foreground", "focus", ""):
-        print(f"Error: This is a {cfg_type} app, not a focus app")
-        print(f"  Use: genesis deploy ambient {app_dir.name}")
+        error(f"This is a {cfg_type} app, not a focus app")
+        print(f"  {C.DIM}Use: genesis deploy ambient {app_dir.name}{C.RESET}")
         return False, None, warnings
     
     icon_file = meta.get("icon_file")
@@ -165,12 +256,12 @@ def validate_app_dir(app_dir: Path, app_type: str) -> tuple[bool, dict | None, l
             for f in step.get("files", []):
                 src = app_dir / f["source"]
                 if not src.exists():
-                    print(f"Error: Source file not found: {src}")
+                    error(f"Source file not found: {src}")
                     return False, None, warnings
                 if src.suffix == ".py":
                     ok, err = check_python_syntax(src)
                     if not ok:
-                        print(f"Error: Syntax error in {src.name}: {err}")
+                        error(f"Syntax error in {src.name}: {err}")
                         return False, None, warnings
     
     return True, config, warnings
@@ -188,25 +279,31 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
     icon_file = meta.get("icon_file")
     icon_path = (app_dir / icon_file) if icon_file and (app_dir / icon_file).exists() else None
 
-    print(f"Connecting to {device}...")
+    spinner = Spinner(f"Connecting to {device}")
+    spinner.start()
     await client.connect()
+    spinner.stop(success=True)
     
-    print("Starting build session...")
+    spinner = Spinner("Starting build session")
+    spinner.start()
     await client.start_build()
-    print(f"  Session: {client.app_uuid}")
+    spinner.stop(success=True)
+    print(f"  {C.DIM}Session: {client.app_uuid}{C.RESET}")
     
     for step in config.get("steps", []):
         if step.get("type") == "files":
             for f in step.get("files", []):
                 src = app_dir / f["source"]
                 dest = f["destination"]
-                print(f"Uploading {src.name} -> {dest}")
+                spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
+                spinner.start()
                 result = await client.upload(src, dest)
-                print(f"  {result.bytes} bytes, sha256={result.sha256[:12]}...")
+                spinner.stop(success=True)
+                print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
                 
         elif step.get("type") == "bash":
             step_name = step.get("name", "bash")
-            print(f"Running: {step_name}")
+            info(f"Running: {step_name}")
             async for ev, data in client.exec_stream(step["run"], cwd=cwd):
                 if ev == "log":
                     try:
@@ -215,18 +312,19 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
                         line = obj.get("line", "")
                     except Exception:
                         line = data
-                    print(f"  {line}")
+                    print(f"  {C.DIM}{line}{C.RESET}")
                 elif ev == "exit":
                     try:
                         import json
                         code = int(json.loads(data).get("code", 0))
                         if code != 0:
-                            print(f"  Exit code: {code}")
+                            error(f"Exit code: {code}")
                             raise RuntimeError(f"Step '{step_name}' failed with exit code {code}")
                     except (ValueError, KeyError):
                         pass
     
-    print(f"Finishing as {app_type} app...")
+    spinner = Spinner(f"Finishing as {app_type} app")
+    spinner.start()
     
     cmd = cmd_list[0] if cmd_list[0].startswith("/") else f"/usr/bin/{cmd_list[0]}"
     
@@ -267,8 +365,9 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
             interval_seconds=interval_seconds,
         )
     
+    spinner.stop(success=True)
     print()
-    print(f"Deployed: {name} ({app_type})")
+    success(f"Deployed: {C.BOLD}{name}{C.RESET} ({app_type})")
     return 0
 
 
@@ -277,32 +376,36 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     app_dir = Path(args.path).resolve()
     
     if not app_dir.exists() or not app_dir.is_dir():
-        print(f"Error: {app_dir} is not a valid directory")
+        error(f"{app_dir} is not a valid directory")
         return 1
     
-    print(f"Validating {app_type} app in {app_dir}...")
+    info(f"Validating {app_type} app in {app_dir.name}")
     valid, config, warnings = validate_app_dir(app_dir, app_type)
     if not valid:
         return 1
     
     for w in warnings:
-        print(f"Warning: {w}")
+        warn(w)
     
     device = storage.state.last_used_device
     if not device:
-        print("Error: No device connected. Run 'genesis connect <device>' first.")
+        error("No device connected")
+        print(f"  {C.DIM}Run: genesis connect <device>{C.RESET}")
         return 1
     
     token = storage.get_token(device)
     if not token:
-        print(f"Error: No token for {device}. Run 'genesis connect {device}' first.")
+        error(f"No token for {device}")
+        print(f"  {C.DIM}Run: genesis connect {device}{C.RESET}")
         return 1
     
-    print(f"Resolving {device}...")
+    spinner = Spinner(f"Resolving {device}")
+    spinner.start()
     try:
         ip = await resolve_mdns(f"{device}.local")
+        spinner.stop(success=True)
     except RuntimeError as e:
-        print(f"Error: {e}")
+        spinner.fail(str(e))
         return 1
     
     address = f"{ip}:80"
@@ -322,85 +425,211 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         deploy_task = asyncio.create_task(_do_deploy(client, config, app_dir, app_type, device))
         return await deploy_task
     except asyncio.CancelledError:
-        print("Discarding build session...")
+        print()
+        spinner = Spinner("Discarding build session")
+        spinner.start()
         if client.app_uuid:
             try:
                 await client.discard()
-                print("Session discarded.")
+                spinner.stop(success=True)
             except Exception:
-                pass
+                spinner.fail("Failed to discard")
         return 130
     except Exception as e:
-        print(f"Error: {e}")
+        error(str(e))
         if client.app_uuid:
-            print("Discarding build session...")
+            spinner = Spinner("Discarding build session")
+            spinner.start()
             try:
                 await client.discard()
+                spinner.stop(success=True)
             except Exception:
-                pass
+                spinner.fail("Failed to discard")
         return 1
     finally:
         loop.remove_signal_handler(signal.SIGINT)
         await client.close()
 
 
+async def cmd_list_apps(storage: StorageService) -> int:
+    device = storage.state.last_used_device
+    if not device:
+        error("No device connected")
+        print(f"  {C.DIM}Run: genesis connect <device>{C.RESET}")
+        return 1
+    
+    token = storage.get_token(device)
+    if not token:
+        error(f"No token for {device}")
+        print(f"  {C.DIM}Run: genesis connect {device}{C.RESET}")
+        return 1
+    
+    spinner = Spinner(f"Connecting to {device}")
+    spinner.start()
+    
+    try:
+        ip = await resolve_mdns(f"{device}.local")
+    except RuntimeError as e:
+        spinner.fail(str(e))
+        return 1
+    
+    address = f"{ip}:80"
+    client = TruffleClient(address, token=token)
+    
+    try:
+        await client.connect()
+        foreground, background = await client.get_all_apps()
+        spinner.stop(success=True)
+        
+        if not foreground and not background:
+            print(f"  {C.DIM}No apps installed{C.RESET}")
+            return 0
+        
+        print()
+        if foreground:
+            print(f"{C.BOLD}Focus Apps{C.RESET}")
+            for app in foreground:
+                print(f"  {C.CYAN}{DOT}{C.RESET} {app.metadata.name}")
+                if app.metadata.description:
+                    desc = app.metadata.description.strip().split('\n')[0][:55]
+                    print(f"    {C.DIM}{desc}{C.RESET}")
+        
+        if background:
+            if foreground:
+                print()
+            print(f"{C.BOLD}Ambient Apps{C.RESET}")
+            for app in background:
+                schedule = ""
+                if app.runtime_policy.HasField("interval"):
+                    secs = app.runtime_policy.interval.duration.seconds
+                    if secs >= 3600:
+                        schedule = f"every {secs // 3600}h"
+                    elif secs >= 60:
+                        schedule = f"every {secs // 60}m"
+                    else:
+                        schedule = f"every {secs}s"
+                elif app.runtime_policy.HasField("always"):
+                    schedule = "always"
+                print(f"  {C.CYAN}{DOT}{C.RESET} {app.metadata.name} {C.DIM}({schedule}){C.RESET}")
+                if app.metadata.description:
+                    desc = app.metadata.description.strip().split('\n')[0][:55]
+                    print(f"    {C.DIM}{desc}{C.RESET}")
+        
+        print()
+        print(f"{C.DIM}Total: {len(foreground)} focus, {len(background)} ambient{C.RESET}")
+        return 0
+        
+    except Exception as e:
+        spinner.fail(str(e))
+        return 1
+    finally:
+        await client.close()
+
+
+def run_async(coro):
+    try:
+        return asyncio.run(coro)
+    except KeyboardInterrupt:
+        print(f"\r{C.RED}{CROSS} Cancelled{C.RESET}        ")
+        return 130
+
+
 def cmd_list(args, storage: StorageService) -> int:
     what = args.what
     if what == "apps":
-        print("list apps")
-        print("(not implemented yet)")
+        return run_async(cmd_list_apps(storage))
     elif what == "devices":
         devices = storage.list_devices()
         if not devices:
-            print("No connected devices")
+            print(f"  {C.DIM}No connected devices{C.RESET}")
         else:
-            print("Connected devices:")
+            print(f"{C.BOLD}Connected Devices{C.RESET}")
             for d in devices:
-                marker = " (last used)" if d == storage.state.last_used_device else ""
-                print(f"  {d}{marker}")
+                if d == storage.state.last_used_device:
+                    print(f"  {C.GREEN}{DOT}{C.RESET} {d} {C.DIM}(active){C.RESET}")
+                else:
+                    print(f"  {C.CYAN}{DOT}{C.RESET} {d}")
     return 0
 
 
+def print_help():
+    print(f"{MUSHROOM} {C.BOLD}Genesis{C.RESET} - TruffleOS SDK")
+    print()
+    print(f"{C.BOLD}Usage:{C.RESET} genesis <command> [options]")
+    print()
+    print(f"{C.BOLD}Commands:{C.RESET}")
+    print(f"  {C.BLUE}connect{C.RESET} <device>         Connect to a Truffle device")
+    print(f"  {C.BLUE}disconnect{C.RESET} <device|all>  Disconnect and clear credentials")
+    print(f"  {C.BLUE}deploy{C.RESET} <type> <path>     Deploy an app to the device")
+    print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
+    print()
+    print(f"{C.BOLD}Examples:{C.RESET}")
+    print(f"  {C.DIM}genesis connect truffle-6272{C.RESET}")
+    print(f"  {C.DIM}genesis deploy ambient ./my-app{C.RESET}")
+    print(f"  {C.DIM}genesis list apps{C.RESET}")
+    print()
+
+
 def main() -> int:
+    if len(sys.argv) == 1 or sys.argv[1] in ("-h", "--help"):
+        print_help()
+        return 0
+    
     parser = argparse.ArgumentParser(
         prog="genesis",
         description="Genesis - TruffleOS SDK CLI",
+        add_help=False,
     )
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    subparsers = parser.add_subparsers(dest="command")
 
-    p_connect = subparsers.add_parser("connect", help="Connect to a Truffle device")
-    p_connect.add_argument("device", help="Device name (e.g. truffle-6272)")
+    p_connect = subparsers.add_parser("connect", add_help=False)
+    p_connect.add_argument("device", nargs="?")
 
-    p_disconnect = subparsers.add_parser("disconnect", help="Disconnect from a device")
-    p_disconnect.add_argument(
-        "target", help="Device name or 'all' to clear all credentials"
-    )
+    p_disconnect = subparsers.add_parser("disconnect", add_help=False)
+    p_disconnect.add_argument("target", nargs="?")
 
-    p_deploy = subparsers.add_parser("deploy", help="Deploy an app to the device")
-    p_deploy.add_argument(
-        "type", choices=["ambient", "focus"], help="App type (ambient or focus)"
-    )
-    p_deploy.add_argument("path", help="Path to app directory")
+    p_deploy = subparsers.add_parser("deploy", add_help=False)
+    p_deploy.add_argument("type", choices=["ambient", "focus"], nargs="?")
+    p_deploy.add_argument("path", nargs="?")
 
-    p_list = subparsers.add_parser("list", help="List apps or devices")
-    p_list.add_argument(
-        "what", choices=["apps", "devices"], help="What to list (apps or devices)"
-    )
+    p_list = subparsers.add_parser("list", add_help=False)
+    p_list.add_argument("what", choices=["apps", "devices"], nargs="?")
 
     args = parser.parse_args()
 
     if args.command is None:
-        parser.print_help()
+        print_help()
         return 0
+    
+    if args.command == "connect":
+        if not args.device:
+            error("Missing device name")
+            print(f"  {C.DIM}Usage: genesis connect <device>{C.RESET}")
+            return 1
+    elif args.command == "disconnect":
+        if not args.target:
+            error("Missing device name")
+            print(f"  {C.DIM}Usage: genesis disconnect <device|all>{C.RESET}")
+            return 1
+    elif args.command == "deploy":
+        if not args.type or not args.path:
+            error("Missing arguments")
+            print(f"  {C.DIM}Usage: genesis deploy <ambient|focus> <path>{C.RESET}")
+            return 1
+    elif args.command == "list":
+        if not args.what:
+            error("Missing argument")
+            print(f"  {C.DIM}Usage: genesis list <apps|devices>{C.RESET}")
+            return 1
 
     storage = StorageService()
 
     if args.command == "connect":
-        return asyncio.run(cmd_connect(args, storage))
+        return run_async(cmd_connect(args, storage))
     elif args.command == "disconnect":
         return cmd_disconnect(args, storage)
     elif args.command == "deploy":
-        return asyncio.run(cmd_deploy(args, storage))
+        return run_async(cmd_deploy(args, storage))
     elif args.command == "list":
         return cmd_list(args, storage)
 

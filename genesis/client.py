@@ -22,7 +22,10 @@ from truffle.os.client_session_pb2 import (
     NewSessionStatus,
 )
 from truffle.os.client_metadata_pb2 import ClientMetadata
+from truffle.os.app_queries_pb2 import GetAllAppsRequest, GetAllAppsResponse
 from truffle.app.app_type_pb2 import AppType
+from truffle.app.foreground_pb2 import ForegroundApp
+from truffle.app.background_pb2 import BackgroundApp
 
 
 def get_client_metadata() -> ClientMetadata:
@@ -108,6 +111,13 @@ class TruffleClient:
             self.token = resp.token
             return resp.status, resp.token
         return resp.status, None
+
+    async def get_all_apps(self) -> tuple[list[ForegroundApp], list[BackgroundApp]]:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = GetAllAppsRequest()
+        resp: GetAllAppsResponse = await self.stub.Apps_GetAll(req, metadata=self._metadata)
+        return list(resp.foreground_apps), list(resp.background_apps)
 
     async def start_build(self, app_type: AppType = AppType.APP_TYPE_BACKGROUND) -> StartBuildSessionResponse:
         if not self.stub:
