@@ -1,0 +1,70 @@
+metadata:
+  name: Front Page of the Internet
+  type: background
+  description: |
+    Have your Truffle¹ browse Reddit and post relevant content to your feed.
+  process:
+    cmd:
+      - python
+      - /opt/reddit.py
+    working_directory: /
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+  icon_file: ./icon.png
+  default_schedule:
+    type: interval
+    interval: 
+      duration: 15m
+      schedule:
+      daily_window: "01:00-22:30"     
+steps:
+  - name: Reddit Setup
+    type: welcome
+    content: |
+      The Reddit app will allow your Truffle to post relevant content from Reddit on your feed.
+      You can customize which subreddits to follow in the configuration step.
+      Please use this app in accordance with Reddit's terms of service.
+  - name: Install dependencies
+    type: bash
+    run: |
+      pip install --no-cache-dir --force-reinstall requests feedparser trafilatura==2.0.0 tld==0.13.1 
+  - name: Copy application files
+    type: files
+    files:
+      - source: ./reddit.py
+        destination: ./opt/reddit.py
+  - name: Configure Reddit
+    type: text
+    content: |
+      Please provide either a comma separated list of subreddits to follow, or leave blank to follow r/all.
+      Example: news, worldnews, technology, science, funny, pics, videos, gaming
+      Alternatively, [copy the URL of your personal frontpage RSS feed (JSON) from here](https://old.reddit.com/prefs/feeds/)
+      If a personal feed URL is provided, that will be used instead of the subreddit list if the URL is valid.
+    fields:
+      - name: subreddits
+        label: Comma Separated Subreddits
+        type: text 
+        placeholder: news, worldnews, technology, LosAngeles  
+        default: all
+        env: SUBREDDITS
+      - name: user_feed_url
+        label: Optional - Personal Frontpage RSS Feed URL (JSON)
+        type: text
+        placeholder: 
+        default:
+        env: USER_FEED_URL
+    validator:
+      type: bash 
+      run: |
+        python /opt/reddit.py --verify
+      timeout: 60 
+      error_message: | 
+        Was unable to scrape Reddit with the provided configuration.
+        Please ensure the subreddit names are valid or the feed URL is correct.
+      
+  
+
+
+
+  

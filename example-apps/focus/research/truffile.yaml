@@ -1,0 +1,39 @@
+metadata:
+  name: Research
+  type: foreground
+  description: |
+    Tools to help your Truffle¹ research and gather information from the web.
+  process:
+    cmd:
+      - python
+      - research.py
+    working_directory: /
+    environment:
+      PYTHONUNBUFFERED: "1"
+  icon_file: ./icon.png
+steps:
+  - name: Welcome
+    type: welcome
+    content: |
+      This app provides tools to help your Truffle research and gather information from the web.
+      It includes web search, scraping and data extraction capabilities to assist in your research tasks.
+      Installation will set up the necessary dependencies and files, and may take a moment.
+  - name: Copy application files
+    type: files
+    files:
+      - source: ./research.py
+        destination: ./research.py
+  - name: Install dependencies
+    type: bash
+    run: |
+      pip install --no-cache-dir -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ 'gourmet[abrasive]==0.1.dev45'
+      pip install --no-cache-dir --force-reinstall requests trafilatura==2.0.0 tld==0.13.1
+      pip install --no-cache-dir mcp ddgs 
+
+ 
+
+  
+
+
+
+  

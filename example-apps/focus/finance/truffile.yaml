@@ -1,0 +1,20 @@
+metadata:
+  name: Finance
+  type: foreground
+  description: |
+    Financial data analyst tools for your Truffle. Get stock prices, company info, 
+    market news, crypto rates, and economic indicators powered by Alpha Vantage.
+  process:
+    cmd:
+      - python
+      - app.py
+    working_directory: /
+    environment:
+      PYTHONUNBUFFERED: "1"
+  icon_file: ./icon.png
+files:
+  - source: ./app.py
+    destination: ./app.py
+run: |
+  pip install --no-cache-dir mcp requests
+  

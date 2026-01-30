@@ -1,0 +1,76 @@
+metadata:
+  name: Twitter App
+  type: background
+  process:
+    cmd:
+      - python
+      - app.py
+    working_directory: /
+    environment:
+      PYTHONUNBUFFERED: "1"
+  icon_file: ./icon.png
+  default_schedule:
+    type: interval
+    interval: 
+      duration: 1h
+      schedule:
+      daily_window: "09:00-17:30"      # optional
+      allowed_days: [mon, tue, wed, thu, fri]   # optional, default = all days
+steps:
+  - name: Copy application files
+    type: files
+    files:
+      - source: ./requirements.txt 
+        destination: ./requirements.txt
+      - source: ./app.py
+        destination: ./app.py
+      - source: ./config.yaml
+        destination: ./config.yaml
+        permissions: 600 # optional
+  - name: Install dependencies
+    type: bash
+    run: |
+      pip install requests
+      apk add --no-cache btop
+  - name: Sign into X
+    type: vnc 
+    cmd:
+      - python
+      - app.py
+      - --install
+    closes_on_complete: true
+    description: |
+      A VNC window will open. Please sign into your X account to continue the installation.
+  - name: Configure Email Account
+    type: text
+    content: |
+      Please provide an IMAP server, email address, and password to configure your email account.
+    fields:
+      - name: imap_server
+        label: IMAP Server
+        type: text # one of: text, password, number
+        placeholder: imap.example.com #optional
+        default: imap.gmail.com #optional
+        env: IMAP_SERVER 
+      - name: email_address
+        label: Email Address
+        type: text
+        env: EMAIL_ADDRESS
+        placeholder: dude@wheresmycar.com
+      - name: password
+        label: Password
+        type: password
+        env: EMAIL_PASSWORD
+    validator: 
+      cmd:
+        - python
+        - validate_email.py
+      args:
+        - ${inputs.imap_server}
+        - ${inputs.email_address}
+        - ${inputs.password}
+  
+
+
+
+  
