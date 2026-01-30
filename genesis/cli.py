@@ -267,7 +267,7 @@ def validate_app_dir(app_dir: Path, app_type: str) -> tuple[bool, dict | None, l
     return True, config, warnings
 
 
-async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_type: str, device: str) -> int:
+async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_type: str, device: str, interactive : bool = False) -> int:
     meta = config["metadata"]
     name = meta["name"]
     description = meta.get("description", "")
@@ -287,42 +287,45 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
     spinner = Spinner("Starting build session")
     spinner.start()
     await client.start_build()
+    await asyncio.sleep(5)
     spinner.stop(success=True)
     print(f"  {C.DIM}Session: {client.app_uuid}{C.RESET}")
-    
-    for step in config.get("steps", []):
-        if step.get("type") == "files":
-            for f in step.get("files", []):
-                src = app_dir / f["source"]
-                dest = f["destination"]
-                spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
-                spinner.start()
-                result = await client.upload(src, dest)
-                spinner.stop(success=True)
-                print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
-                
-        elif step.get("type") == "bash":
-            step_name = step.get("name", "bash")
-            info(f"Running: {step_name}")
-            async for ev, data in client.exec_stream(step["run"], cwd=cwd):
-                if ev == "log":
-                    try:
-                        import json
-                        obj = json.loads(data)
-                        line = obj.get("line", "")
-                    except Exception:
-                        line = data
-                    print(f"  {C.DIM}{line}{C.RESET}")
-                elif ev == "exit":
-                    try:
-                        import json
-                        code = int(json.loads(data).get("code", 0))
-                        if code != 0:
-                            error(f"Exit code: {code}")
-                            raise RuntimeError(f"Step '{step_name}' failed with exit code {code}")
-                    except (ValueError, KeyError):
-                        pass
-    
+    if not interactive:
+        for step in config.get("steps", []):
+            if step.get("type") == "files":
+                for f in step.get("files", []):
+                    src = app_dir / f["source"]
+                    dest = f["destination"]
+                    spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
+                    spinner.start()
+                    result = await client.upload(src, dest)
+                    spinner.stop(success=True)
+                    print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
+                    
+            elif step.get("type") == "bash":
+                step_name = step.get("name", "bash")
+                info(f"Running: {step_name}")
+                async for ev, data in client.exec_stream(step["run"], cwd=cwd):
+                    if ev == "log":
+                        try:
+                            import json
+                            obj = json.loads(data)
+                            line = obj.get("line", "")
+                        except Exception:
+                            line = data
+                        print(f"  {C.DIM}{line}{C.RESET}")
+                    elif ev == "exit":
+                        try:
+                            import json
+                            code = int(json.loads(data).get("code", 0))
+                            if code != 0:
+                                error(f"Exit code: {code}")
+                                raise RuntimeError(f"Step '{step_name}' failed with exit code {code}")
+                        except (ValueError, KeyError):
+                            pass
+    else:
+        tty_task = asyncio.create_task(_run_ws_term(str(client.http_base or "").replace("http://","ws://").replace("https://","wss://") + "/term"))
+        await tty_task
     spinner = Spinner(f"Finishing as {app_type} app")
     spinner.start()
     
@@ -374,7 +377,9 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
 async def cmd_deploy(args, storage: StorageService) -> int:
     app_type = args.type
     app_dir = Path(args.path).resolve()
-    
+    do_cool_ass_terminal_shit = args.interactive == True 
+    if do_cool_ass_terminal_shit:
+        info("doing cool ahh terminal shi")
     if not app_dir.exists() or not app_dir.is_dir():
         error(f"{app_dir} is not a valid directory")
         return 1
@@ -422,8 +427,8 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     loop.add_signal_handler(signal.SIGINT, handle_sigint)
     
     try:
-        deploy_task = asyncio.create_task(_do_deploy(client, config, app_dir, app_type, device))
-        return await deploy_task
+        deploy_task = asyncio.create_task(_do_deploy(client, config, app_dir, app_type, device, do_cool_ass_terminal_shit)) 
+        return await deploy_task 
     except asyncio.CancelledError:
         print()
         spinner = Spinner("Discarding build session")
@@ -490,7 +495,8 @@ async def cmd_list_apps(storage: StorageService) -> int:
             print(f"{C.BOLD}Focus Apps{C.RESET}")
             for app in foreground:
                 print(f"  {C.CYAN}{DOT}{C.RESET} {app.metadata.name}")
-                if app.metadata.description:
+                setattr(app.metadata, "description", getattr(app.metadata, "description", ""))
+                if hasattr(app.metadata, "description") and app.metadata.description:
                     desc = app.metadata.description.strip().split('\n')[0][:55]
                     print(f"    {C.DIM}{desc}{C.RESET}")
         
@@ -511,7 +517,8 @@ async def cmd_list_apps(storage: StorageService) -> int:
                 elif app.runtime_policy.HasField("always"):
                     schedule = "always"
                 print(f"  {C.CYAN}{DOT}{C.RESET} {app.metadata.name} {C.DIM}({schedule}){C.RESET}")
-                if app.metadata.description:
+                setattr(app.metadata, "description", getattr(app.metadata, "description", ""))
+                if hasattr(app.metadata, "description") and app.metadata.description:
                     desc = app.metadata.description.strip().split('\n')[0][:55]
                     print(f"    {C.DIM}{desc}{C.RESET}")
         
@@ -525,6 +532,82 @@ async def cmd_list_apps(storage: StorageService) -> int:
     finally:
         await client.close()
 
+async def _run_ws_term(ws_url: str) -> int:
+        print(f"{C.DIM}Starting interactive terminal session {ws_url}...{C.RESET}")
+        import os, termios, fcntl, struct, tty, contextlib, json
+        try:
+            import websockets
+            from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
+        except Exception:
+            print(f"{C.RED}{CROSS} Error:{C.RESET} websockets package is required for terminal mode")
+            return 67
+
+        def _winsz():
+            try:
+                h, w, _, _ = struct.unpack("HHHH", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0"*8))
+                return w, h
+            except Exception:
+                return 80, 24
+
+        class Raw:
+            def __enter__(self):
+                self.fd = sys.stdin.fileno()
+                self.old = termios.tcgetattr(self.fd)
+                tty.setraw(self.fd); return self
+            def __exit__(self, *a):
+                termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
+
+        async def run_once():
+            async with websockets.connect(ws_url, max_size=None, ping_interval=30) as ws:
+                cols, rows = _winsz()
+                await ws.send(json.dumps({"resize":[cols, rows]}))
+
+                loop = asyncio.get_running_loop()
+                q: asyncio.Queue[bytes] = asyncio.Queue()
+                stop = asyncio.Event()
+
+                def on_stdin():
+                    try:
+                        data = os.read(sys.stdin.fileno(), 4096)
+                        if data: q.put_nowait(data)
+                    except BlockingIOError:
+                        pass
+                loop.add_reader(sys.stdin.fileno(), on_stdin)
+
+                async def pump_in():
+                    try:
+                        while not stop.is_set():
+                            data = await q.get()
+                            try: await ws.send(data)
+                            except (ConnectionClosed, ConnectionClosedOK): break
+                    finally:
+                        stop.set()
+                async def pump_out():
+                    try:
+                        async for msg in ws:
+                            if isinstance(msg, bytes):
+                                os.write(sys.stdout.fileno(), msg)
+                            else:
+                                os.write(sys.stdout.fileno(), msg.encode()) # type: ignore
+                    except (ConnectionClosed, ConnectionClosedOK):
+                        pass
+                    finally:
+                        stop.set()
+
+                with Raw():
+                    t_in = asyncio.create_task(pump_in())
+                    t_out = asyncio.create_task(pump_out())
+                    try:
+                        await asyncio.wait({t_in, t_out}, return_when=asyncio.FIRST_COMPLETED)
+                    finally:
+                        stop.set(); t_in.cancel(); t_out.cancel()
+                        with contextlib.suppress(Exception):
+                            await asyncio.gather(t_in, t_out, return_exceptions=True)
+                        loop.remove_reader(sys.stdin.fileno())
+
+
+        await run_once()
+        return 67
 
 def run_async(coro):
     try:
@@ -591,6 +674,7 @@ def main() -> int:
     p_deploy = subparsers.add_parser("deploy", add_help=False)
     p_deploy.add_argument("type", choices=["ambient", "focus"], nargs="?")
     p_deploy.add_argument("path", nargs="?")
+    p_deploy.add_argument("-i", "--interactive", action="store_true",  help="Install dependencies before deploying")
 
     p_list = subparsers.add_parser("list", add_help=False)
     p_list.add_argument("what", choices=["apps", "devices"], nargs="?")

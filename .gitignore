@@ -2,3 +2,6 @@
 truffle/
 *.egg-info
 __pycache__/
+ggggg*
+.DS_Store
+dist

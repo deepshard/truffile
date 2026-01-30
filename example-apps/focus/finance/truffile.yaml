@@ -12,27 +12,9 @@ metadata:
     environment:
       PYTHONUNBUFFERED: "1"
   icon_file: ./icon.png
-steps:
-  - name: Welcome
-    type: welcome
-    content: |
-      Finance provides tools for real-time market data and financial analysis.
-      
-      Available tools:
-      - get_stock_price: Current price for any ticker
-      - get_stock_history: Historical daily prices
-      - get_company_overview: Company profile and metrics
-      - search_ticker: Find ticker symbols
-      - get_market_news: Latest news with sentiment
-      - get_top_movers: Gainers, losers, most active
-      - get_crypto_price: Cryptocurrency rates
-      - get_economic_indicator: GDP, CPI, unemployment, etc.
-  - name: Copy application files
-    type: files
-    files:
-      - source: ./app.py
-        destination: ./app.py
-  - name: Install dependencies
-    type: bash
-    run: |
-      pip install --no-cache-dir mcp requests
+files:
+  - source: ./app.py
+    destination: ./app.py
+run: |
+  pip install --no-cache-dir mcp requests
+  
