@@ -54,21 +54,56 @@ apps need a `truffile.yaml` in their directory:
 metadata:
   name: My App
   description: does cool stuff
-  type: ambient  # or focus
+  type: background  # or foreground
+  icon_file: ./icon.png
+  process:
+    cmd: [python, app.py]
+    working_directory: /
+    environment:
+      MY_VAR: value
+  # schedule for background apps only:
+  default_schedule:
+    type: interval  # interval | times | always
+    interval:
+      duration: "1h"  # 15m, 2h, 1d, etc.
+      schedule:
+        daily_window: "09:00-17:30"  # optional
+        allowed_days: [mon, tue, wed, thu, fri]  # optional
 
 files:
-  - app.py
-  - icon.png
+  - source: ./app.py
+    destination: ./app.py
 
 run: |
   pip install requests
-  pip install gourmet[ambient] --extra-index-url https://test.pypi.org/simple/
+```
 
-process:
-  cmd: python
-  args: [app.py]
-  env:
-    MY_VAR: value
+### schedule types
+
+**interval** - run every N minutes/hours:
+```yaml
+default_schedule:
+  type: interval
+  interval:
+    duration: "30m"
+    schedule:
+      daily_window: "06:00-22:00"
+      allowed_days: [mon, tue, wed, thu, fri]
+```
+
+**times** - run at specific times:
+```yaml
+default_schedule:
+  type: times
+  times:
+    run_times: ["08:00", "12:00", "18:00"]
+    allowed_days: [mon, tue, wed, thu, fri]
+```
+
+**always** - run continuously:
+```yaml
+default_schedule:
+  type: always
 ```
 
 ## example apps

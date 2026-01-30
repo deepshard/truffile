@@ -421,20 +421,7 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
             icon=icon_path,
         )
     else:
-        schedule_cfg = meta.get("default_schedule", {})
-        schedule_type = schedule_cfg.get("type", "interval")
-        interval_seconds = 60
-        
-        if schedule_type == "interval":
-            interval_cfg = schedule_cfg.get("interval", {})
-            duration_str = interval_cfg.get("duration", "1m")
-            if duration_str.endswith("m"):
-                interval_seconds = int(duration_str[:-1]) * 60
-            elif duration_str.endswith("h"):
-                interval_seconds = int(duration_str[:-1]) * 3600
-            elif duration_str.endswith("s"):
-                interval_seconds = int(duration_str[:-1])
-        
+        default_schedule = meta.get("default_schedule")
         await client.finish_background(
             name=name,
             cmd=cmd,
@@ -443,8 +430,7 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
             env=env,
             description=description,
             icon=icon_path,
-            schedule=schedule_type,
-            interval_seconds=interval_seconds,
+            default_schedule=default_schedule,
         )
     
     spinner.stop(success=True)

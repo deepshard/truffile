@@ -25,7 +25,8 @@ from truffle.os.client_metadata_pb2 import ClientMetadata
 from truffle.os.app_queries_pb2 import GetAllAppsRequest, GetAllAppsResponse
 from truffle.app.app_type_pb2 import AppType
 from truffle.app.foreground_pb2 import ForegroundApp
-from truffle.app.background_pb2 import BackgroundApp
+from truffle.app.background_pb2 import BackgroundApp, BackgroundAppRuntimePolicy
+from truffile.schedule import parse_runtime_policy
 
 
 def get_client_metadata() -> ClientMetadata:
@@ -289,12 +290,7 @@ class TruffleClient:
         env: list[str] | None = None,
         description: str = "",
         icon: str | Path | bytes | None = None,
-        schedule: str = "interval",
-        interval_seconds: int = 60,
-        daily_start_hour: int | None = None,
-        daily_start_minute: int = 0,
-        daily_end_hour: int | None = None,
-        daily_end_minute: int = 0,
+        default_schedule: dict | None = None,
     ) -> FinishBuildSessionResponse:
         if not self.stub or not self.app_uuid:
             raise RuntimeError("no active build session")
@@ -307,15 +303,13 @@ class TruffleClient:
         icon_data = self._load_icon(icon)
         if icon_data:
             req.background.metadata.icon.png_data = icon_data
-        if schedule == "always":
-            req.background.runtime_policy.always.SetInParent()
-        elif schedule == "interval":
-            req.background.runtime_policy.interval.duration.seconds = interval_seconds
-            if daily_start_hour is not None and daily_end_hour is not None:
-                req.background.runtime_policy.interval.schedule.daily_window.daily_start_time.hour = daily_start_hour
-                req.background.runtime_policy.interval.schedule.daily_window.daily_start_time.minute = daily_start_minute
-                req.background.runtime_policy.interval.schedule.daily_window.daily_end_time.hour = daily_end_hour
-                req.background.runtime_policy.interval.schedule.daily_window.daily_end_time.minute = daily_end_minute
+        
+        if default_schedule:
+            runtime_policy = parse_runtime_policy(default_schedule)
+            req.background.runtime_policy.CopyFrom(runtime_policy)
+        else:
+            req.background.runtime_policy.interval.duration.seconds = 60
+        
         req.process.cmd = cmd
         req.process.args.extend(args)
         if env:
