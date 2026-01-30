@@ -1,11 +1,14 @@
 import asyncio
 import json
+import platform
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
 import grpc
 from grpc import aio
 import httpx
+from google.protobuf import empty_pb2
 from truffle.os.truffleos_pb2_grpc import TruffleOSStub
 from truffle.os.builder_pb2 import (
     StartBuildSessionRequest,
@@ -13,7 +16,33 @@ from truffle.os.builder_pb2 import (
     FinishBuildSessionRequest,
     FinishBuildSessionResponse,
 )
+from truffle.os.client_session_pb2 import (
+    RegisterNewSessionRequest,
+    RegisterNewSessionResponse,
+    NewSessionStatus,
+)
+from truffle.os.client_metadata_pb2 import ClientMetadata
 from truffle.app.app_type_pb2 import AppType
+
+
+def get_client_metadata() -> ClientMetadata:
+    from genesis import __version__
+    metadata = ClientMetadata()
+    metadata.device = platform.node()
+    metadata.platform = platform.platform()
+    metadata.version = f"genesis-{__version__}-{platform.python_version()}"
+    return metadata
+
+
+async def resolve_mdns(hostname: str) -> str:
+    if ".local" not in hostname:
+        return hostname
+    loop = asyncio.get_event_loop()
+    try:
+        resolved = await loop.run_in_executor(None, socket.gethostbyname, hostname)
+        return resolved
+    except socket.gaierror as e:
+        raise RuntimeError(f"Failed to resolve {hostname} - is the device on the same network? ({e})")
 
 
 @dataclass
@@ -53,6 +82,32 @@ class TruffleClient:
         self.channel = aio.insecure_channel(self.address)
         await asyncio.wait_for(self.channel.channel_ready(), timeout=timeout)
         self.stub = TruffleOSStub(self.channel)
+
+    def update_token(self, token: str):
+        self.token = token
+
+    async def check_auth(self) -> bool:
+        if not self.stub or not self.token:
+            return False
+        try:
+            await self.stub.System_GetInfo(empty_pb2.Empty(), metadata=self._metadata)
+            return True
+        except aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.UNAUTHENTICATED:
+                return False
+            raise
+
+    async def register_new_session(self, user_id: str) -> tuple[NewSessionStatus, str | None]:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = RegisterNewSessionRequest()
+        req.user_id = user_id
+        req.metadata.CopyFrom(get_client_metadata())
+        resp: RegisterNewSessionResponse = await self.stub.Client_RegisterNewSession(req)
+        if resp.status.error == NewSessionStatus.NEW_SESSION_SUCCESS:
+            self.token = resp.token
+            return resp.status, resp.token
+        return resp.status, None
 
     async def start_build(self, app_type: AppType = AppType.APP_TYPE_BACKGROUND) -> StartBuildSessionResponse:
         if not self.stub:
