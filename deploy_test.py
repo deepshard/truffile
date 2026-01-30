@@ -3,7 +3,7 @@ import asyncio
 import sys
 from pathlib import Path
 import yaml
-from genesis import TruffleClient
+from truffile import TruffleClient
 
 # add your truffle ip (get it with ping truffle-xxxx.local)
 DEVICE_ADDRESS = "192.168.1.32:80"

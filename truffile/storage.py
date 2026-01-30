@@ -18,7 +18,7 @@ class StoredState:
 
 
 def get_storage_dir() -> Path:
-    dir_path = Path(platformdirs.user_data_dir("genesis"))
+    dir_path = Path(platformdirs.user_data_dir("truffile"))
     dir_path.mkdir(parents=True, exist_ok=True)
     return dir_path
 

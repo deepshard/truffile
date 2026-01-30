@@ -9,8 +9,8 @@ from pathlib import Path
 
 import yaml
 
-from genesis.storage import StorageService
-from genesis.client import TruffleClient, resolve_mdns, NewSessionStatus
+from truffile.storage import StorageService
+from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
 
 
 # ANSI colors
@@ -472,13 +472,13 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     device = storage.state.last_used_device
     if not device:
         error("No device connected")
-        print(f"  {C.DIM}Run: genesis connect <device>{C.RESET}")
+        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
         return 1
     
     token = storage.get_token(device)
     if not token:
         error(f"No token for {device}")
-        print(f"  {C.DIM}Run: genesis connect {device}{C.RESET}")
+        print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return 1
     
     spinner = Spinner(f"Resolving {device}")
@@ -538,13 +538,13 @@ async def cmd_list_apps(storage: StorageService) -> int:
     device = storage.state.last_used_device
     if not device:
         error("No device connected")
-        print(f"  {C.DIM}Run: genesis connect <device>{C.RESET}")
+        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
         return 1
     
     token = storage.get_token(device)
     if not token:
         error(f"No token for {device}")
-        print(f"  {C.DIM}Run: genesis connect {device}{C.RESET}")
+        print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return 1
     
     spinner = Spinner(f"Connecting to {device}")
@@ -823,9 +823,9 @@ async def cmd_scan(args, storage: StorageService) -> int:
 
 
 def print_help():
-    print(f"{MUSHROOM} {C.BOLD}Genesis{C.RESET} - TruffleOS SDK")
+    print(f"{MUSHROOM} {C.BOLD}truffile{C.RESET} - TruffleOS SDK")
     print()
-    print(f"{C.BOLD}Usage:{C.RESET} genesis <command> [options]")
+    print(f"{C.BOLD}Usage:{C.RESET} truffile <command> [options]")
     print()
     print(f"{C.BOLD}Commands:{C.RESET}")
     print(f"  {C.BLUE}scan{C.RESET}                      Scan network for Truffle devices")
@@ -835,11 +835,11 @@ def print_help():
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
-    print(f"  {C.DIM}genesis scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
-    print(f"  {C.DIM}genesis connect truffle-6272{C.RESET}")
-    print(f"  {C.DIM}genesis deploy ./my-app{C.RESET}")
-    print(f"  {C.DIM}genesis deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
-    print(f"  {C.DIM}genesis list apps{C.RESET}")
+    print(f"  {C.DIM}truffile scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
+    print(f"  {C.DIM}truffile connect truffle-6272{C.RESET}")
+    print(f"  {C.DIM}truffile deploy ./my-app{C.RESET}")
+    print(f"  {C.DIM}truffile deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
+    print(f"  {C.DIM}truffile list apps{C.RESET}")
     print()
 
 
@@ -849,8 +849,8 @@ def main() -> int:
         return 0
     
     parser = argparse.ArgumentParser(
-        prog="genesis",
-        description="Genesis - TruffleOS SDK CLI",
+        prog="truffile",
+        description="truffile - TruffleOS SDK CLI",
         add_help=False,
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -880,17 +880,17 @@ def main() -> int:
     if args.command == "connect":
         if not args.device:
             error("Missing device name")
-            print(f"  {C.DIM}Usage: genesis connect <device>{C.RESET}")
+            print(f"  {C.DIM}Usage: truffile connect <device>{C.RESET}")
             return 1
     elif args.command == "disconnect":
         if not args.target:
             error("Missing device name")
-            print(f"  {C.DIM}Usage: genesis disconnect <device|all>{C.RESET}")
+            print(f"  {C.DIM}Usage: truffile disconnect <device|all>{C.RESET}")
             return 1
     elif args.command == "list":
         if not args.what:
             error("Missing argument")
-            print(f"  {C.DIM}Usage: genesis list <apps|devices>{C.RESET}")
+            print(f"  {C.DIM}Usage: truffile list <apps|devices>{C.RESET}")
             return 1
 
     storage = StorageService()

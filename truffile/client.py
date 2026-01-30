@@ -29,11 +29,11 @@ from truffle.app.background_pb2 import BackgroundApp
 
 
 def get_client_metadata() -> ClientMetadata:
-    from genesis import __version__
+    from truffile import __version__
     metadata = ClientMetadata()
     metadata.device = platform.node()
     metadata.platform = platform.platform()
-    metadata.version = f"genesis-{__version__}-{platform.python_version()}"
+    metadata.version = f"truffile-{__version__}-{platform.python_version()}"
     return metadata
 
 
