@@ -713,18 +713,129 @@ def cmd_list(args, storage: StorageService) -> int:
     return 0
 
 
+async def cmd_scan(args, storage: StorageService) -> int:
+    try:
+        from zeroconf import ServiceBrowser, ServiceListener, Zeroconf, IPVersion
+    except ImportError:
+        error("zeroconf package required for scanning")
+        print(f"  {C.DIM}pip install zeroconf{C.RESET}")
+        return 1
+    
+    devices: dict[str, dict] = {}
+    scan_done = asyncio.Event()
+    
+    class TruffleListener(ServiceListener):
+        def add_service(self, zc: Zeroconf, type_: str, name: str):
+            if name.lower().startswith("truffle-"):
+                info = zc.get_service_info(type_, name)
+                device_name = name.split(".")[0]
+                if info and device_name not in devices:
+                    addresses = [addr for addr in info.parsed_addresses(IPVersion.V4Only)]
+                    devices[device_name] = {
+                        "name": device_name,
+                        "addresses": addresses,
+                        "port": info.port,
+                    }
+        
+        def remove_service(self, zc: Zeroconf, type_: str, name: str):
+            pass
+        
+        def update_service(self, zc: Zeroconf, type_: str, name: str):
+            pass
+    
+    timeout = args.timeout if hasattr(args, 'timeout') else 5
+    
+    spinner = Spinner(f"Scanning for Truffle devices ({timeout}s)")
+    spinner.start()
+    
+    try:
+        zc = Zeroconf(ip_version=IPVersion.V4Only)
+        listener = TruffleListener()
+        
+        browsers = [
+            ServiceBrowser(zc, "_truffle._tcp.local.", listener),
+        ]
+        
+        await asyncio.sleep(timeout)
+        
+        for browser in browsers:
+            browser.cancel()
+        zc.close()
+        
+    except Exception as e:
+        spinner.fail(f"Scan failed: {e}")
+        return 1
+    
+    spinner.stop(success=True)
+    
+    if not devices:
+        print()
+        print(f"  {C.DIM}No Truffle devices found on the network{C.RESET}")
+        print()
+        print(f"  {C.DIM}Make sure your Truffle is:{C.RESET}")
+        print(f"    {C.DIM}• Powered on{C.RESET}")
+        print(f"    {C.DIM}• Connected to the same network as this computer{C.RESET}")
+        print()
+        return 1
+    
+    print()
+    print(f"{C.BOLD}Found {len(devices)} Truffle device(s):{C.RESET}")
+    print()
+    
+    device_list = list(devices.values())
+    for i, device in enumerate(device_list, 1):
+        name = device["name"]
+        addrs = ", ".join(device["addresses"]) if device["addresses"] else "unknown"
+        
+        already_connected = storage.get_token(name) is not None
+        if already_connected:
+            print(f"  {C.GREEN}{i}.{C.RESET} {C.BOLD}{name}{C.RESET} {C.DIM}({addrs}){C.RESET} {C.GREEN}[connected]{C.RESET}")
+        else:
+            print(f"  {C.CYAN}{i}.{C.RESET} {C.BOLD}{name}{C.RESET} {C.DIM}({addrs}){C.RESET}")
+    
+    print()
+    
+    try:
+        choice = input(f"Select device to connect (1-{len(device_list)}) or press Enter to cancel: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return 0
+    
+    if not choice:
+        return 0
+    
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(device_list):
+            selected = device_list[idx]
+            print()
+            
+            class FakeArgs:
+                device = selected["name"]
+            
+            return await cmd_connect(FakeArgs(), storage)
+        else:
+            error("Invalid selection")
+            return 1
+    except ValueError:
+        error("Invalid input")
+        return 1
+
+
 def print_help():
     print(f"{MUSHROOM} {C.BOLD}Genesis{C.RESET} - TruffleOS SDK")
     print()
     print(f"{C.BOLD}Usage:{C.RESET} genesis <command> [options]")
     print()
     print(f"{C.BOLD}Commands:{C.RESET}")
+    print(f"  {C.BLUE}scan{C.RESET}                      Scan network for Truffle devices")
     print(f"  {C.BLUE}connect{C.RESET} <device>         Connect to a Truffle device")
     print(f"  {C.BLUE}disconnect{C.RESET} <device|all>  Disconnect and clear credentials")
     print(f"  {C.BLUE}deploy{C.RESET} [path]            Deploy an app (reads type from truffile.yaml)")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
+    print(f"  {C.DIM}genesis scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
     print(f"  {C.DIM}genesis connect truffle-6272{C.RESET}")
     print(f"  {C.DIM}genesis deploy ./my-app{C.RESET}")
     print(f"  {C.DIM}genesis deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
@@ -743,6 +854,9 @@ def main() -> int:
         add_help=False,
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    p_scan = subparsers.add_parser("scan", add_help=False)
+    p_scan.add_argument("-t", "--timeout", type=int, default=5, help="Scan timeout in seconds")
 
     p_connect = subparsers.add_parser("connect", add_help=False)
     p_connect.add_argument("device", nargs="?")
@@ -781,7 +895,9 @@ def main() -> int:
 
     storage = StorageService()
 
-    if args.command == "connect":
+    if args.command == "scan":
+        return run_async(cmd_scan(args, storage))
+    elif args.command == "connect":
         return run_async(cmd_connect(args, storage))
     elif args.command == "disconnect":
         return cmd_disconnect(args, storage)
