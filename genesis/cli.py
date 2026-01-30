@@ -74,6 +74,55 @@ class Spinner:
         sys.stdout.flush()
 
 
+class ScrollingLog:
+    #felt a little fancy lol
+    """A scrolling log window that shows the last N lines in place."""
+    
+    def __init__(self, height: int = 6, prefix: str = "  "):
+        self.height = height
+        self.prefix = prefix
+        self.lines: list[str] = []
+        self.started = False
+        try:
+            import shutil
+            self.width = shutil.get_terminal_size().columns - len(prefix) - 2
+        except Exception:
+            self.width = 76
+    
+    def _truncate(self, line: str) -> str:
+        if len(line) > self.width:
+            return line[:self.width - 3] + "..."
+        return line
+    
+    def _render(self):
+        if self.started:
+            sys.stdout.write(f"\033[{self.height}A")
+        
+        display = self.lines[-self.height:] if len(self.lines) >= self.height else self.lines
+        
+        while len(display) < self.height:
+            display.insert(0, "")
+        
+        for line in display:
+            truncated = self._truncate(line)
+            sys.stdout.write(f"\033[K{self.prefix}{C.DIM}{truncated}{C.RESET}\n")
+        
+        sys.stdout.flush()
+        self.started = True
+    
+    def add(self, line: str):
+        self.lines.append(line.rstrip())
+        self._render()
+    
+    def finish(self):
+        if self.started:
+            sys.stdout.write(f"\033[{self.height}A")
+            for _ in range(self.height):
+                sys.stdout.write("\033[K\n")
+            sys.stdout.write(f"\033[{self.height}A")
+            sys.stdout.flush()
+
+
 def error(msg: str):
     print(f"{C.RED}{CROSS} Error:{C.RESET} {msg}")
 
@@ -277,7 +326,7 @@ def validate_app_dir(app_dir: Path) -> tuple[bool, dict | None, str | None, list
     return True, config, app_type, warnings
 
 
-async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_type: str, device: str, interactive : bool = False) -> int:
+async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_type: str, device: str, interactive: bool = False) -> int:
     meta = config["metadata"]
     name = meta["name"]
     description = meta.get("description", "")
@@ -300,58 +349,62 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
     await asyncio.sleep(5)
     spinner.stop(success=True)
     print(f"  {C.DIM}Session: {client.app_uuid}{C.RESET}")
-    if not interactive:
-        # Collect all files to upload (from steps or top-level)
-        files_to_upload = []
-        for step in config.get("steps", []):
-            if step.get("type") == "files":
-                files_to_upload.extend(step.get("files", []))
-        # Also check top-level files: (simplified format)
-        files_to_upload.extend(config.get("files", []))
-        
-        # Upload all files
-        for f in files_to_upload:
-            src = app_dir / f["source"]
-            dest = f["destination"]
-            spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
-            spinner.start()
-            result = await client.upload(src, dest)
-            spinner.stop(success=True)
-            print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
-        
-        # Collect all bash commands (from steps or top-level run:)
-        bash_commands = []
-        for step in config.get("steps", []):
-            if step.get("type") == "bash":
-                bash_commands.append((step.get("name", "bash"), step["run"]))
-        # Also check top-level run: (simplified format)
-        if config.get("run"):
-            bash_commands.append(("Install dependencies", config["run"]))
-        
-        # Run all bash commands
-        for step_name, run_cmd in bash_commands:
-            info(f"Running: {step_name}")
-            async for ev, data in client.exec_stream(run_cmd, cwd=cwd):
-                if ev == "log":
-                    try:
-                        import json
-                        obj = json.loads(data)
-                        line = obj.get("line", "")
-                    except Exception:
-                        line = data
-                    print(f"  {C.DIM}{line}{C.RESET}")
-                elif ev == "exit":
-                    try:
-                        import json
-                        code = int(json.loads(data).get("code", 0))
-                        if code != 0:
-                            error(f"Exit code: {code}")
-                            raise RuntimeError(f"Step '{step_name}' failed with exit code {code}")
-                    except (ValueError, KeyError):
-                        pass
-    else:
-        tty_task = asyncio.create_task(_run_ws_term(str(client.http_base or "").replace("http://","ws://").replace("https://","wss://") + "/term"))
-        await tty_task
+    
+    # Always upload files first
+    files_to_upload = []
+    for step in config.get("steps", []):
+        if step.get("type") == "files":
+            files_to_upload.extend(step.get("files", []))
+    files_to_upload.extend(config.get("files", []))
+    
+    for f in files_to_upload:
+        src = app_dir / f["source"]
+        dest = f["destination"]
+        spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
+        spinner.start()
+        result = await client.upload(src, dest)
+        spinner.stop(success=True)
+        print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
+    
+    # always run bash commands
+    bash_commands = []
+    for step in config.get("steps", []):
+        if step.get("type") == "bash":
+            bash_commands.append((step.get("name", "bash"), step["run"]))
+    if config.get("run"):
+        bash_commands.append(("Install dependencies", config["run"]))
+    
+    for step_name, run_cmd in bash_commands:
+        info(f"Running: {step_name}")
+        log = ScrollingLog(height=6, prefix="  ")
+        exit_code = 0
+        async for ev, data in client.exec_stream(run_cmd, cwd=cwd):
+            if ev == "log":
+                try:
+                    import json
+                    obj = json.loads(data)
+                    line = obj.get("line", "")
+                except Exception:
+                    line = data
+                log.add(line)
+            elif ev == "exit":
+                try:
+                    import json
+                    exit_code = int(json.loads(data).get("code", 0))
+                except (ValueError, KeyError):
+                    pass
+        log.finish()
+        if exit_code != 0:
+            error(f"Step '{step_name}' failed with exit code {exit_code}")
+            raise RuntimeError(f"Step '{step_name}' failed with exit code {exit_code}")
+    
+    if interactive:
+        # interactive mode: open shell after setup for testing/debugging
+        print()
+        info("Opening interactive shell (exit with Ctrl+D or 'exit' to finish deploy)")
+        ws_url = str(client.http_base or "").replace("http://", "ws://").replace("https://", "wss://") + "/term"
+        await _interactive_shell(ws_url)
+        print()
     spinner = Spinner(f"Finishing as {app_type} app")
     spinner.start()
     
@@ -403,9 +456,7 @@ async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_typ
 async def cmd_deploy(args, storage: StorageService) -> int:
     app_path = args.path if args.path else "."
     app_dir = Path(app_path).resolve()
-    do_cool_ass_terminal_shit = args.interactive == True 
-    if do_cool_ass_terminal_shit:
-        info("doing cool ahh terminal shi")
+    interactive = args.interactive
     if not app_dir.exists() or not app_dir.is_dir():
         error(f"{app_dir} is not a valid directory")
         return 1
@@ -454,7 +505,7 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     loop.add_signal_handler(signal.SIGINT, handle_sigint)
     
     try:
-        deploy_task = asyncio.create_task(_do_deploy(client, config, app_dir, app_type, device, do_cool_ass_terminal_shit)) 
+        deploy_task = asyncio.create_task(_do_deploy(client, config, app_dir, app_type, device, interactive))
         return await deploy_task 
     except asyncio.CancelledError:
         print()
@@ -559,8 +610,8 @@ async def cmd_list_apps(storage: StorageService) -> int:
     finally:
         await client.close()
 
-async def _run_ws_term(ws_url: str) -> int:
-        print(f"{C.DIM}Starting interactive terminal session {ws_url}...{C.RESET}")
+async def _interactive_shell(ws_url: str) -> int:
+        print(f"{C.DIM}Opening shell... (exit with Ctrl+D or 'exit'){C.RESET}")
         import os, termios, fcntl, struct, tty, contextlib, json
         try:
             import websockets
