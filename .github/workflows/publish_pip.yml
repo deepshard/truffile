@@ -1,4 +1,4 @@
-name: Build and Release
+name: Build and Publish
 
 on:
   push:
@@ -6,9 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,8 +29,15 @@ jobs:
       - name: Install build dependencies
         run: pip install build
 
+      - name: Set version from run number
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: echo "SETUPTOOLS_SCM_PRETEND_VERSION=0.1.dev${{ github.run_number }}" >> $GITHUB_ENV
+
       - name: Build wheel
         run: python -m build
+
+      - name: Show dist contents
+        run: ls -lah dist
 
       - name: Test wheel installs and imports
         run: |
@@ -43,8 +57,35 @@ jobs:
           name: truffile-sdist
           path: dist/*.tar.gz
 
-  release:
+  publish-pypi:
+    name: Publish to PyPI
     needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: pypi
+      url: https://pypi.org/p/truffile
+    permissions:
+      id-token: write
+    steps:
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: truffile-wheel
+          path: dist/
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: truffile-sdist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: [build, publish-pypi]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
@@ -59,8 +100,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: truffile build ${{ github.run_number }}
+          tag_name: v0.1.dev${{ github.run_number }}
+          name: truffile v0.1.dev${{ github.run_number }}
           files: dist/*.whl
           generate_release_notes: true
           make_latest: true
