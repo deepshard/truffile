@@ -187,7 +187,7 @@ def _build_conversation(messages: List[Dict[str, Any]]) -> Conversation:
 
 
 def _safe_parse_cot(raw: str) -> Tuple[str, str]:
-    if THINK_TAGS[0] in raw and THINK_TAGS[1] in raw:
+    if THINK_TAGS[1] in raw:
         pre, post = raw.split(THINK_TAGS[1], 1)
         cot = pre.replace(THINK_TAGS[0], "").replace(THINK_TAGS[1], "").strip()
         return cot, post
@@ -220,15 +220,32 @@ def _usage_to_openai(usage: Any) -> Dict[str, int]:
 
 
 class _StreamFilter:
-    def __init__(self) -> None:
+    def __init__(self, hide_cot: bool = False) -> None:
         self._buffer = ""
         self._mode = "normal"  # normal | think | toolcall
         self._max_tag = max(len("<think>"), len("</think>"), len("<toolcall>"), len("</toolcall>"))
-
+        self._hide_cot = hide_cot
+        self._passed_cot = not hide_cot
+    def finalize(self) -> str:
+        if self._mode != "normal":
+            self._buffer = ""
+            return ""
+        tail = self._buffer
+        self._buffer = ""
+        return tail
     def feed(self, chunk: str) -> str:
         if not chunk:
             return ""
         buf = self._buffer + chunk
+        if not self._passed_cot:
+            end = buf.find("</think>")
+            if end == -1:
+                # Keep only enough to detect a split closing tag.
+                keep = len("</think>") - 1
+                self._buffer = buf[-keep:] if keep > 0 else ""
+                return ""
+            buf = buf[end + len("</think>") :]
+            self._passed_cot = True
         out_parts: List[str] = []
         while buf:
             if self._mode == "think":
@@ -310,8 +327,10 @@ class OpenAIProxy:
         req.model_uuid = model.uuid
         req.convo.CopyFrom(convo)
 
-        if payload.get("max_tokens") is not None:
+        if payload.get("max_tokens", 0) > 0:
             req.cfg.max_tokens = int(payload["max_tokens"])
+        else:
+            req.cfg.max_tokens = 16384 
         if payload.get("temperature") is not None:
             req.cfg.temp = float(payload["temperature"])
         if payload.get("top_p") is not None:
@@ -369,14 +388,23 @@ class OpenAIProxy:
 
 class OpenAIProxyHandler(BaseHTTPRequestHandler):
     server_version = "TruffleOpenAIProxy/0.1"
+    def _set_cors_headers(self) -> None:
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
     def _send_json(self, status: int, payload: Dict[str, Any]) -> None:
         data = json.dumps(payload).encode("utf-8")
         self.send_response(status)
+        self._set_cors_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self._set_cors_headers()
+        self.end_headers()
 
     def _read_body(self) -> Dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -385,14 +413,47 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8"))
 
-    def _send_sse(self, payload: Dict[str, Any]) -> None:
+    def _send_sse(self, payload: Dict[str, Any]) -> bool:
         data = json.dumps(payload)
-        self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
-        self.wfile.flush()
+        try:
+            self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            # Client disconnected; stop streaming gracefully.
+            self.close_connection = True
+            return False
+        return True
 
     def do_GET(self) -> None:
         if self.path == "/health":
             self._send_json(200, {"status": "ok"})
+            return
+        if self.path in {"/v1/models", "/models"}:
+            proxy: OpenAIProxy = self.server.proxy  # type: ignore[attr-defined]
+            models = _get_models(proxy.stub)
+            data = [
+                {"id": m.uuid, "object": "model", "owned_by": m.provider or "truffle", "name": m.name}
+                for m in models
+            ]
+            self._send_json(200, {"object": "list", "data": data})
+            return
+        if self.path.startswith("/v1/models/"):
+            proxy: OpenAIProxy = self.server.proxy  # type: ignore[attr-defined]
+            model_id = self.path.split("/v1/models/", 1)[1]
+            models = _get_models(proxy.stub)
+            model = next((m for m in models if m.uuid == model_id or m.name == model_id), None)
+            if model is None:
+                self._send_json(404, {"error": {"message": "model not found", "type": "not_found_error"}})
+                return
+            self._send_json(
+                200,
+                {
+                    "id": model.uuid,
+                    "object": "model",
+                    "owned_by": model.provider or "truffle",
+                    "name": model.name,
+                },
+            )
             return
         self.send_error(404, "Not Found")
 
@@ -409,21 +470,23 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
         proxy: OpenAIProxy = self.server.proxy  # type: ignore[attr-defined]
 
         try:
-            req, model, _is_reasoner, _tools, stream = proxy.build_request(payload)
+            req, model, is_reasoner, _tools, stream = proxy.build_request(payload)
         except Exception as e:
             self._send_json(400, {"error": {"message": str(e), "type": "invalid_request_error"}})
             return
 
         if stream:
             self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
+            self._set_cors_headers()
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
             self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
 
             stream_id = _gen_id("chatcmpl")
             created = _now_ts()
-            self._send_sse(
+            if not self._send_sse(
                 {
                     "id": stream_id,
                     "object": "chat.completion.chunk",
@@ -433,11 +496,12 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
                         {"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}
                     ],
                 }
-            )
+            ):
+                return
 
             raw_content = ""
             last_finish = None
-            filter_state = _StreamFilter()
+            filter_state = _StreamFilter(hide_cot=is_reasoner)
 
             for ir in proxy.run_stream(req):
                 raw_content += ir.content
@@ -445,7 +509,7 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
                     last_finish = ir.finish_reason
                 visible = filter_state.feed(ir.content)
                 if visible:
-                    self._send_sse(
+                    if not self._send_sse(
                         {
                             "id": stream_id,
                             "object": "chat.completion.chunk",
@@ -459,8 +523,26 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         }
-                    )
-
+                    ):
+                        return
+            tail = filter_state.finalize()
+            if tail:
+                if not self._send_sse(
+                    {
+                        "id": stream_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model.name,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": tail},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                ):
+                    return
             _cot, after_cot = _safe_parse_cot(raw_content)
             tool_calls, _clean = proxy.prompt_builder.extract_tool_calls(after_cot)
             if tool_calls:
@@ -475,7 +557,7 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
                             "function": {"name": name, "arguments": args},
                         }
                     )
-                self._send_sse(
+                if not self._send_sse(
                     {
                         "id": stream_id,
                         "object": "chat.completion.chunk",
@@ -489,9 +571,10 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
                             }
                         ],
                     }
-                )
-            finish_reason = _map_finish_reason(last_finish)
-            self._send_sse(
+                ):
+                    return
+            finish_reason = _map_finish_reason(last_finish) or "stop"
+            if not self._send_sse(
                 {
                     "id": stream_id,
                     "object": "chat.completion.chunk",
@@ -501,9 +584,15 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
                         {"index": 0, "delta": {}, "finish_reason": finish_reason}
                     ],
                 }
-            )
-            self.wfile.write(b"data: [DONE]\n\n")
-            self.wfile.flush()
+            ):
+                return
+            try:
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                self.close_connection = True
+            else:
+                self.close_connection = True
             return
 
         resp = proxy.run_sync(req)
