@@ -31,7 +31,7 @@ jobs:
 
       - name: Set version from run number
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: echo "SETUPTOOLS_SCM_PRETEND_VERSION=0.1.dev${{ github.run_number }}" >> $GITHUB_ENV
+        run: echo "SETUPTOOLS_SCM_PRETEND_VERSION=0.1.${{ github.run_number }}" >> $GITHUB_ENV
 
       - name: Build wheel
         run: python -m build
@@ -100,8 +100,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.dev${{ github.run_number }}
-          name: truffile v0.1.dev${{ github.run_number }}
+          tag_name: v0.1.${{ github.run_number }}
+          name: truffile v0.1.${{ github.run_number }}
           files: dist/*.whl
           generate_release_notes: true
           make_latest: true
