@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import ast
 import signal
+import socket
 import sys
 import threading
 import time
@@ -770,28 +771,24 @@ def cmd_proxy(args, storage: StorageService) -> int:
     host = args.host if hasattr(args, 'host') else "127.0.0.1"
     debug = args.debug if hasattr(args, 'debug') else False
     
-    print(f"{MUSHROOM} {C.BOLD}Starting OpenAI proxy{C.RESET}")
-    print()
-    
-    spinner = Spinner(f"Resolving {device}.local")
-    spinner.start()
+    spinner = None
     
     try:
-        import socket
+        print(f"{MUSHROOM} {C.BOLD}Starting OpenAI proxy{C.RESET}")
+        print()
+        
+        spinner = Spinner(f"Resolving {device}.local")
+        spinner.start()
+        
         hostname = f"{device}.local"
         ip = socket.gethostbyname(hostname)
         spinner.stop(success=True)
-    except Exception as e:
-        spinner.fail(f"Could not resolve {device}.local")
-        print(f"  {C.DIM}Try: ping {device}.local{C.RESET}")
-        return 1
-    
-    grpc_address = f"{ip}:80"
-    
-    spinner = Spinner("Connecting to inference service")
-    spinner.start()
-    
-    try:
+        
+        grpc_address = f"{ip}:80"
+        
+        spinner = Spinner("Connecting to inference service")
+        spinner.start()
+        
         from truffile.infer.proxy import OpenAIProxy, OpenAIProxyHandler
         from http.server import ThreadingHTTPServer
         
@@ -802,43 +799,62 @@ def cmd_proxy(args, storage: StorageService) -> int:
         model_list = stub.GetModelList(GetModelListRequest(use_filter=False))
         loaded = [m for m in model_list.models if m.state == Model.MODEL_STATE_LOADED]
         spinner.stop(success=True)
+        spinner = None
         
         print(f"  {C.DIM}Device: {device} ({ip}){C.RESET}")
         print(f"  {C.DIM}Models: {len(loaded)} loaded{C.RESET}")
         
-    except Exception as e:
-        spinner.fail(f"Failed to connect: {e}")
-        return 1
-    
-    print()
-    print(f"{C.GREEN}{CHECK}{C.RESET} Proxy running at {C.BOLD}http://{host}:{port}/v1{C.RESET}")
-    print()
-    print(f"  {C.DIM}Use with OpenAI SDK:{C.RESET}")
-    print(f"    {C.CYAN}from openai import OpenAI{C.RESET}")
-    print(f"    {C.CYAN}client = OpenAI(base_url=\"http://{host}:{port}/v1\", api_key=\"x\"){C.RESET}")
-    print()
-    print(f"  {C.DIM}Or set environment variables:{C.RESET}")
-    print(f"    {C.CYAN}export OPENAI_BASE_URL=http://{host}:{port}/v1{C.RESET}")
-    print(f"    {C.CYAN}export OPENAI_API_KEY=anything{C.RESET}")
-    print()
-    print(f"  {C.DIM}Press Ctrl+C to stop{C.RESET}")
-    print()
-    
-    class _Server(ThreadingHTTPServer):
-        def __init__(self, server_address, handler_cls):
-            super().__init__(server_address, handler_cls)
-            self.proxy = proxy
-    
-    try:
+        print()
+        print(f"{C.GREEN}{CHECK}{C.RESET} Proxy running at {C.BOLD}http://{host}:{port}/v1{C.RESET}")
+        print()
+        print(f"  {C.DIM}Use with OpenAI SDK:{C.RESET}")
+        print(f"    {C.CYAN}from openai import OpenAI{C.RESET}")
+        print(f"    {C.CYAN}client = OpenAI(base_url=\"http://{host}:{port}/v1\", api_key=\"x\"){C.RESET}")
+        print()
+        print(f"  {C.DIM}Or set environment variables:{C.RESET}")
+        print(f"    {C.CYAN}export OPENAI_BASE_URL=http://{host}:{port}/v1{C.RESET}")
+        print(f"    {C.CYAN}export OPENAI_API_KEY=anything{C.RESET}")
+        print()
+        print(f"  {C.DIM}Press Ctrl+C to stop{C.RESET}")
+        print()
+        
+        class _Server(ThreadingHTTPServer):
+            def __init__(self, server_address, handler_cls):
+                super().__init__(server_address, handler_cls)
+                self.proxy = proxy
+        
         server = _Server((host, port), OpenAIProxyHandler)
         server.serve_forever()
+        
     except KeyboardInterrupt:
-        print(f"\r{C.RED}{CROSS}{C.RESET} Proxy stopped")
-        return 0
+        if spinner:
+            spinner.running = False
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+        print(f"{C.RED}{CROSS} Cancelled{C.RESET}")
+        return 130
+    except socket.gaierror:
+        if spinner:
+            spinner.fail(f"Could not resolve {device}.local")
+        else:
+            error(f"Could not resolve {device}.local")
+        print(f"  {C.DIM}Try: ping {device}.local{C.RESET}")
+        return 1
     except OSError as e:
-        error(f"Could not start server: {e}")
+        if spinner:
+            spinner.fail(str(e))
+        else:
+            error(f"Could not start server: {e}")
         print(f"  {C.DIM}Port {port} may already be in use{C.RESET}")
         return 1
+    except Exception as e:
+        if spinner:
+            spinner.fail(str(e))
+        else:
+            error(str(e))
+        return 1
+    
+    return 0
 
 
 async def cmd_scan(args, storage: StorageService) -> int:
