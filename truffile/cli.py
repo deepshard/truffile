@@ -12,6 +12,10 @@ import yaml
 from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
 
+import grpc
+from truffle.infer.infer_pb2_grpc import InferenceServiceStub
+from truffle.infer.model_pb2 import GetModelListRequest, Model
+
 
 # ANSI colors
 class C:
@@ -699,6 +703,144 @@ def cmd_list(args, storage: StorageService) -> int:
     return 0
 
 
+async def cmd_models(storage: StorageService) -> int:
+    """List models on the connected device."""
+    device = storage.state.last_used_device
+    if not device:
+        error("No device connected")
+        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+        return 1
+    
+    spinner = Spinner(f"Connecting to {device}")
+    spinner.start()
+    
+    try:
+        ip = await resolve_mdns(f"{device}.local")
+    except RuntimeError:
+        spinner.fail(f"Could not resolve {device}.local")
+        return 1
+    
+    try:
+        channel = grpc.insecure_channel(f"{ip}:80")
+        stub = InferenceServiceStub(channel)
+        model_list = stub.GetModelList(GetModelListRequest(use_filter=False))
+        spinner.stop(success=True)
+    except Exception as e:
+        spinner.fail(f"Failed to get models: {e}")
+        return 1
+    
+    loaded = [m for m in model_list.models if m.state == Model.MODEL_STATE_LOADED]
+    available = [m for m in model_list.models if m.state == Model.MODEL_STATE_AVAILABLE]
+    
+    print()
+    print(f"{MUSHROOM} {C.BOLD}Models on {device}{C.RESET}")
+    print()
+    
+    if loaded:
+        for m in loaded:
+            reasoner = f" {C.MAGENTA}reasoner{C.RESET}" if m.config.info.has_chain_of_thought else ""
+            print(f"  {C.GREEN}{CHECK}{C.RESET} {m.name}{reasoner}")
+            print(f"    {C.DIM}id: {m.uuid}{C.RESET}")
+    
+    if available:
+        for m in available:
+            print(f"  {C.DIM}○ {m.name} (not loaded){C.RESET}")
+    
+    if not loaded and not available:
+        print(f"  {C.DIM}No models found{C.RESET}")
+    
+    print()
+    total_mb = model_list.total_memory // (1024 * 1024) if model_list.total_memory else 0
+    used_mb = model_list.used_memory // (1024 * 1024) if model_list.used_memory else 0
+    print(f"{C.DIM}Memory: {used_mb}MB / {total_mb}MB{C.RESET}")
+    
+    return 0
+
+
+def cmd_proxy(args, storage: StorageService) -> int:
+    """Start the OpenAI-compatible proxy."""
+    device = args.device if hasattr(args, 'device') and args.device else storage.state.last_used_device
+    if not device:
+        error("No device specified or connected")
+        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+        print(f"  {C.DIM}Or:  truffile proxy --device <device>{C.RESET}")
+        return 1
+    
+    port = args.port if hasattr(args, 'port') else 8080
+    host = args.host if hasattr(args, 'host') else "127.0.0.1"
+    debug = args.debug if hasattr(args, 'debug') else False
+    
+    print(f"{MUSHROOM} {C.BOLD}Starting OpenAI proxy{C.RESET}")
+    print()
+    
+    spinner = Spinner(f"Resolving {device}.local")
+    spinner.start()
+    
+    try:
+        import socket
+        hostname = f"{device}.local"
+        ip = socket.gethostbyname(hostname)
+        spinner.stop(success=True)
+    except Exception as e:
+        spinner.fail(f"Could not resolve {device}.local")
+        print(f"  {C.DIM}Try: ping {device}.local{C.RESET}")
+        return 1
+    
+    grpc_address = f"{ip}:80"
+    
+    spinner = Spinner("Connecting to inference service")
+    spinner.start()
+    
+    try:
+        from truffile.infer.proxy import OpenAIProxy, OpenAIProxyHandler
+        from http.server import ThreadingHTTPServer
+        
+        proxy = OpenAIProxy(grpc_address, include_debug=debug)
+        
+        channel = grpc.insecure_channel(grpc_address)
+        stub = InferenceServiceStub(channel)
+        model_list = stub.GetModelList(GetModelListRequest(use_filter=False))
+        loaded = [m for m in model_list.models if m.state == Model.MODEL_STATE_LOADED]
+        spinner.stop(success=True)
+        
+        print(f"  {C.DIM}Device: {device} ({ip}){C.RESET}")
+        print(f"  {C.DIM}Models: {len(loaded)} loaded{C.RESET}")
+        
+    except Exception as e:
+        spinner.fail(f"Failed to connect: {e}")
+        return 1
+    
+    print()
+    print(f"{C.GREEN}{CHECK}{C.RESET} Proxy running at {C.BOLD}http://{host}:{port}/v1{C.RESET}")
+    print()
+    print(f"  {C.DIM}Use with OpenAI SDK:{C.RESET}")
+    print(f"    {C.CYAN}from openai import OpenAI{C.RESET}")
+    print(f"    {C.CYAN}client = OpenAI(base_url=\"http://{host}:{port}/v1\", api_key=\"x\"){C.RESET}")
+    print()
+    print(f"  {C.DIM}Or set environment variables:{C.RESET}")
+    print(f"    {C.CYAN}export OPENAI_BASE_URL=http://{host}:{port}/v1{C.RESET}")
+    print(f"    {C.CYAN}export OPENAI_API_KEY=anything{C.RESET}")
+    print()
+    print(f"  {C.DIM}Press Ctrl+C to stop{C.RESET}")
+    print()
+    
+    class _Server(ThreadingHTTPServer):
+        def __init__(self, server_address, handler_cls):
+            super().__init__(server_address, handler_cls)
+            self.proxy = proxy
+    
+    try:
+        server = _Server((host, port), OpenAIProxyHandler)
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print(f"\r{C.RED}{CROSS}{C.RESET} Proxy stopped")
+        return 0
+    except OSError as e:
+        error(f"Could not start server: {e}")
+        print(f"  {C.DIM}Port {port} may already be in use{C.RESET}")
+        return 1
+
+
 async def cmd_scan(args, storage: StorageService) -> int:
     try:
         from zeroconf import ServiceBrowser, ServiceListener, Zeroconf, IPVersion
@@ -819,6 +961,8 @@ def print_help():
     print(f"  {C.BLUE}disconnect{C.RESET} <device|all>  Disconnect and clear credentials")
     print(f"  {C.BLUE}deploy{C.RESET} [path]            Deploy an app (reads type from truffile.yaml)")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
+    print(f"  {C.BLUE}models{C.RESET}                    List AI models on connected device")
+    print(f"  {C.BLUE}proxy{C.RESET}                     Start OpenAI-compatible inference proxy")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
     print(f"  {C.DIM}truffile scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
@@ -826,6 +970,9 @@ def print_help():
     print(f"  {C.DIM}truffile deploy ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
     print(f"  {C.DIM}truffile list apps{C.RESET}")
+    print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show loaded models{C.RESET}")
+    print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# start proxy on :8080{C.RESET}")
+    print(f"  {C.DIM}truffile proxy --port 9000{C.RESET}")
     print()
 
 
@@ -856,6 +1003,14 @@ def main() -> int:
 
     p_list = subparsers.add_parser("list", add_help=False)
     p_list.add_argument("what", choices=["apps", "devices"], nargs="?")
+
+    p_models = subparsers.add_parser("models", add_help=False)
+
+    p_proxy = subparsers.add_parser("proxy", add_help=False)
+    p_proxy.add_argument("--device", "-d", help="Device name (defaults to last connected)")
+    p_proxy.add_argument("--port", "-p", type=int, default=8080, help="Port to listen on")
+    p_proxy.add_argument("--host", default="127.0.0.1", help="Host to bind to")
+    p_proxy.add_argument("--debug", action="store_true", help="Include reasoning in responses")
 
     args = parser.parse_args()
 
@@ -891,6 +1046,10 @@ def main() -> int:
         return run_async(cmd_deploy(args, storage))
     elif args.command == "list":
         return cmd_list(args, storage)
+    elif args.command == "models":
+        return run_async(cmd_models(storage))
+    elif args.command == "proxy":
+        return cmd_proxy(args, storage)
 
     return 0
 

@@ -63,7 +63,7 @@ metadata:
       MY_VAR: value
   # schedule for background apps only:
   default_schedule:
-    type: interval  # interval | times | always
+    type: interval  # interval | times
     interval:
       duration: "1h"  # 15m, 2h, 1d, etc.
       schedule:
@@ -98,12 +98,6 @@ default_schedule:
   times:
     run_times: ["08:00", "12:00", "18:00"]
     allowed_days: [mon, tue, wed, thu, fri]
-```
-
-**always** - run continuously:
-```yaml
-default_schedule:
-  type: always
 ```
 
 ## example apps

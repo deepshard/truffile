@@ -281,15 +281,6 @@ default_schedule:
     allowed_days: [mon, wed, fri]  # optional
 ```
 
-### 3. Always
-
-Run continuously (never stops).
-
-```yaml
-default_schedule:
-  type: always
-```
-
 ---
 
 ## Duration Format
