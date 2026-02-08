@@ -8,6 +8,7 @@ import json
 import threading
 import time
 import uuid
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -219,6 +220,17 @@ def _usage_to_openai(usage: Any) -> Dict[str, int]:
     }
 
 
+def _set_structural_tag(req: IRequest, structural_tag: Dict[str, Any]) -> bool:
+    try:
+        fmt = ResponseFormat.STRUCTURAL_TAG
+    except AttributeError:
+        # older proto or server; fall back to prompt-only constraints.
+        return False
+    req.cfg.response_format.format = fmt
+    req.cfg.response_format.schema = json.dumps(structural_tag, indent=0)
+    return True
+
+
 class _StreamFilter:
     def __init__(self, hide_cot: bool = False) -> None:
         self._buffer = ""
@@ -370,8 +382,7 @@ class OpenAIProxy:
                         ],
                     },
                 }
-                req.cfg.response_format.format = ResponseFormat.STRUCTURAL_TAG
-                req.cfg.response_format.schema = json.dumps(structural_tag, indent=0)
+                _set_structural_tag(req, structural_tag)
             else:
                 req.cfg.response_format.format = ResponseFormat.JSON
                 req.cfg.response_format.schema = json.dumps(schema)
@@ -464,6 +475,7 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_body()
         except Exception as e:
+            print(f"\tError reading request body: {e}")
             self._send_json(400, {"error": {"message": str(e), "type": "invalid_request_error"}})
             return
 
@@ -472,6 +484,7 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
         try:
             req, model, is_reasoner, _tools, stream = proxy.build_request(payload)
         except Exception as e:
+            print(f"\tError building request: {e}")
             self._send_json(400, {"error": {"message": str(e), "type": "invalid_request_error"}})
             return
 
@@ -502,9 +515,13 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
             raw_content = ""
             last_finish = None
             filter_state = _StreamFilter(hide_cot=is_reasoner)
-
+            log_output = os.getenv("TRUFFLE_PROXY_LOG_STREAM_OUTPUT", "0") == "1"
+            if log_output:
+                print("Streaming output:")
             for ir in proxy.run_stream(req):
                 raw_content += ir.content
+                if log_output:
+                    print(ir.content, end="", flush=True)
                 if ir.HasField("finish_reason") and ir.finish_reason != FinishReason.FINISH_UNSPECIFIED:
                     last_finish = ir.finish_reason
                 visible = filter_state.feed(ir.content)
@@ -554,6 +571,7 @@ class OpenAIProxyHandler(BaseHTTPRequestHandler):
                         {
                             "id": f"call_{i+1}",
                             "type": "function",
+                            "index": i,
                             "function": {"name": name, "arguments": args},
                         }
                     )

@@ -51,7 +51,12 @@ def _build_tool_call_response_format_non_reasoning(
             "stop_after_first": not allow_parallel,
         },
     }
-    req.cfg.response_format.format = ResponseFormat.STRUCTURAL_TAG
+    try:
+        fmt = ResponseFormat.STRUCTURAL_TAG
+    except AttributeError:
+        # older proto or server; fall back to prompt-only tool guidance.
+        return
+    req.cfg.response_format.format = fmt
     req.cfg.response_format.schema = json.dumps(structural_tag, indent=0)
 
 
@@ -66,7 +71,6 @@ def _build_tool_call_response_format(
             "content": {"type": "json_schema", "json_schema": tool.input_schema},
             "end": end,
         }
-
     structural_tag = {
         "type": "structural_tag",
         "format": {
@@ -87,5 +91,10 @@ def _build_tool_call_response_format(
             ],
         },
     }
-    req.cfg.response_format.format = ResponseFormat.STRUCTURAL_TAG
+    try:
+        fmt = ResponseFormat.STRUCTURAL_TAG
+    except AttributeError:
+        # older proto or server; fall back to prompt-only tool guidance.
+        return
+    req.cfg.response_format.format = fmt
     req.cfg.response_format.schema = json.dumps(structural_tag, indent=0)
