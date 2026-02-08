@@ -601,6 +601,101 @@ async def cmd_list_apps(storage: StorageService) -> int:
     finally:
         await client.close()
 
+async def cmd_delete(args, storage: StorageService) -> int:
+    device = storage.state.last_used_device
+    if not device:
+        error("No device connected")
+        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+        return 1
+
+    token = storage.get_token(device)
+    if not token:
+        error(f"No token for {device}")
+        print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
+        return 1
+
+    spinner = Spinner(f"Connecting to {device}")
+    spinner.start()
+
+    try:
+        ip = await resolve_mdns(f"{device}.local")
+    except RuntimeError as e:
+        spinner.fail(str(e))
+        return 1
+
+    address = f"{ip}:80"
+    client = TruffleClient(address, token=token)
+
+    try:
+        await client.connect()
+        foreground, background = await client.get_all_apps()
+        spinner.stop(success=True)
+
+        all_apps = []
+        for app in foreground:
+            all_apps.append(("focus", app.uuid, app.metadata.name, app.metadata.description.strip().split('\n')[0][:55] if app.metadata.description else ""))
+        for app in background:
+            all_apps.append(("ambient", app.uuid, app.metadata.name, app.metadata.description.strip().split('\n')[0][:55] if app.metadata.description else ""))
+
+        if not all_apps:
+            print(f"  {C.DIM}No apps installed{C.RESET}")
+            return 0
+
+        print()
+        print(f"{C.BOLD}Installed Apps:{C.RESET}")
+        print()
+        for i, (kind, uuid, name, desc) in enumerate(all_apps, 1):
+            print(f"  {C.CYAN}{i}.{C.RESET} {name} {C.DIM}({kind}){C.RESET}")
+            if desc:
+                print(f"     {C.DIM}{desc}{C.RESET}")
+        print()
+
+        try:
+            choice = input(f"Select apps to delete (e.g. 1,3,5 or 'all'): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return 0
+
+        if not choice:
+            return 0
+
+        if choice.lower() == "all":
+            to_delete = list(range(len(all_apps)))
+        else:
+            try:
+                to_delete = [int(x.strip()) - 1 for x in choice.split(",")]
+                for idx in to_delete:
+                    if idx < 0 or idx >= len(all_apps):
+                        error(f"Invalid selection: {idx + 1}")
+                        return 1
+            except ValueError:
+                error("Invalid input")
+                return 1
+
+        print()
+        deleted = 0
+        for idx in to_delete:
+            kind, uuid, name, _ = all_apps[idx]
+            spinner = Spinner(f"Deleting {name}")
+            spinner.start()
+            try:
+                await client.delete_app(uuid)
+                spinner.stop(success=True)
+                deleted += 1
+            except Exception as e:
+                spinner.fail(f"Failed to delete {name}: {e}")
+
+        print()
+        success(f"Deleted {deleted} app(s)")
+        return 0
+
+    except Exception as e:
+        spinner.fail(str(e))
+        return 1
+    finally:
+        await client.close()
+
+
 async def _interactive_shell(ws_url: str) -> int:
         print(f"{C.DIM}Opening shell... (exit with Ctrl+D or 'exit'){C.RESET}")
         import os, termios, fcntl, struct, tty, contextlib, json
@@ -976,6 +1071,7 @@ def print_help():
     print(f"  {C.BLUE}connect{C.RESET} <device>         Connect to a Truffle device")
     print(f"  {C.BLUE}disconnect{C.RESET} <device|all>  Disconnect and clear credentials")
     print(f"  {C.BLUE}deploy{C.RESET} [path]            Deploy an app (reads type from truffile.yaml)")
+    print(f"  {C.BLUE}delete{C.RESET}                    Delete installed apps from device")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
     print(f"  {C.BLUE}models{C.RESET}                    List AI models on connected device")
     print(f"  {C.BLUE}proxy{C.RESET}                     Start OpenAI-compatible inference proxy")
@@ -1016,6 +1112,8 @@ def main() -> int:
     p_deploy = subparsers.add_parser("deploy", add_help=False)
     p_deploy.add_argument("path", nargs="?", default=".")
     p_deploy.add_argument("-i", "--interactive", action="store_true", help="Interactive terminal mode")
+
+    p_delete = subparsers.add_parser("delete", add_help=False)
 
     p_list = subparsers.add_parser("list", add_help=False)
     p_list.add_argument("what", choices=["apps", "devices"], nargs="?")
@@ -1058,6 +1156,8 @@ def main() -> int:
         return run_async(cmd_connect(args, storage))
     elif args.command == "disconnect":
         return cmd_disconnect(args, storage)
+    elif args.command == "delete":
+        return run_async(cmd_delete(args, storage))
     elif args.command == "deploy":
         return run_async(cmd_deploy(args, storage))
     elif args.command == "list":
