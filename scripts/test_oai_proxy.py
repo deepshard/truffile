@@ -25,6 +25,9 @@ def test_basic(client: OpenAI, model: str) -> None:
         top_p=0.9,
     )
     msg = resp.choices[0].message
+    reasoning = getattr(msg, "reasoning_content", None)
+    if reasoning:
+        print("reasoning_content:", reasoning[:200], "..." if len(reasoning) > 200 else "")
     print("content:", msg.content)
 
 
@@ -85,10 +88,18 @@ def test_stream(client: OpenAI, model: str) -> None:
         stream=True,
     )
     parts: List[str] = []
+    reasoning_parts: List[str] = []
     for chunk in stream:
         delta = chunk.choices[0].delta
-        if delta and delta.content:
-            parts.append(delta.content)
+        if delta:
+            if delta.content:
+                parts.append(delta.content)
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                reasoning_parts.append(reasoning)
+    if reasoning_parts:
+        full_reasoning = "".join(reasoning_parts)
+        print("reasoning_content:", full_reasoning[:200], "..." if len(full_reasoning) > 200 else "")
     print("content:", "".join(parts))
 
 
