@@ -704,7 +704,7 @@ def cmd_list(args, storage: StorageService) -> int:
 
 
 async def cmd_models(storage: StorageService) -> int:
-    """List IF2 models on the connected device."""
+    """List models on your Truffle."""
     device = storage.state.last_used_device
     if not device:
         error("No device connected")
@@ -1667,9 +1667,9 @@ def print_help():
     print(f"  {C.BLUE}validate{C.RESET} [path]          Validate app config and files")
     print(f"  {C.BLUE}delete{C.RESET}                    Delete installed apps from device")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
-    print(f"  {C.BLUE}models{C.RESET}                    List IF2 models on connected device")
-    print(f"  {C.BLUE}chat{C.RESET} [prompt]            Chat with IF2 model on connected device")
-    print(f"  {C.BLUE}proxy{C.RESET}                    Run OpenAI-compatible IF2 proxy")
+    print(f"  {C.BLUE}models{C.RESET}                    List models on your Truffle")
+    print(f"  {C.BLUE}chat{C.RESET} [prompt]            Chat with any model on your Truffle")
+    print(f"  {C.BLUE}proxy{C.RESET}                    Run OpenAI-compatible proxy")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
     print(f"  {C.DIM}truffile scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
@@ -1679,8 +1679,8 @@ def print_help():
     print(f"  {C.DIM}truffile deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
     print(f"  {C.DIM}truffile validate ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile list apps{C.RESET}")
-    print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show IF2 models{C.RESET}")
-    print(f"  {C.DIM}truffile chat \"hello\"{C.RESET}       {C.DIM}# run IF2 chat completion{C.RESET}")
+    print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show models on your Truffle{C.RESET}")
+    print(f"  {C.DIM}truffile chat \"hello\"{C.RESET}       {C.DIM}# run chat completion on your Truffle{C.RESET}")
     print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# run local /v1 proxy{C.RESET}")
     print()
 
