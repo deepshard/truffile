@@ -39,14 +39,6 @@ metadata:
           REPLACE_WITH_KALSHI_PRIVATE_KEY_PEM
 
 steps:
-  # - name: Welcome
-  #   type: welcome
-  #   content: |
-  #     Welcome to Kalshi for Truffle.
-
-  #     This app lets your Truffle trade prediction markets, monitor
-  #     positions, and get alerts on price changes and settlements.
-
   - name: Install dependencies
     type: bash
     run: |
