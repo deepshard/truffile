@@ -47,7 +47,7 @@ async def _wait_for_build_session_ready(client: TruffleClient, timeout_sec: floa
         await asyncio.sleep(1.0)
     if last_error is not None:
         raise RuntimeError(f"build session endpoint did not become ready in time: {last_error}")
-        raise RuntimeError("build session endpoint did not become ready in time")
+    raise RuntimeError("build session endpoint did not become ready in time")
 
 
 async def deploy_with_builder(

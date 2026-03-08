@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-import ast
 import signal
 import socket
 import sys
@@ -8,10 +7,10 @@ import threading
 import time
 from pathlib import Path
 
-import yaml
-
 from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
+from truffile.schema import validate_app_dir
+from truffile.deploy.builder import deploy_with_builder
 
 import grpc
 from truffle.infer.infer_pb2_grpc import InferenceServiceStub
@@ -261,189 +260,6 @@ def cmd_disconnect(args, storage: StorageService) -> int:
     return 0
 
 
-def check_python_syntax(file_path: Path) -> tuple[bool, str]:
-    try:
-        with open(file_path) as f:
-            source = f.read()
-        ast.parse(source)
-        return True, ""
-    except SyntaxError as e:
-        return False, f"Line {e.lineno}: {e.msg}"
-
-
-def validate_app_dir(app_dir: Path) -> tuple[bool, dict | None, str | None, list[str]]:
-    """Validate app directory and return (valid, config, app_type, warnings)."""
-    warnings = []
-    
-    truffile = app_dir / "truffile.yaml"
-    if not truffile.exists():
-        error(f"No truffile.yaml found in {app_dir}")
-        return False, None, None, warnings
-    
-    try:
-        with open(truffile) as f:
-            config = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        error(f"Invalid truffile.yaml: {e}")
-        return False, None, None, warnings
-    
-    meta = config.get("metadata", {})
-    if not meta.get("name"):
-        error("metadata.name is required in truffile.yaml")
-        return False, None, None, warnings
-    
-    cfg_type = meta.get("type", "").lower()
-    if cfg_type in ("background", "ambient"):
-        app_type = "ambient"
-    elif cfg_type in ("foreground", "focus"):
-        app_type = "focus"
-    else:
-        app_type = "focus"
-        warnings.append(f"No type specified in truffile.yaml, defaulting to focus")
-    
-    icon_file = meta.get("icon_file")
-    if icon_file:
-        icon_path = app_dir / icon_file
-        if not icon_path.exists():
-            warnings.append(f"Icon file not found: {icon_file}")
-    else:
-        warnings.append("No icon specified in truffile.yaml")
-    
-    # Check files - either in steps or top-level files:
-    files_to_check = []
-    for step in config.get("steps", []):
-        if step.get("type") == "files":
-            files_to_check.extend(step.get("files", []))
-    # Also check top-level files: (simplified format)
-    files_to_check.extend(config.get("files", []))
-    
-    for f in files_to_check:
-        src = app_dir / f["source"]
-        if not src.exists():
-            error(f"Source file not found: {src}")
-            return False, None, None, warnings
-        if src.suffix == ".py":
-            ok, err = check_python_syntax(src)
-            if not ok:
-                error(f"Syntax error in {src.name}: {err}")
-                return False, None, None, warnings
-    
-    return True, config, app_type, warnings
-
-
-async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_type: str, device: str, interactive: bool = False) -> int:
-    meta = config["metadata"]
-    name = meta["name"]
-    description = meta.get("description", "")
-    process = meta.get("process", {})
-    cmd_list = process.get("cmd", ["python", "app.py"])
-    cwd = process.get("working_directory", "/")
-    env_dict = process.get("environment", {})
-    env = [f"{k}={v}" for k, v in env_dict.items()]
-    icon_file = meta.get("icon_file")
-    icon_path = (app_dir / icon_file) if icon_file and (app_dir / icon_file).exists() else None
-
-    spinner = Spinner(f"Connecting to {device}")
-    spinner.start()
-    await client.connect()
-    spinner.stop(success=True)
-    
-    spinner = Spinner("Starting build session")
-    spinner.start()
-    await client.start_build()
-    await asyncio.sleep(5)
-    spinner.stop(success=True)
-    print(f"  {C.DIM}Session: {client.app_uuid}{C.RESET}")
-    
-    # Always upload files first
-    files_to_upload = []
-    for step in config.get("steps", []):
-        if step.get("type") == "files":
-            files_to_upload.extend(step.get("files", []))
-    files_to_upload.extend(config.get("files", []))
-    
-    for f in files_to_upload:
-        src = app_dir / f["source"]
-        dest = f["destination"]
-        spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
-        spinner.start()
-        result = await client.upload(src, dest)
-        spinner.stop(success=True)
-        print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
-    
-    # always run bash commands
-    bash_commands = []
-    for step in config.get("steps", []):
-        if step.get("type") == "bash":
-            bash_commands.append((step.get("name", "bash"), step["run"]))
-    if config.get("run"):
-        bash_commands.append(("Install dependencies", config["run"]))
-    
-    for step_name, run_cmd in bash_commands:
-        info(f"Running: {step_name}")
-        log = ScrollingLog(height=6, prefix="  ")
-        exit_code = 0
-        async for ev, data in client.exec_stream(run_cmd, cwd=cwd):
-            if ev == "log":
-                try:
-                    import json
-                    obj = json.loads(data)
-                    line = obj.get("line", "")
-                except Exception:
-                    line = data
-                log.add(line)
-            elif ev == "exit":
-                try:
-                    import json
-                    exit_code = int(json.loads(data).get("code", 0))
-                except (ValueError, KeyError):
-                    pass
-        log.finish()
-        if exit_code != 0:
-            error(f"Step '{step_name}' failed with exit code {exit_code}")
-            raise RuntimeError(f"Step '{step_name}' failed with exit code {exit_code}")
-    
-    if interactive:
-        # interactive mode: open shell after setup for testing/debugging
-        print()
-        info("Opening interactive shell (exit with Ctrl+D or 'exit' to finish deploy)")
-        ws_url = str(client.http_base or "").replace("http://", "ws://").replace("https://", "wss://") + "/term"
-        await _interactive_shell(ws_url)
-        print()
-    spinner = Spinner(f"Finishing as {app_type} app")
-    spinner.start()
-    
-    cmd = cmd_list[0] if cmd_list[0].startswith("/") else f"/usr/bin/{cmd_list[0]}"
-    
-    if app_type == "focus":
-        await client.finish_foreground(
-            name=name,
-            cmd=cmd,
-            args=cmd_list[1:],
-            cwd=cwd,
-            env=env,
-            description=description,
-            icon=icon_path,
-        )
-    else:
-        default_schedule = meta.get("default_schedule")
-        await client.finish_background(
-            name=name,
-            cmd=cmd,
-            args=cmd_list[1:],
-            cwd=cwd,
-            env=env,
-            description=description,
-            icon=icon_path,
-            default_schedule=default_schedule,
-        )
-    
-    spinner.stop(success=True)
-    print()
-    success(f"Deployed: {C.BOLD}{name}{C.RESET} ({app_type})")
-    return 0
-
-
 async def cmd_deploy(args, storage: StorageService) -> int:
     app_path = args.path if args.path else "."
     app_dir = Path(app_path).resolve()
@@ -453,8 +269,10 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         return 1
     
     info(f"Validating app in {app_dir.name}")
-    valid, config, app_type, warnings = validate_app_dir(app_dir)
+    valid, config, app_type, warnings, errors = validate_app_dir(app_dir)
     if not valid or not app_type:
+        for msg in errors:
+            error(msg)
         return 1
     
     for w in warnings:
@@ -496,7 +314,26 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     loop.add_signal_handler(signal.SIGINT, handle_sigint)
     
     try:
-        deploy_task = asyncio.create_task(_do_deploy(client, config, app_dir, app_type, device, interactive))
+        deploy_task = asyncio.create_task(
+            deploy_with_builder(
+                client=client,
+                config=config,
+                app_dir=app_dir,
+                app_type=app_type,
+                device=device,
+                interactive=interactive,
+                spinner_cls=Spinner,
+                scrolling_log_cls=ScrollingLog,
+                info=info,
+                success=success,
+                error=error,
+                color_dim=C.DIM,
+                color_reset=C.RESET,
+                color_bold=C.BOLD,
+                arrow=ARROW,
+                interactive_shell=_interactive_shell,
+            )
+        )
         return await deploy_task 
     except asyncio.CancelledError:
         print()

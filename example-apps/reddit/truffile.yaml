@@ -11,6 +11,10 @@ metadata:
       working_directory: /
       environment:
         PYTHONUNBUFFERED: "1"
+        # Comma-separated subreddit list. Use "none" to disable and rely on USER_FEED_URL.
+        SUBREDDITS: "news,worldnews,technology"
+        # Optional personal Reddit JSON feed URL. Use "none" when not used.
+        USER_FEED_URL: "none"
     default_schedule:
       type: interval
       interval:
@@ -35,41 +39,3 @@ steps:
     files:
       - source: ./reddit.py
         destination: ./opt/reddit.py
-  - name: Configure Reddit
-    type: text
-    ui_state_on_show: user_interaction_ready
-    ui_state_on_complete: move_to_background
-    content: |
-      Please provide either a comma separated list of subreddits to follow, or leave blank to follow r/all.
-      Example: news, worldnews, technology, science, funny, pics, videos, gaming
-      Alternatively, [copy the URL of your personal frontpage RSS feed (JSON) from here](https://old.reddit.com/prefs/feeds/)
-      If a personal feed URL is provided and is valid, that will be used instead of the subreddit list.
-    fields:
-      - name: subreddits
-        label: Comma Separated Subreddits
-        type: text 
-        placeholder: news, worldnews, technology, LosAngeles  
-        default: ""
-        env_default_if_empty: "none"
-        env: SUBREDDITS
-      - name: user_feed_url
-        label: Optional - Personal Frontpage RSS Feed URL (JSON)
-        type: text
-        placeholder: "Optional: leave blank to use subreddits (or paste https://old.reddit.com/.json?feed=...&user=...)"
-        default: ""
-        env_default_if_empty: "none"
-        env: USER_FEED_URL
-    validator:
-      type: bash 
-      run: |
-        python /opt/reddit.py --verify
-      timeout: 60 
-      error_message: | 
-        Was unable to scrape Reddit with the provided configuration.
-        Please ensure the subreddit names are valid or the feed URL is correct.
-      
-  
-
-
-
-  

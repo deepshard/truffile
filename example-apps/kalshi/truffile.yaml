@@ -12,6 +12,11 @@ metadata:
       working_directory: /
       environment:
         PYTHONUNBUFFERED: "1"
+        # Required secrets for Kalshi API auth.
+        KALSHI_API_KEY: "REPLACE_WITH_KALSHI_API_KEY"
+        # PEM private key. Use literal block style to preserve newlines.
+        KALSHI_PRIVATE_KEY: |
+          REPLACE_WITH_KALSHI_PRIVATE_KEY_PEM
     default_schedule:
       type: interval
       interval:
@@ -27,6 +32,11 @@ metadata:
       working_directory: /
       environment:
         PYTHONUNBUFFERED: "1"
+        # Required secrets for Kalshi API auth.
+        KALSHI_API_KEY: "REPLACE_WITH_KALSHI_API_KEY"
+        # PEM private key. Use literal block style to preserve newlines.
+        KALSHI_PRIVATE_KEY: |
+          REPLACE_WITH_KALSHI_PRIVATE_KEY_PEM
 
 steps:
   # - name: Welcome
@@ -56,37 +66,3 @@ steps:
         destination: ./kalshi_foreground.py
       - source: ./kalshi_background.py
         destination: ./kalshi_background.py
-
-  - name: Configure Kalshi API credentials
-    type: text
-    ui_state_on_show: user_interaction_ready
-    ui_state_on_complete: move_to_background
-    content: |
-      Kalshi lets your Truffle trade prediction markets, monitor
-      positions, and get alerts on price changes and settlements.
-      By installing this app you agree that Deepshard is not liable for any losses incurred.
-      
-      Enter your Kalshi API credentials.
-      To get these:
-      1. Go to https://kalshi.com/account/profile and log in
-      2. Scroll down to the "API Keys" section and click "Create Key"
-      3. Copy the API Key and Private Key
-      4. Paste the API Key and Private Key into the fields below
-    fields:
-      - name: kalshi_api_key
-        label: Kalshi API Key (UUID format)
-        type: password
-        placeholder: your key goes here
-        env: KALSHI_API_KEY
-      - name: kalshi_private_key
-        label: Kalshi Private Key (RSA PEM)
-        type: password
-        placeholder: "-----BEGIN RSA PRIVATE KEY-----"
-        env: KALSHI_PRIVATE_KEY
-    validator:
-      type: bash
-      run: |
-        python ./kalshi_background.py --verify
-      timeout: 120
-      error_message: |
-        Could not authenticate with Kalshi using the provided credentials.
