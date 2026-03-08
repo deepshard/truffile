@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import re
 import signal
 import socket
 import sys
@@ -36,6 +37,8 @@ CROSS = "✗"
 ARROW = "→"
 DOT = "•"
 WARN = "⚠"
+TOOL_TAGS = ("<toolcall>", "</toolcall>")
+TOOL_TAG_PATTERN = re.compile(r"<toolcall>\s*(.*?)\s*</toolcall>", re.DOTALL)
 
 
 class Spinner:
@@ -939,6 +942,209 @@ def _inject_reasoning_into_chunk(chunk: dict, state: dict) -> dict:
     return chunk
 
 
+def _normalize_finish_reason(fr: str | None) -> str | None:
+    if fr is None:
+        return None
+    s = str(fr).strip().lower()
+    if s in {"stop", "finish_stop"}:
+        return "stop"
+    if s in {"length", "finish_length"}:
+        return "length"
+    if s in {"tool_calls", "toolcalls", "finish_toolcalls"}:
+        return "tool_calls"
+    if s in {"content_filter"}:
+        return "content_filter"
+    return "stop"
+
+
+def _normalize_usage_dict(usage: dict | None) -> dict | None:
+    if not isinstance(usage, dict):
+        return usage
+    if {"prompt_tokens", "completion_tokens", "total_tokens"}.issubset(set(usage.keys())):
+        return usage
+    tokens = usage.get("tokens")
+    if isinstance(tokens, dict):
+        prompt = int(tokens.get("prompt", 0) or 0)
+        completion = int(tokens.get("completion", 0) or 0)
+        out = dict(usage)
+        out["prompt_tokens"] = prompt
+        out["completion_tokens"] = completion
+        out["total_tokens"] = prompt + completion
+        return out
+    return usage
+
+
+def _flatten_content(content: object) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "text":
+                parts.append(str(p.get("text", "")))
+        return "".join(parts)
+    return str(content)
+
+
+def _extract_tool_calls_and_clean(text: str) -> tuple[list[dict], str]:
+    calls: list[dict] = []
+    for m in TOOL_TAG_PATTERN.findall(text):
+        try:
+            obj = json.loads(m.strip())
+            if isinstance(obj, dict):
+                calls.append(obj)
+        except Exception:
+            continue
+    cleaned = TOOL_TAG_PATTERN.sub("", text).strip()
+    return calls, cleaned
+
+
+def _tool_prompt(tools_spec: list[dict]) -> str:
+    desc_lines: list[str] = []
+    for t in tools_spec:
+        if not isinstance(t, dict) or t.get("type") != "function":
+            continue
+        fn = t.get("function", {})
+        if not isinstance(fn, dict):
+            continue
+        name = fn.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        description = str(fn.get("description") or "")
+        params = fn.get("parameters") if isinstance(fn.get("parameters"), dict) else {"type": "object"}
+        desc_lines.append(f"{name}: {description}\nArg Schema: {json.dumps(params, indent=2)}")
+    if not desc_lines:
+        return ""
+    open_tag, close_tag = TOOL_TAGS
+    return (
+        "You have access to the following tools:\n"
+        + "\n".join(desc_lines)
+        + "\nWhen you decide to use a tool, respond with a JSON object enclosed by "
+        + f"{open_tag} and {close_tag} tags in this format:\n"
+        + f"{open_tag}\n"
+        + '{\n  "tool": "<tool_name>",\n  "args": {<tool_arguments_as_json_object>}\n}\n'
+        + f"{close_tag}\n"
+        + "Only use tools listed above, and ensure your JSON is valid."
+    )
+
+
+def _serialize_tool_calls(tool_calls: list[dict]) -> str:
+    blocks: list[str] = []
+    open_tag, close_tag = TOOL_TAGS
+    for tc in tool_calls:
+        if not isinstance(tc, dict) or tc.get("type") != "function":
+            continue
+        fn = tc.get("function", {})
+        if not isinstance(fn, dict):
+            continue
+        name = fn.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        args_raw = fn.get("arguments")
+        args = {}
+        if isinstance(args_raw, str):
+            try:
+                maybe = json.loads(args_raw)
+                if isinstance(maybe, dict):
+                    args = maybe
+            except Exception:
+                args = {"_raw": args_raw}
+        elif isinstance(args_raw, dict):
+            args = args_raw
+        blocks.append(f"{open_tag}\n{json.dumps({'tool': name, 'args': args})}\n{close_tag}")
+    return "\n".join(blocks)
+
+
+def _massage_messages_for_tools(messages: list[dict], tools_spec: list[dict], tool_choice: object) -> list[dict]:
+    out: list[dict] = []
+    prompt = _tool_prompt(tools_spec) if tool_choice != "none" else ""
+    injected = False
+
+    tool_name_by_id: dict[str, str] = {}
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls", []) or []:
+                if isinstance(tc, dict):
+                    tc_id = tc.get("id")
+                    fn = tc.get("function", {})
+                    if isinstance(tc_id, str) and isinstance(fn, dict) and isinstance(fn.get("name"), str):
+                        tool_name_by_id[tc_id] = fn["name"]
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = _flatten_content(msg.get("content"))
+
+        if role == "assistant" and isinstance(msg.get("tool_calls"), list):
+            serialized = _serialize_tool_calls(msg.get("tool_calls") or [])
+            if serialized:
+                content = (content + "\n" + serialized).strip()
+
+        if role == "tool":
+            tool_name = msg.get("name")
+            if not isinstance(tool_name, str) or not tool_name:
+                tcid = msg.get("tool_call_id")
+                if isinstance(tcid, str):
+                    tool_name = tool_name_by_id.get(tcid, "")
+            content = f'<tool_result> "tool" : "{tool_name or ""}" "output": "{content}" </tool_result>'
+
+        if role == "system" and prompt and not injected:
+            content = (content + "\n\n" + prompt).strip()
+            injected = True
+
+        out.append({"role": role, "content": content})
+
+    if prompt and not injected:
+        out.insert(0, {"role": "system", "content": prompt})
+    return out
+
+
+class _ToolTagStreamFilter:
+    def __init__(self):
+        self.buf = ""
+
+    def feed(self, text: str) -> str:
+        if not text:
+            return ""
+        s = self.buf + text
+        self.buf = ""
+        out: list[str] = []
+        open_tag, close_tag = TOOL_TAGS
+        while s:
+            start = s.find(open_tag)
+            if start == -1:
+                keep = len(open_tag) - 1
+                if len(s) > keep:
+                    out.append(s[:-keep] if keep > 0 else s)
+                    self.buf = s[-keep:] if keep > 0 else ""
+                else:
+                    self.buf = s
+                break
+            if start > 0:
+                out.append(s[:start])
+            s = s[start:]
+            end = s.find(close_tag)
+            if end == -1:
+                self.buf = s
+                break
+            s = s[end + len(close_tag):]
+        return "".join(out)
+
+    def finalize(self) -> str:
+        if not self.buf:
+            return ""
+        open_tag, _ = TOOL_TAGS
+        if open_tag in self.buf:
+            self.buf = ""
+            return ""
+        tail = self.buf
+        self.buf = ""
+        return tail
+
+
 def _inject_reasoning_into_response(body: dict) -> dict:
     choices = body.get("choices")
     if not isinstance(choices, list):
@@ -1044,6 +1250,17 @@ async def cmd_proxy(args, storage: StorageService) -> int:
             if mapped == "/if2/v1/chat/completions":
                 if "reasoning" not in body:
                     body["reasoning"] = {"enabled": False}
+                if isinstance(body.get("tools"), list):
+                    messages = body.get("messages", [])
+                    if isinstance(messages, list):
+                        body["messages"] = _massage_messages_for_tools(
+                            messages=messages,
+                            tools_spec=body.get("tools") or [],
+                            tool_choice=body.get("tool_choice"),
+                        )
+                # Let proxy map tool tags back to OpenAI tool_calls.
+                body.pop("tools", None)
+                body.pop("tool_choice", None)
 
             stream_mode = bool(body.get("stream")) and mapped == "/if2/v1/chat/completions"
 
@@ -1063,6 +1280,12 @@ async def cmd_proxy(args, storage: StorageService) -> int:
                             self.end_headers()
 
                             state = {"thinking_open": False}
+                            tool_filter = _ToolTagStreamFilter()
+                            acc_text_parts: list[str] = []
+                            seen_finish_reason: str | None = None
+                            stream_id = None
+                            created = None
+                            model_name = None
                             for raw_line in resp.iter_lines():
                                 line = raw_line if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace")
                                 if not line:
@@ -1072,6 +1295,63 @@ async def cmd_proxy(args, storage: StorageService) -> int:
                                 if line.startswith("data:"):
                                     payload = line[5:].strip()
                                     if payload == "[DONE]":
+                                        clean_tail = tool_filter.finalize()
+                                        if clean_tail:
+                                            chunk = {
+                                                "choices": [{"index": 0, "delta": {"content": clean_tail}, "finish_reason": None}]
+                                            }
+                                            if stream_id is not None:
+                                                chunk["id"] = stream_id
+                                            if created is not None:
+                                                chunk["created"] = created
+                                            if model_name is not None:
+                                                chunk["model"] = model_name
+                                            out = f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+                                            self.wfile.write(out.encode("utf-8"))
+
+                                        if acc_text_parts:
+                                            tool_calls, _clean = _extract_tool_calls_and_clean("".join(acc_text_parts))
+                                            if tool_calls:
+                                                tc_list = []
+                                                for i, tc in enumerate(tool_calls):
+                                                    name = str(tc.get("tool", ""))
+                                                    args = tc.get("args", {})
+                                                    if not isinstance(args, dict):
+                                                        args = {"_raw": str(args)}
+                                                    tc_list.append(
+                                                        {
+                                                            "id": f"call_{i+1}",
+                                                            "type": "function",
+                                                            "index": i,
+                                                            "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
+                                                        }
+                                                    )
+                                                tc_chunk = {
+                                                    "choices": [{"index": 0, "delta": {"tool_calls": tc_list}, "finish_reason": None}]
+                                                }
+                                                if stream_id is not None:
+                                                    tc_chunk["id"] = stream_id
+                                                if created is not None:
+                                                    tc_chunk["created"] = created
+                                                if model_name is not None:
+                                                    tc_chunk["model"] = model_name
+                                                out = f"data: {json.dumps(tc_chunk, separators=(',', ':'))}\n\n"
+                                                self.wfile.write(out.encode("utf-8"))
+                                                seen_finish_reason = "tool_calls"
+
+                                        if seen_finish_reason is None:
+                                            fin = {
+                                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                                            }
+                                            if stream_id is not None:
+                                                fin["id"] = stream_id
+                                            if created is not None:
+                                                fin["created"] = created
+                                            if model_name is not None:
+                                                fin["model"] = model_name
+                                            out = f"data: {json.dumps(fin, separators=(',', ':'))}\n\n"
+                                            self.wfile.write(out.encode("utf-8"))
+
                                         if include_think_tags and state.get("thinking_open", False):
                                             close_evt = {
                                                 "choices": [{"delta": {"content": "\n</think>\n"}, "index": 0}]
@@ -1083,8 +1363,41 @@ async def cmd_proxy(args, storage: StorageService) -> int:
                                         break
                                     try:
                                         evt = json.loads(payload)
+                                        if stream_id is None and isinstance(evt, dict):
+                                            stream_id = evt.get("id")
+                                            created = evt.get("created")
+                                            model_name = evt.get("model")
                                         if include_think_tags:
                                             evt = _inject_reasoning_into_chunk(evt, state)
+                                        else:
+                                            # OpenAI-style proxy field for reasoning deltas.
+                                            choices = evt.get("choices")
+                                            if isinstance(choices, list) and choices:
+                                                c0 = choices[0]
+                                                if isinstance(c0, dict):
+                                                    delta = c0.get("delta")
+                                                    if isinstance(delta, dict) and isinstance(delta.get("reasoning"), str):
+                                                        delta["reasoning_content"] = delta.pop("reasoning")
+                                        choices = evt.get("choices")
+                                        if isinstance(choices, list) and choices:
+                                            c0 = choices[0]
+                                            if isinstance(c0, dict):
+                                                fr = c0.get("finish_reason")
+                                                mapped_fr = _normalize_finish_reason(fr) if fr is not None else None
+                                                if fr is not None:
+                                                    c0["finish_reason"] = mapped_fr
+                                                    seen_finish_reason = mapped_fr
+                                                delta = c0.get("delta")
+                                                if isinstance(delta, dict):
+                                                    content = delta.get("content")
+                                                    if isinstance(content, str) and content:
+                                                        acc_text_parts.append(content)
+                                                        filtered = tool_filter.feed(content)
+                                                        if filtered != content:
+                                                            if filtered:
+                                                                delta["content"] = filtered
+                                                            else:
+                                                                delta.pop("content", None)
                                         out = f"data: {json.dumps(evt, separators=(',', ':'))}\n\n"
                                     except Exception:
                                         out = f"{line}\n\n"
@@ -1108,6 +1421,74 @@ async def cmd_proxy(args, storage: StorageService) -> int:
                             try:
                                 parsed = json.loads(content.decode("utf-8"))
                                 parsed = _inject_reasoning_into_response(parsed)
+                                choices = parsed.get("choices")
+                                if isinstance(choices, list) and choices:
+                                    c0 = choices[0]
+                                    if isinstance(c0, dict):
+                                        msg = c0.get("message")
+                                        if isinstance(msg, dict):
+                                            msg_content = msg.get("content")
+                                            if isinstance(msg_content, str):
+                                                tool_calls, cleaned = _extract_tool_calls_and_clean(msg_content)
+                                                if tool_calls:
+                                                    tc_list = []
+                                                    for i, tc in enumerate(tool_calls):
+                                                        name = str(tc.get("tool", ""))
+                                                        args = tc.get("args", {})
+                                                        if not isinstance(args, dict):
+                                                            args = {"_raw": str(args)}
+                                                        tc_list.append(
+                                                            {
+                                                                "id": f"call_{i+1}",
+                                                                "type": "function",
+                                                                "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
+                                                            }
+                                                        )
+                                                    msg["tool_calls"] = tc_list
+                                                    msg["content"] = cleaned if cleaned else None
+                                                    c0["finish_reason"] = "tool_calls"
+                                        fr = c0.get("finish_reason")
+                                        c0["finish_reason"] = _normalize_finish_reason(fr) if fr is not None else None
+                                usage = parsed.get("usage")
+                                if isinstance(usage, dict):
+                                    parsed["usage"] = _normalize_usage_dict(usage)
+                                content = json.dumps(parsed).encode("utf-8")
+                            except Exception:
+                                pass
+                        elif mapped == "/if2/v1/chat/completions" and "application/json" in resp.headers.get("content-type", ""):
+                            try:
+                                parsed = json.loads(content.decode("utf-8"))
+                                choices = parsed.get("choices")
+                                if isinstance(choices, list) and choices:
+                                    c0 = choices[0]
+                                    if isinstance(c0, dict):
+                                        msg = c0.get("message")
+                                        if isinstance(msg, dict):
+                                            msg_content = msg.get("content")
+                                            if isinstance(msg_content, str):
+                                                tool_calls, cleaned = _extract_tool_calls_and_clean(msg_content)
+                                                if tool_calls:
+                                                    tc_list = []
+                                                    for i, tc in enumerate(tool_calls):
+                                                        name = str(tc.get("tool", ""))
+                                                        args = tc.get("args", {})
+                                                        if not isinstance(args, dict):
+                                                            args = {"_raw": str(args)}
+                                                        tc_list.append(
+                                                            {
+                                                                "id": f"call_{i+1}",
+                                                                "type": "function",
+                                                                "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
+                                                            }
+                                                        )
+                                                    msg["tool_calls"] = tc_list
+                                                    msg["content"] = cleaned if cleaned else None
+                                                    c0["finish_reason"] = "tool_calls"
+                                        fr = c0.get("finish_reason")
+                                        c0["finish_reason"] = _normalize_finish_reason(fr) if fr is not None else None
+                                usage = parsed.get("usage")
+                                if isinstance(usage, dict):
+                                    parsed["usage"] = _normalize_usage_dict(usage)
                                 content = json.dumps(parsed).encode("utf-8")
                             except Exception:
                                 pass

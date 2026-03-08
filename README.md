@@ -1,132 +1,95 @@
-# truffile
+# 🍄‍🟫 Truffile
 
-TruffleOS SDK - deploy apps to Truffle devices
+Python SDK/CLI for Truffle devices.
 
-## proto sync
+## What It Does
 
-`truffile` vendors generated protobuf modules from `pyfw/python/truffle`.
+- discovers and connects to your Truffle (`scan`, `connect`, `disconnect`)
+- validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
+- manages installed apps (`list apps`, `delete`)
+- talks to inference directly (`models`, `chat`)
+- exposes an OpenAI-compatible local proxy (`proxy`)
 
-To refresh them:
+## Start making your Own Apps
+
+- app schema and validation: `truffile/truffile/schema/app_config.py`
+- schedule parsing: `truffile/truffile/schedule.py`
+- deploy planning + builder flow: `truffile/truffile/deploy/builder.py`
+- generated TruffleOS protos vendored in: `truffile/truffle/`
+- examples:
+  - `truffile/example-apps/kalshi`
+  - `truffile/example-apps/reddit`
+
+`truffile.yaml` defines:
+- metadata (`name`, `description`, `type`)
+- process (`cmd`, `working_directory`, `environment`)
+- files to upload
+- optional run/build commands
+- background schedule policy (for BG apps)
+
+## App Types and Runtime Model
+
+Apps can be:
+
+- foreground (`fg`): exposes MCP tools that tasks/agents can call during active execution
+- background (`bg`): runs on schedule and emits context for proactivity, enabling the device to trigger actions and write/update memory
+- both (`fg` + `bg`): one app package can provide MCP tools and scheduled context emission
+
+How to think about it:
+
+- FG path is tool-serving: app process is used as a callable capability surface (MCP)
+- BG path is context/proactivity: scheduled runs feed the proactive agent with fresh signals
+- Proactivity can take actions and persist memory based on BG outputs
+
+In practice:
+
+- use `fg` when you need direct tool invocation from tasks
+- use `bg` when you need periodic monitoring, summaries, or event-driven context
+- use `both` when the same app should both expose tools and continuously feed proactivity/memory
+
+## Core Commands
+
+```bash
+truffile scan
+truffile connect <device>
+truffile validate [app_dir]
+truffile deploy [app_dir]
+truffile deploy --dry-run [app_dir]
+truffile list apps
+truffile delete
+truffile models
+truffile chat "hello"
+truffile proxy --host 127.0.0.1 --port 8080
+```
+
+## Inference Interfaces
+
+Direct IF2:
+- list models: `GET /if2/v1/models`
+- chat completions: `POST /if2/v1/chat/completions`
+
+CLI wrappers:
+- `truffile models`
+- `truffile chat` (streaming by default)
+
+## Proxy
+
+`truffile proxy` serves OpenAI-compatible routes locally and forwards to device IF2:
+
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+
+Default local base URL:
+- `http://127.0.0.1:8080/v1`
+
+Reasoning behavior:
+- default: proxy can inject reasoning into `content` as `<think>...</think>`
+- `--no-think-tags`: keeps reasoning separate as `reasoning_content` in stream deltas
+
+## Proto Sync
+
+Refresh vendored protos from firmware repo:
 
 ```bash
 ./scripts/sync_protos.sh
 ```
-
-## install
-
-```bash
-pip install truffile
-```
-
-or from source:
-```bash
-git clone <repo>
-cd truffile
-pip install -e .
-```
-
-## commands
-
-```bash
-# find truffle devices on your network
-truffile scan
-
-# connect to a device (first time requires approval on device)
-truffile connect truffle-6272
-
-# deploy an app from current directory
-truffile deploy
-
-# deploy an app from a specific path
-truffile deploy ./my-app
-
-# deploy with interactive shell (for debugging)
-truffile deploy -i
-
-# list installed apps on connected device
-truffile list apps
-
-# list connected devices
-truffile list devices
-
-# list IF2 models on the connected device
-truffile models
-
-# chat with IF2 model (streaming by default)
-truffile chat "hello"
-
-# chat with explicit model + system prompt
-truffile chat --model <model-id-or-uuid> --system "You are concise" --prompt "Summarize this"
-
-# run OpenAI-compatible proxy backed by IF2
-truffile proxy --host 127.0.0.1 --port 8080
-
-# disconnect from a device
-truffile disconnect truffle-6272
-
-# disconnect from all devices
-truffile disconnect all
-
-# OpenAI-compatible base URL (proxy mode)
-# http://127.0.0.1:8080/v1
-```
-
-## truffile.yaml
-
-apps need a `truffile.yaml` in their directory:
-
-```yaml
-metadata:
-  name: My App
-  description: does cool stuff
-  type: background  # or foreground
-  icon_file: ./icon.png
-  process:
-    cmd: [python, app.py]
-    working_directory: /
-    environment:
-      MY_VAR: value
-  # schedule for background apps only:
-  default_schedule:
-    type: interval  # interval | times
-    interval:
-      duration: "1h"  # 15m, 2h, 1d, etc.
-      schedule:
-        daily_window: "09:00-17:30"  # optional
-        allowed_days: [mon, tue, wed, thu, fri]  # optional
-
-files:
-  - source: ./app.py
-    destination: ./app.py
-
-run: |
-  pip install requests
-```
-
-### schedule types
-
-**interval** - run every N minutes/hours:
-```yaml
-default_schedule:
-  type: interval
-  interval:
-    duration: "30m"
-    schedule:
-      daily_window: "06:00-22:00"
-      allowed_days: [mon, tue, wed, thu, fri]
-```
-
-**times** - run at specific times:
-```yaml
-default_schedule:
-  type: times
-  times:
-    run_times: ["08:00", "12:00", "18:00"]
-    allowed_days: [mon, tue, wed, thu, fri]
-```
-
-## example apps
-
-see `example-apps/` for working examples:
-- `example-apps/kalshi` - foreground + background app
-- `example-apps/reddit` - background app
