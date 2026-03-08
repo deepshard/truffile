@@ -16,9 +16,9 @@ Python SDK/CLI for Truffle devices.
 - schedule parsing: `truffile/truffile/schedule.py`
 - deploy planning + builder flow: `truffile/truffile/deploy/builder.py`
 - generated TruffleOS protos vendored in: `truffile/truffle/`
-- examples:
-  - `truffile/example-apps/kalshi`
-  - `truffile/example-apps/reddit`
+- app store examples:
+  - `truffile/app-store/kalshi`
+  - `truffile/app-store/reddit`
 
 `truffile.yaml` defines:
 - metadata (`name`, `description`, `type`)
@@ -93,3 +93,14 @@ Refresh vendored protos from firmware repo:
 ```bash
 ./scripts/sync_protos.sh
 ```
+
+## Contributors
+
+Contributors are welcome to submit apps to the Truffle App Store.
+
+To submit:
+- open a PR with your app under the `app-store/` folder
+- include a screen recording of your app in action
+
+The Truffle team will deploy accepted apps to the App Store for everyone with Truffle to use and your name will be featured there!
+There may be small changes needed to make the app run optimally, but most features and the credit will remain yours.

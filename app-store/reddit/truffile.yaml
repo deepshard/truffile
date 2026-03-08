@@ -24,12 +24,6 @@ metadata:
           daily_window: "00:00-23:59"
   icon_file: ./icon.png  
 steps:
-  # - name: Reddit Setup
-  #   type: welcome
-  #   content: |
-  #     The Reddit app will allow your Truffle to post relevant content from Reddit on your feed.
-  #     You can customize which subreddits to follow in the configuration step.
-  #     Please use this app in accordance with Reddit's terms of service.
   - name: Install dependencies
     type: bash
     run: |
