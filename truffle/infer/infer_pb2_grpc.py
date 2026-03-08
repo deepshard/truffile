@@ -11,7 +11,7 @@ from truffle.infer import irequest_pb2 as truffle_dot_infer_dot_irequest__pb2
 from truffle.infer import iresponse_pb2 as truffle_dot_infer_dot_iresponse__pb2
 from truffle.infer import model_pb2 as truffle_dot_infer_dot_model__pb2
 
-GRPC_GENERATED_VERSION = '1.72.0'
+GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -24,7 +24,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in truffle/infer/infer_pb2_grpc.py depends on'
+        + ' but the generated code in truffle/infer/infer_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -33,11 +33,7 @@ if _version_not_supported:
 
 class InferenceServiceStub(object):
     """
-    Defines the main gRPC service for all AI inference operations.
-    This service is the primary entry point for clients to interact with generative
-    models, create embeddings, manage model configurations, and use other related
-    utility functions. It consolidates all necessary data structures from other
-    .proto files into a single, cohesive API.
+    legacy inference service apis (v1)
     """
 
     def __init__(self, channel):
@@ -120,114 +116,89 @@ class InferenceServiceStub(object):
 
 class InferenceServiceServicer(object):
     """
-    Defines the main gRPC service for all AI inference operations.
-    This service is the primary entry point for clients to interact with generative
-    models, create embeddings, manage model configurations, and use other related
-    utility functions. It consolidates all necessary data structures from other
-    .proto files into a single, cohesive API.
+    legacy inference service apis (v1)
     """
 
     def Generate(self, request, context):
-        """Starts a generation task that streams responses back to the client.
-        This is suitable for interactive applications where responses are displayed
-        as they are generated.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GenerateSync(self, request, context):
-        """Performs a generation task and returns the full response in a single message.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GenerateBatch(self, request, context):
-        """Processes a batch of inference requests in parallel.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def Embed(self, request, context):
-        """Generates embeddings for a given set of inputs. Embeddings are numerical
-        representations of text that can be used for semantic search, clustering,
-        and other machine learning tasks.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def EmbedQueries(self, request, context):
-        """A specialized version of Embed for generating embeddings for
-        search queries.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetModelList(self, request, context):
-        """Retrieves a list of all available models.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetModel(self, request, context):
-        """Fetches detailed information about a specific model.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def SetModels(self, request, context):
-        """Configures model parameters such as context length, batch size etc.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetModelState(self, request, context):
-        """Gets the current state of a model, such as loading, loaded, unloaded etc.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def OnModelStateChange(self, request, context):
-        """Subscribes to updates on the state of a model to avoid polling.
-        pass an empty ID to get updates for all models.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetEmbeddingModelList(self, request, context):
-        """Retrieves a list of all available embedding models.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetEmbeddingModelInfo(self, request, context):
-        """Gets detailed information about a specific embedding model (input length, dimension size etc).
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def BuildConvo(self, request, context):
-        """Builds a context from a conversation.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def ValidateGenerationConfig(self, request, context):
-        """Validates a generation configuration to ensure that it is compatible with
-        the models.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -315,11 +286,7 @@ def add_InferenceServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class InferenceService(object):
     """
-    Defines the main gRPC service for all AI inference operations.
-    This service is the primary entry point for clients to interact with generative
-    models, create embeddings, manage model configurations, and use other related
-    utility functions. It consolidates all necessary data structures from other
-    .proto files into a single, cohesive API.
+    legacy inference service apis (v1)
     """
 
     @staticmethod

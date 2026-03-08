@@ -5,7 +5,7 @@ import warnings
 
 from truffle.app import background_pb2 as truffle_dot_app_dot_background__pb2
 
-GRPC_GENERATED_VERSION = '1.72.0'
+GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in truffle/app/background_pb2_grpc.py depends on'
+        + ' but the generated code in truffle/app/background_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -37,10 +37,10 @@ class BackgroundAppServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.SubmitFeedContent = channel.unary_unary(
-                '/truffle.app.BackgroundAppService/SubmitFeedContent',
-                request_serializer=truffle_dot_app_dot_background__pb2.BackgroundAppSubmitFeedContentRequest.SerializeToString,
-                response_deserializer=truffle_dot_app_dot_background__pb2.BackgroundAppSubmitFeedContentResponse.FromString,
+        self.Submit = channel.unary_unary(
+                '/truffle.app.BackgroundAppService/Submit',
+                request_serializer=truffle_dot_app_dot_background__pb2.BackgroundAppSubmitContextRequest.SerializeToString,
+                response_deserializer=truffle_dot_app_dot_background__pb2.BackgroundAppSubmitContextResponse.FromString,
                 _registered_method=True)
         self.OnRun = channel.unary_unary(
                 '/truffle.app.BackgroundAppService/OnRun',
@@ -52,11 +52,6 @@ class BackgroundAppServiceStub(object):
                 request_serializer=truffle_dot_app_dot_background__pb2.BackgroundAppYieldRequest.SerializeToString,
                 response_deserializer=truffle_dot_app_dot_background__pb2.BackgroundAppYieldResponse.FromString,
                 _registered_method=True)
-        self.ReportError = channel.unary_unary(
-                '/truffle.app.BackgroundAppService/ReportError',
-                request_serializer=truffle_dot_app_dot_background__pb2.BackgroundAppReportErrorRequest.SerializeToString,
-                response_deserializer=truffle_dot_app_dot_background__pb2.BackgroundAppReportErrorResponse.FromString,
-                _registered_method=True)
 
 
 class BackgroundAppServiceServicer(object):
@@ -65,8 +60,8 @@ class BackgroundAppServiceServicer(object):
     gated by per app api key, available in the environment when the app is run.
     """
 
-    def SubmitFeedContent(self, request, context):
-        """post to curator/feed
+    def Submit(self, request, context):
+        """post context 
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -85,19 +80,13 @@ class BackgroundAppServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ReportError(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_BackgroundAppServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'SubmitFeedContent': grpc.unary_unary_rpc_method_handler(
-                    servicer.SubmitFeedContent,
-                    request_deserializer=truffle_dot_app_dot_background__pb2.BackgroundAppSubmitFeedContentRequest.FromString,
-                    response_serializer=truffle_dot_app_dot_background__pb2.BackgroundAppSubmitFeedContentResponse.SerializeToString,
+            'Submit': grpc.unary_unary_rpc_method_handler(
+                    servicer.Submit,
+                    request_deserializer=truffle_dot_app_dot_background__pb2.BackgroundAppSubmitContextRequest.FromString,
+                    response_serializer=truffle_dot_app_dot_background__pb2.BackgroundAppSubmitContextResponse.SerializeToString,
             ),
             'OnRun': grpc.unary_unary_rpc_method_handler(
                     servicer.OnRun,
@@ -108,11 +97,6 @@ def add_BackgroundAppServiceServicer_to_server(servicer, server):
                     servicer.Yield,
                     request_deserializer=truffle_dot_app_dot_background__pb2.BackgroundAppYieldRequest.FromString,
                     response_serializer=truffle_dot_app_dot_background__pb2.BackgroundAppYieldResponse.SerializeToString,
-            ),
-            'ReportError': grpc.unary_unary_rpc_method_handler(
-                    servicer.ReportError,
-                    request_deserializer=truffle_dot_app_dot_background__pb2.BackgroundAppReportErrorRequest.FromString,
-                    response_serializer=truffle_dot_app_dot_background__pb2.BackgroundAppReportErrorResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -129,7 +113,7 @@ class BackgroundAppService(object):
     """
 
     @staticmethod
-    def SubmitFeedContent(request,
+    def Submit(request,
             target,
             options=(),
             channel_credentials=None,
@@ -142,9 +126,9 @@ class BackgroundAppService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/truffle.app.BackgroundAppService/SubmitFeedContent',
-            truffle_dot_app_dot_background__pb2.BackgroundAppSubmitFeedContentRequest.SerializeToString,
-            truffle_dot_app_dot_background__pb2.BackgroundAppSubmitFeedContentResponse.FromString,
+            '/truffle.app.BackgroundAppService/Submit',
+            truffle_dot_app_dot_background__pb2.BackgroundAppSubmitContextRequest.SerializeToString,
+            truffle_dot_app_dot_background__pb2.BackgroundAppSubmitContextResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -199,33 +183,6 @@ class BackgroundAppService(object):
             '/truffle.app.BackgroundAppService/Yield',
             truffle_dot_app_dot_background__pb2.BackgroundAppYieldRequest.SerializeToString,
             truffle_dot_app_dot_background__pb2.BackgroundAppYieldResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ReportError(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/truffle.app.BackgroundAppService/ReportError',
-            truffle_dot_app_dot_background__pb2.BackgroundAppReportErrorRequest.SerializeToString,
-            truffle_dot_app_dot_background__pb2.BackgroundAppReportErrorResponse.FromString,
             options,
             channel_credentials,
             insecure,

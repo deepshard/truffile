@@ -16,7 +16,5 @@ class SystemSettings(_message.Message):
     def __init__(self, hardware_settings: _Optional[_Union[_hardware_settings_pb2.HardwareSettings, _Mapping]] = ..., task_settings: _Optional[_Union[TaskSettings, _Mapping]] = ...) -> None: ...
 
 class TaskSettings(_message.Message):
-    __slots__ = ("default_model_uuid",)
-    DEFAULT_MODEL_UUID_FIELD_NUMBER: _ClassVar[int]
-    default_model_uuid: str
-    def __init__(self, default_model_uuid: _Optional[str] = ...) -> None: ...
+    __slots__ = ()
+    def __init__(self) -> None: ...

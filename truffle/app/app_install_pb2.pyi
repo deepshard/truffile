@@ -1,6 +1,8 @@
 from truffle.os import installer_pb2 as _installer_pb2
+from truffle.app import app_pb2 as _app_pb2
 from truffle.app import app_build_pb2 as _app_build_pb2
 from truffle.app import background_pb2 as _background_pb2
+from truffle.app import foreground_pb2 as _foreground_pb2
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
 from collections.abc import Mapping as _Mapping
@@ -15,9 +17,9 @@ class GetFinalInstallInfoRequest(_message.Message):
     def __init__(self, app_uuid: _Optional[str] = ...) -> None: ...
 
 class GetFinalInstallInfoResponse(_message.Message):
-    __slots__ = ("process_config", "bg_rt_policy")
-    PROCESS_CONFIG_FIELD_NUMBER: _ClassVar[int]
-    BG_RT_POLICY_FIELD_NUMBER: _ClassVar[int]
-    process_config: _app_build_pb2.ProcessConfig
-    bg_rt_policy: _background_pb2.BackgroundAppRuntimePolicy
-    def __init__(self, process_config: _Optional[_Union[_app_build_pb2.ProcessConfig, _Mapping]] = ..., bg_rt_policy: _Optional[_Union[_background_pb2.BackgroundAppRuntimePolicy, _Mapping]] = ...) -> None: ...
+    __slots__ = ("bg_build_info", "fg_build_info")
+    BG_BUILD_INFO_FIELD_NUMBER: _ClassVar[int]
+    FG_BUILD_INFO_FIELD_NUMBER: _ClassVar[int]
+    bg_build_info: _background_pb2.BackgroundAppBuildInfo
+    fg_build_info: _foreground_pb2.ForegroundAppBuildInfo
+    def __init__(self, bg_build_info: _Optional[_Union[_background_pb2.BackgroundAppBuildInfo, _Mapping]] = ..., fg_build_info: _Optional[_Union[_foreground_pb2.ForegroundAppBuildInfo, _Mapping]] = ...) -> None: ...

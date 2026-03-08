@@ -1,8 +1,10 @@
+import datetime
+
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf import duration_pb2 as _duration_pb2
 from google.protobuf import descriptor_pb2 as _descriptor_pb2
-from truffle.app import background_feed_pb2 as _background_feed_pb2
 from truffle.common import icon_pb2 as _icon_pb2
+from truffle.app import app_build_pb2 as _app_build_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -76,7 +78,7 @@ class BackgroundAppRuntimePolicy(_message.Message):
         SCHEDULE_FIELD_NUMBER: _ClassVar[int]
         duration: _duration_pb2.Duration
         schedule: BackgroundAppRuntimePolicy.Interval.Schedule
-        def __init__(self, duration: _Optional[_Union[_duration_pb2.Duration, _Mapping]] = ..., schedule: _Optional[_Union[BackgroundAppRuntimePolicy.Interval.Schedule, _Mapping]] = ...) -> None: ...
+        def __init__(self, duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., schedule: _Optional[_Union[BackgroundAppRuntimePolicy.Interval.Schedule, _Mapping]] = ...) -> None: ...
     class SpecificTimes(_message.Message):
         __slots__ = ("run_times", "weekly_window")
         RUN_TIMES_FIELD_NUMBER: _ClassVar[int]
@@ -95,64 +97,49 @@ class BackgroundAppRuntimePolicy(_message.Message):
     times: BackgroundAppRuntimePolicy.SpecificTimes
     always: BackgroundAppRuntimePolicy.Always
     feed_entry_retention: _duration_pb2.Duration
-    def __init__(self, interval: _Optional[_Union[BackgroundAppRuntimePolicy.Interval, _Mapping]] = ..., times: _Optional[_Union[BackgroundAppRuntimePolicy.SpecificTimes, _Mapping]] = ..., always: _Optional[_Union[BackgroundAppRuntimePolicy.Always, _Mapping]] = ..., feed_entry_retention: _Optional[_Union[_duration_pb2.Duration, _Mapping]] = ...) -> None: ...
+    def __init__(self, interval: _Optional[_Union[BackgroundAppRuntimePolicy.Interval, _Mapping]] = ..., times: _Optional[_Union[BackgroundAppRuntimePolicy.SpecificTimes, _Mapping]] = ..., always: _Optional[_Union[BackgroundAppRuntimePolicy.Always, _Mapping]] = ..., feed_entry_retention: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ...) -> None: ...
 
 class BackgroundApp(_message.Message):
-    __slots__ = ("uuid", "metadata", "runtime_policy")
-    class Metadata(_message.Message):
-        __slots__ = ("name", "icon", "description")
-        NAME_FIELD_NUMBER: _ClassVar[int]
-        ICON_FIELD_NUMBER: _ClassVar[int]
-        DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
-        name: str
-        icon: _icon_pb2.Icon
-        description: str
-        def __init__(self, name: _Optional[str] = ..., icon: _Optional[_Union[_icon_pb2.Icon, _Mapping]] = ..., description: _Optional[str] = ...) -> None: ...
-    UUID_FIELD_NUMBER: _ClassVar[int]
-    METADATA_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("runtime_policy",)
     RUNTIME_POLICY_FIELD_NUMBER: _ClassVar[int]
-    uuid: str
-    metadata: BackgroundApp.Metadata
     runtime_policy: BackgroundAppRuntimePolicy
-    def __init__(self, uuid: _Optional[str] = ..., metadata: _Optional[_Union[BackgroundApp.Metadata, _Mapping]] = ..., runtime_policy: _Optional[_Union[BackgroundAppRuntimePolicy, _Mapping]] = ...) -> None: ...
-
-class BackgroundAppNotification(_message.Message):
-    __slots__ = ("feed_entry_ids", "operation")
-    class Operation(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-        __slots__ = ()
-        OPERATION_INVALID: _ClassVar[BackgroundAppNotification.Operation]
-        OPERATION_ADD: _ClassVar[BackgroundAppNotification.Operation]
-        OPERATION_DELETE: _ClassVar[BackgroundAppNotification.Operation]
-        OPERATION_REFRESH: _ClassVar[BackgroundAppNotification.Operation]
-    OPERATION_INVALID: BackgroundAppNotification.Operation
-    OPERATION_ADD: BackgroundAppNotification.Operation
-    OPERATION_DELETE: BackgroundAppNotification.Operation
-    OPERATION_REFRESH: BackgroundAppNotification.Operation
-    FEED_ENTRY_IDS_FIELD_NUMBER: _ClassVar[int]
-    OPERATION_FIELD_NUMBER: _ClassVar[int]
-    feed_entry_ids: _containers.RepeatedScalarFieldContainer[int]
-    operation: BackgroundAppNotification.Operation
-    def __init__(self, feed_entry_ids: _Optional[_Iterable[int]] = ..., operation: _Optional[_Union[BackgroundAppNotification.Operation, str]] = ...) -> None: ...
+    def __init__(self, runtime_policy: _Optional[_Union[BackgroundAppRuntimePolicy, _Mapping]] = ...) -> None: ...
 
 class BackgroundAppBuildInfo(_message.Message):
-    __slots__ = ("metadata", "runtime_policy")
-    METADATA_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("process", "runtime_policy")
+    PROCESS_FIELD_NUMBER: _ClassVar[int]
     RUNTIME_POLICY_FIELD_NUMBER: _ClassVar[int]
-    metadata: BackgroundApp.Metadata
+    process: _app_build_pb2.ProcessConfig
     runtime_policy: BackgroundAppRuntimePolicy
-    def __init__(self, metadata: _Optional[_Union[BackgroundApp.Metadata, _Mapping]] = ..., runtime_policy: _Optional[_Union[BackgroundAppRuntimePolicy, _Mapping]] = ...) -> None: ...
+    def __init__(self, process: _Optional[_Union[_app_build_pb2.ProcessConfig, _Mapping]] = ..., runtime_policy: _Optional[_Union[BackgroundAppRuntimePolicy, _Mapping]] = ...) -> None: ...
 
-class BackgroundAppSubmitFeedContentRequest(_message.Message):
-    __slots__ = ("card",)
-    CARD_FIELD_NUMBER: _ClassVar[int]
-    card: _background_feed_pb2.FeedCard
-    def __init__(self, card: _Optional[_Union[_background_feed_pb2.FeedCard, _Mapping]] = ...) -> None: ...
+class BackgroundContext(_message.Message):
+    __slots__ = ("content", "uris", "priority")
+    class Priority(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        PRIORITY_UNSPECIFIED: _ClassVar[BackgroundContext.Priority]
+        PRIORITY_LOW: _ClassVar[BackgroundContext.Priority]
+        PRIORITY_HIGH: _ClassVar[BackgroundContext.Priority]
+    PRIORITY_UNSPECIFIED: BackgroundContext.Priority
+    PRIORITY_LOW: BackgroundContext.Priority
+    PRIORITY_HIGH: BackgroundContext.Priority
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    URIS_FIELD_NUMBER: _ClassVar[int]
+    PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    content: str
+    uris: _containers.RepeatedScalarFieldContainer[str]
+    priority: BackgroundContext.Priority
+    def __init__(self, content: _Optional[str] = ..., uris: _Optional[_Iterable[str]] = ..., priority: _Optional[_Union[BackgroundContext.Priority, str]] = ...) -> None: ...
 
-class BackgroundAppSubmitFeedContentResponse(_message.Message):
-    __slots__ = ("feed_entry_id",)
-    FEED_ENTRY_ID_FIELD_NUMBER: _ClassVar[int]
-    feed_entry_id: int
-    def __init__(self, feed_entry_id: _Optional[int] = ...) -> None: ...
+class BackgroundAppSubmitContextRequest(_message.Message):
+    __slots__ = ("content",)
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    content: BackgroundContext
+    def __init__(self, content: _Optional[_Union[BackgroundContext, _Mapping]] = ...) -> None: ...
+
+class BackgroundAppSubmitContextResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
 
 class BackgroundAppOnRunRequest(_message.Message):
     __slots__ = ()
@@ -170,33 +157,7 @@ class BackgroundAppYieldResponse(_message.Message):
     __slots__ = ("next_scheduled_run_time",)
     NEXT_SCHEDULED_RUN_TIME_FIELD_NUMBER: _ClassVar[int]
     next_scheduled_run_time: _timestamp_pb2.Timestamp
-    def __init__(self, next_scheduled_run_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
-
-class BackgroundAppError(_message.Message):
-    __slots__ = ("error_type", "error_message")
-    class ErrorType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-        __slots__ = ()
-        BG_APP_ERROR_TYPE_INVALID: _ClassVar[BackgroundAppError.ErrorType]
-        BG_APP_ERROR_TYPE_RUNTIME: _ClassVar[BackgroundAppError.ErrorType]
-        BG_APP_ERROR_AUTH: _ClassVar[BackgroundAppError.ErrorType]
-        BG_APP_ERROR_TYPE_UNKNOWN: _ClassVar[BackgroundAppError.ErrorType]
-    BG_APP_ERROR_TYPE_INVALID: BackgroundAppError.ErrorType
-    BG_APP_ERROR_TYPE_RUNTIME: BackgroundAppError.ErrorType
-    BG_APP_ERROR_AUTH: BackgroundAppError.ErrorType
-    BG_APP_ERROR_TYPE_UNKNOWN: BackgroundAppError.ErrorType
-    ERROR_TYPE_FIELD_NUMBER: _ClassVar[int]
-    ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
-    error_type: BackgroundAppError.ErrorType
-    error_message: str
-    def __init__(self, error_type: _Optional[_Union[BackgroundAppError.ErrorType, str]] = ..., error_message: _Optional[str] = ...) -> None: ...
-
-class BackgroundAppReportErrorRequest(_message.Message):
-    __slots__ = ("error", "needs_intervention")
-    ERROR_FIELD_NUMBER: _ClassVar[int]
-    NEEDS_INTERVENTION_FIELD_NUMBER: _ClassVar[int]
-    error: BackgroundAppError
-    needs_intervention: bool
-    def __init__(self, error: _Optional[_Union[BackgroundAppError, _Mapping]] = ..., needs_intervention: bool = ...) -> None: ...
+    def __init__(self, next_scheduled_run_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class BackgroundAppReportErrorResponse(_message.Message):
     __slots__ = ()

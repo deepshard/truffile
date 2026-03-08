@@ -14,6 +14,7 @@ from truffle.os import hardware_control_pb2 as truffle_dot_os_dot_hardware__cont
 from truffle.os import hardware_stats_pb2 as truffle_dot_os_dot_hardware__stats__pb2
 from truffle.os import installer_pb2 as truffle_dot_os_dot_installer__pb2
 from truffle.os import notification_pb2 as truffle_dot_os_dot_notification__pb2
+from truffle.os import proactivity_pb2 as truffle_dot_os_dot_proactivity__pb2
 from truffle.os import system_info_pb2 as truffle_dot_os_dot_system__info__pb2
 from truffle.os import system_settings_pb2 as truffle_dot_os_dot_system__settings__pb2
 from truffle.os import task_actions_pb2 as truffle_dot_os_dot_task__actions__pb2
@@ -22,7 +23,7 @@ from truffle.os import task_queries_pb2 as truffle_dot_os_dot_task__queries__pb2
 from truffle.os import task_search_pb2 as truffle_dot_os_dot_task__search__pb2
 from truffle.os import task_user_response_pb2 as truffle_dot_os_dot_task__user__response__pb2
 
-GRPC_GENERATED_VERSION = '1.72.0'
+GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -35,7 +36,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in truffle/os/truffleos_pb2_grpc.py depends on'
+        + ' but the generated code in truffle/os/truffleos_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -55,16 +56,6 @@ class TruffleOSStub(object):
                 '/truffle.os.TruffleOS/Apps_DeleteApp',
                 request_serializer=truffle_dot_os_dot_app__queries__pb2.DeleteAppRequest.SerializeToString,
                 response_deserializer=truffle_dot_os_dot_app__queries__pb2.DeleteAppResponse.FromString,
-                _registered_method=True)
-        self.Apps_GetBackground = channel.unary_unary(
-                '/truffle.os.TruffleOS/Apps_GetBackground',
-                request_serializer=truffle_dot_os_dot_app__queries__pb2.GetBackgroundAppsRequest.SerializeToString,
-                response_deserializer=truffle_dot_os_dot_app__queries__pb2.GetBackgroundAppsResponse.FromString,
-                _registered_method=True)
-        self.Apps_GetForeground = channel.unary_unary(
-                '/truffle.os.TruffleOS/Apps_GetForeground',
-                request_serializer=truffle_dot_os_dot_app__queries__pb2.GetForegroundAppsRequest.SerializeToString,
-                response_deserializer=truffle_dot_os_dot_app__queries__pb2.GetForegroundAppsResponse.FromString,
                 _registered_method=True)
         self.Apps_GetAll = channel.unary_unary(
                 '/truffle.os.TruffleOS/Apps_GetAll',
@@ -86,15 +77,15 @@ class TruffleOSStub(object):
                 request_serializer=truffle_dot_os_dot_background__feed__queries__pb2.GetLatestFeedEntryIDRequest.SerializeToString,
                 response_deserializer=truffle_dot_os_dot_background__feed__queries__pb2.GetLatestFeedEntryIDResponse.FromString,
                 _registered_method=True)
-        self.Background_LikeFeedEntry = channel.unary_unary(
-                '/truffle.os.TruffleOS/Background_LikeFeedEntry',
-                request_serializer=truffle_dot_os_dot_background__feed__queries__pb2.LikeBackgroundFeedEntryRequest.SerializeToString,
-                response_deserializer=truffle_dot_os_dot_background__feed__queries__pb2.LikeBackgroundFeedEntryResponse.FromString,
+        self.Background_ApproveProactiveAction = channel.unary_unary(
+                '/truffle.os.TruffleOS/Background_ApproveProactiveAction',
+                request_serializer=truffle_dot_os_dot_proactivity__pb2.ApproveProactiveActionRequest.SerializeToString,
+                response_deserializer=truffle_dot_os_dot_proactivity__pb2.ApproveProactiveActionResponse.FromString,
                 _registered_method=True)
-        self.Background_SubmitFeedFeedback = channel.unary_unary(
-                '/truffle.os.TruffleOS/Background_SubmitFeedFeedback',
-                request_serializer=truffle_dot_os_dot_background__feed__queries__pb2.BackgroundFeedFeedbackRequest.SerializeToString,
-                response_deserializer=truffle_dot_os_dot_background__feed__queries__pb2.BackgroundFeedFeedbackResponse.FromString,
+        self.Background_CancelProactiveAction = channel.unary_unary(
+                '/truffle.os.TruffleOS/Background_CancelProactiveAction',
+                request_serializer=truffle_dot_os_dot_proactivity__pb2.CancelProactiveActionRequest.SerializeToString,
+                response_deserializer=truffle_dot_os_dot_proactivity__pb2.CancelProactiveActionResponse.FromString,
                 _registered_method=True)
         self.Builder_StartBuildSession = channel.unary_unary(
                 '/truffle.os.TruffleOS/Builder_StartBuildSession',
@@ -191,6 +182,11 @@ class TruffleOSStub(object):
                 request_serializer=truffle_dot_os_dot_system__info__pb2.SystemCheckForUpdateRequest.SerializeToString,
                 response_deserializer=truffle_dot_os_dot_system__info__pb2.SystemCheckForUpdateResponse.FromString,
                 _registered_method=True)
+        self.Task_TestExternalToolProvider = channel.unary_unary(
+                '/truffle.os.TruffleOS/Task_TestExternalToolProvider',
+                request_serializer=truffle_dot_os_dot_task__actions__pb2.TaskTestExternalToolProviderRequest.SerializeToString,
+                response_deserializer=truffle_dot_os_dot_task__actions__pb2.TaskTestExternalToolProviderResponse.FromString,
+                _registered_method=True)
         self.Task_OpenTask = channel.unary_stream(
                 '/truffle.os.TruffleOS/Task_OpenTask',
                 request_serializer=truffle_dot_os_dot_task__actions__pb2.OpenTaskRequest.SerializeToString,
@@ -242,20 +238,6 @@ class TruffleOSServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Apps_GetBackground(self, request, context):
-        """apps that can contribute to bg feed (ambients)
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Apps_GetForeground(self, request, context):
-        """apps used in tasks (focuses)
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def Apps_GetAll(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -280,13 +262,13 @@ class TruffleOSServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Background_LikeFeedEntry(self, request, context):
+    def Background_ApproveProactiveAction(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Background_SubmitFeedFeedback(self, request, context):
+    def Background_CancelProactiveAction(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -418,10 +400,16 @@ class TruffleOSServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Task_OpenTask(self, request, context):
+    def Task_TestExternalToolProvider(self, request, context):
         """Task == Focus  ==  Foreground App 
         create or open an existing task and its update stream
         """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Task_OpenTask(self, request, context):
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -476,16 +464,6 @@ def add_TruffleOSServicer_to_server(servicer, server):
                     request_deserializer=truffle_dot_os_dot_app__queries__pb2.DeleteAppRequest.FromString,
                     response_serializer=truffle_dot_os_dot_app__queries__pb2.DeleteAppResponse.SerializeToString,
             ),
-            'Apps_GetBackground': grpc.unary_unary_rpc_method_handler(
-                    servicer.Apps_GetBackground,
-                    request_deserializer=truffle_dot_os_dot_app__queries__pb2.GetBackgroundAppsRequest.FromString,
-                    response_serializer=truffle_dot_os_dot_app__queries__pb2.GetBackgroundAppsResponse.SerializeToString,
-            ),
-            'Apps_GetForeground': grpc.unary_unary_rpc_method_handler(
-                    servicer.Apps_GetForeground,
-                    request_deserializer=truffle_dot_os_dot_app__queries__pb2.GetForegroundAppsRequest.FromString,
-                    response_serializer=truffle_dot_os_dot_app__queries__pb2.GetForegroundAppsResponse.SerializeToString,
-            ),
             'Apps_GetAll': grpc.unary_unary_rpc_method_handler(
                     servicer.Apps_GetAll,
                     request_deserializer=truffle_dot_os_dot_app__queries__pb2.GetAllAppsRequest.FromString,
@@ -506,15 +484,15 @@ def add_TruffleOSServicer_to_server(servicer, server):
                     request_deserializer=truffle_dot_os_dot_background__feed__queries__pb2.GetLatestFeedEntryIDRequest.FromString,
                     response_serializer=truffle_dot_os_dot_background__feed__queries__pb2.GetLatestFeedEntryIDResponse.SerializeToString,
             ),
-            'Background_LikeFeedEntry': grpc.unary_unary_rpc_method_handler(
-                    servicer.Background_LikeFeedEntry,
-                    request_deserializer=truffle_dot_os_dot_background__feed__queries__pb2.LikeBackgroundFeedEntryRequest.FromString,
-                    response_serializer=truffle_dot_os_dot_background__feed__queries__pb2.LikeBackgroundFeedEntryResponse.SerializeToString,
+            'Background_ApproveProactiveAction': grpc.unary_unary_rpc_method_handler(
+                    servicer.Background_ApproveProactiveAction,
+                    request_deserializer=truffle_dot_os_dot_proactivity__pb2.ApproveProactiveActionRequest.FromString,
+                    response_serializer=truffle_dot_os_dot_proactivity__pb2.ApproveProactiveActionResponse.SerializeToString,
             ),
-            'Background_SubmitFeedFeedback': grpc.unary_unary_rpc_method_handler(
-                    servicer.Background_SubmitFeedFeedback,
-                    request_deserializer=truffle_dot_os_dot_background__feed__queries__pb2.BackgroundFeedFeedbackRequest.FromString,
-                    response_serializer=truffle_dot_os_dot_background__feed__queries__pb2.BackgroundFeedFeedbackResponse.SerializeToString,
+            'Background_CancelProactiveAction': grpc.unary_unary_rpc_method_handler(
+                    servicer.Background_CancelProactiveAction,
+                    request_deserializer=truffle_dot_os_dot_proactivity__pb2.CancelProactiveActionRequest.FromString,
+                    response_serializer=truffle_dot_os_dot_proactivity__pb2.CancelProactiveActionResponse.SerializeToString,
             ),
             'Builder_StartBuildSession': grpc.unary_unary_rpc_method_handler(
                     servicer.Builder_StartBuildSession,
@@ -611,6 +589,11 @@ def add_TruffleOSServicer_to_server(servicer, server):
                     request_deserializer=truffle_dot_os_dot_system__info__pb2.SystemCheckForUpdateRequest.FromString,
                     response_serializer=truffle_dot_os_dot_system__info__pb2.SystemCheckForUpdateResponse.SerializeToString,
             ),
+            'Task_TestExternalToolProvider': grpc.unary_unary_rpc_method_handler(
+                    servicer.Task_TestExternalToolProvider,
+                    request_deserializer=truffle_dot_os_dot_task__actions__pb2.TaskTestExternalToolProviderRequest.FromString,
+                    response_serializer=truffle_dot_os_dot_task__actions__pb2.TaskTestExternalToolProviderResponse.SerializeToString,
+            ),
             'Task_OpenTask': grpc.unary_stream_rpc_method_handler(
                     servicer.Task_OpenTask,
                     request_deserializer=truffle_dot_os_dot_task__actions__pb2.OpenTaskRequest.FromString,
@@ -679,60 +662,6 @@ class TruffleOS(object):
             '/truffle.os.TruffleOS/Apps_DeleteApp',
             truffle_dot_os_dot_app__queries__pb2.DeleteAppRequest.SerializeToString,
             truffle_dot_os_dot_app__queries__pb2.DeleteAppResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Apps_GetBackground(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/truffle.os.TruffleOS/Apps_GetBackground',
-            truffle_dot_os_dot_app__queries__pb2.GetBackgroundAppsRequest.SerializeToString,
-            truffle_dot_os_dot_app__queries__pb2.GetBackgroundAppsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Apps_GetForeground(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/truffle.os.TruffleOS/Apps_GetForeground',
-            truffle_dot_os_dot_app__queries__pb2.GetForegroundAppsRequest.SerializeToString,
-            truffle_dot_os_dot_app__queries__pb2.GetForegroundAppsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -852,7 +781,7 @@ class TruffleOS(object):
             _registered_method=True)
 
     @staticmethod
-    def Background_LikeFeedEntry(request,
+    def Background_ApproveProactiveAction(request,
             target,
             options=(),
             channel_credentials=None,
@@ -865,9 +794,9 @@ class TruffleOS(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/truffle.os.TruffleOS/Background_LikeFeedEntry',
-            truffle_dot_os_dot_background__feed__queries__pb2.LikeBackgroundFeedEntryRequest.SerializeToString,
-            truffle_dot_os_dot_background__feed__queries__pb2.LikeBackgroundFeedEntryResponse.FromString,
+            '/truffle.os.TruffleOS/Background_ApproveProactiveAction',
+            truffle_dot_os_dot_proactivity__pb2.ApproveProactiveActionRequest.SerializeToString,
+            truffle_dot_os_dot_proactivity__pb2.ApproveProactiveActionResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -879,7 +808,7 @@ class TruffleOS(object):
             _registered_method=True)
 
     @staticmethod
-    def Background_SubmitFeedFeedback(request,
+    def Background_CancelProactiveAction(request,
             target,
             options=(),
             channel_credentials=None,
@@ -892,9 +821,9 @@ class TruffleOS(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/truffle.os.TruffleOS/Background_SubmitFeedFeedback',
-            truffle_dot_os_dot_background__feed__queries__pb2.BackgroundFeedFeedbackRequest.SerializeToString,
-            truffle_dot_os_dot_background__feed__queries__pb2.BackgroundFeedFeedbackResponse.FromString,
+            '/truffle.os.TruffleOS/Background_CancelProactiveAction',
+            truffle_dot_os_dot_proactivity__pb2.CancelProactiveActionRequest.SerializeToString,
+            truffle_dot_os_dot_proactivity__pb2.CancelProactiveActionResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1408,6 +1337,33 @@ class TruffleOS(object):
             '/truffle.os.TruffleOS/System_CheckForUpdate',
             truffle_dot_os_dot_system__info__pb2.SystemCheckForUpdateRequest.SerializeToString,
             truffle_dot_os_dot_system__info__pb2.SystemCheckForUpdateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Task_TestExternalToolProvider(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/truffle.os.TruffleOS/Task_TestExternalToolProvider',
+            truffle_dot_os_dot_task__actions__pb2.TaskTestExternalToolProviderRequest.SerializeToString,
+            truffle_dot_os_dot_task__actions__pb2.TaskTestExternalToolProviderResponse.FromString,
             options,
             channel_credentials,
             insecure,

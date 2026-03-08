@@ -1,6 +1,8 @@
-from truffle.app import app_type_pb2 as _app_type_pb2
+import datetime
+
 from truffle.common import icon_pb2 as _icon_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
+from truffle.app import app_pb2 as _app_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
@@ -12,24 +14,24 @@ DESCRIPTOR: _descriptor.FileDescriptor
 class DefaultAppManifest(_message.Message):
     __slots__ = ("version", "generated_at", "apps")
     class DefaultApp(_message.Message):
-        __slots__ = ("app_type", "name", "bundle_url", "icon", "bundle_md5", "description")
-        APP_TYPE_FIELD_NUMBER: _ClassVar[int]
-        NAME_FIELD_NUMBER: _ClassVar[int]
+        __slots__ = ("index", "bundle_url", "metadata", "bundle_md5", "provides_foreground", "provides_background")
+        INDEX_FIELD_NUMBER: _ClassVar[int]
         BUNDLE_URL_FIELD_NUMBER: _ClassVar[int]
-        ICON_FIELD_NUMBER: _ClassVar[int]
+        METADATA_FIELD_NUMBER: _ClassVar[int]
         BUNDLE_MD5_FIELD_NUMBER: _ClassVar[int]
-        DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
-        app_type: _app_type_pb2.AppType
-        name: str
+        PROVIDES_FOREGROUND_FIELD_NUMBER: _ClassVar[int]
+        PROVIDES_BACKGROUND_FIELD_NUMBER: _ClassVar[int]
+        index: int
         bundle_url: str
-        icon: _icon_pb2.Icon
+        metadata: _app_pb2.AppMetadata
         bundle_md5: str
-        description: str
-        def __init__(self, app_type: _Optional[_Union[_app_type_pb2.AppType, str]] = ..., name: _Optional[str] = ..., bundle_url: _Optional[str] = ..., icon: _Optional[_Union[_icon_pb2.Icon, _Mapping]] = ..., bundle_md5: _Optional[str] = ..., description: _Optional[str] = ...) -> None: ...
+        provides_foreground: bool
+        provides_background: bool
+        def __init__(self, index: _Optional[int] = ..., bundle_url: _Optional[str] = ..., metadata: _Optional[_Union[_app_pb2.AppMetadata, _Mapping]] = ..., bundle_md5: _Optional[str] = ..., provides_foreground: bool = ..., provides_background: bool = ...) -> None: ...
     VERSION_FIELD_NUMBER: _ClassVar[int]
     GENERATED_AT_FIELD_NUMBER: _ClassVar[int]
     APPS_FIELD_NUMBER: _ClassVar[int]
     version: str
     generated_at: _timestamp_pb2.Timestamp
     apps: _containers.RepeatedCompositeFieldContainer[DefaultAppManifest.DefaultApp]
-    def __init__(self, version: _Optional[str] = ..., generated_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., apps: _Optional[_Iterable[_Union[DefaultAppManifest.DefaultApp, _Mapping]]] = ...) -> None: ...
+    def __init__(self, version: _Optional[str] = ..., generated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., apps: _Optional[_Iterable[_Union[DefaultAppManifest.DefaultApp, _Mapping]]] = ...) -> None: ...

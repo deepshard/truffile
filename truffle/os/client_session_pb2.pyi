@@ -1,3 +1,5 @@
+import datetime
+
 from truffle.os import client_metadata_pb2 as _client_metadata_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
@@ -43,7 +45,7 @@ class NewSessionVerification(_message.Message):
     verification_token: str
     expires_at: _timestamp_pb2.Timestamp
     requesting_client: _client_metadata_pb2.ClientMetadata
-    def __init__(self, verification_token: _Optional[str] = ..., expires_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., requesting_client: _Optional[_Union[_client_metadata_pb2.ClientMetadata, _Mapping]] = ...) -> None: ...
+    def __init__(self, verification_token: _Optional[str] = ..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., requesting_client: _Optional[_Union[_client_metadata_pb2.ClientMetadata, _Mapping]] = ...) -> None: ...
 
 class VerifyNewSessionRequest(_message.Message):
     __slots__ = ("verification_token", "allow")
