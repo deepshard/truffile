@@ -1,7 +1,8 @@
-from gourmet.ambient import run_ambient, AmbientContext, InferenceClient
+from __future__ import annotations
+from app_runtime.background import BackgroundRunContext, run_background, BackgroundContext
+from app_runtime.abrasive.extract import extract_content_from_url, ExtractedContent
+from app_runtime.abrasive.fetch import USER_AGENT
 
-from abrasive.extract import extract_content_from_url, ExtractedContent
-from abrasive.fetch import USER_AGENT
 from typing import Deque, List, Optional, Tuple, Any
 from collections import deque
 import logging
@@ -39,6 +40,8 @@ class RedditConfig:
     def load_reddit_config_from_env() -> "RedditConfig":
         subreddits_str = os.getenv("SUBREDDITS", "").strip()
         user_feed_url = os.getenv("USER_FEED_URL", "").strip()
+        if user_feed_url.lower() in {"", "none", "null", "undefined", "n/a"}:
+            user_feed_url = ""
 
         subreddits: List[str] = []
 
@@ -163,6 +166,7 @@ def _fetch_listing(after: Optional[str] = None) -> Tuple[List[RedditPost], Optio
             for img in d['preview']['images']:
                 if 'source' in img and 'url' in img['source']:
                     image_urls.append(img['source']['url'].replace("&amp;", "&"))
+            print("got image urls from preview:", image_urls)
                 
         if not image_urls:
             thumb = d.get("thumbnail")
@@ -353,7 +357,7 @@ def test_once():
     print("article images:", post.images[0] if post and len(post.images) else "None")
     print("-----")
 
-TESTING_MODE = False
+TESTING_MODE = os.getenv("REDDIT_TEST_MODE", "0").lower() in ("1", "true", "yes")
 
 def run_test():
     global reddit_config
@@ -370,7 +374,7 @@ def run_test():
             print("Exiting.")
             break
 
-def process_reddit_item(ctx: AmbientContext, item: RedditPost):
+def process_reddit_item(ctx: BackgroundRunContext, item: RedditPost):
     title, url, item_id, subreddit, image_urls = (
         item.title,
         item.article_url,
@@ -380,15 +384,25 @@ def process_reddit_item(ctx: AmbientContext, item: RedditPost):
     )
     logger.info(f"Processing Reddit item {item_id}: {title} ({url}) {subreddit if subreddit else ''} {image_urls if image_urls else ''}")
     link_content, comments = get_content_for_reddit_item(item)
-    ctx.bg.post_to_feed(
-        title=link_content.title if link_content and link_content.title else title,
-        body=link_content.text if link_content and link_content.text else f'**{subreddit}** {item.domain} {item.score}',
-        src_uri=url,
-        media_uris=link_content.images if link_content and link_content.images else (image_urls if image_urls else []),
-        content_timestamp = link_content.date if link_content and link_content.date else item.created_utc
+    content_str = ""
+    if link_content and link_content.text:
+        content_str = f"<link title> {link_content.title or "unknown"} </link title>\n <link content> {link_content.text} </link content> \n<link metadata> {str(link_content.date) or ""} {str(link_content.source_name) or ""} </link metadata>"
+    post_str = (
+        f"From Reddit: **{subreddit}** {item.domain} {item.score} points, {item.num_comments} comments\n"
+        f"\t Title: {title}, Link: {url}\n"
+        f"{content_str}\n"
+        f"{"top comments: " if comments else ""} {[str(c) for c in comments[:10]] if comments else ''}\n"
+        "image urls: " + (", ".join(image_urls) if image_urls else "None Found")
     )
+    uris = []
+    if url:
+        uris.append(url)
+    if link_content and link_content.source_url and link_content.source_url != url:
+        uris.append(link_content.source_url)
 
-def reddit_ambient(ctx: AmbientContext):
+    ctx.bg.submit_context(content=post_str, uris=uris, priority=BackgroundContext.PRIORITY_LOW)
+
+def reddit_ambient(ctx: BackgroundRunContext):
     for _ in range(3):
         item = _next_new_reddit_item()
         if not item:
@@ -398,19 +412,6 @@ def reddit_ambient(ctx: AmbientContext):
     
     return 
     
-
-    #post_body = f"{f'**{subreddit}**' if subreddit else ''} {item.score }\n"
-    # 
-
-    # if link_content and link_content.text:
-    #     post_body += f"\n\n{link_content.text[:2000]}"
-
-    # if comments:
-    #     post_body += "\n\n**Top Comments:**\n"
-    #     for c in comments:
-    #         post_body += f"- @{c.author if c.author else 'unknown'}: {c.body[:300].replace('\n', ' ')}...\n"
-
-
 
 
 if __name__ == "__main__":
@@ -424,7 +425,7 @@ if __name__ == "__main__":
     if TESTING_MODE:
         run_test()
     else:
-        run_ambient(reddit_ambient)
+        run_background(reddit_ambient)
 
 
 # :cp ./apps/ambient/reddit.py /app.py
