@@ -1,21 +1,20 @@
 import argparse
 import asyncio
-import ast
+import json
+import re
 import signal
 import socket
 import sys
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import yaml
-
+import httpx
 from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
-
-import grpc
-from truffle.infer.infer_pb2_grpc import InferenceServiceStub
-from truffle.infer.model_pb2 import GetModelListRequest, Model
+from truffile.schema import validate_app_dir
+from truffile.deploy import build_deploy_plan, deploy_with_builder
 
 
 # ANSI colors
@@ -38,6 +37,8 @@ CROSS = "✗"
 ARROW = "→"
 DOT = "•"
 WARN = "⚠"
+TOOL_TAGS = ("<toolcall>", "</toolcall>")
+TOOL_TAG_PATTERN = re.compile(r"<toolcall>\s*(.*?)\s*</toolcall>", re.DOTALL)
 
 
 class Spinner:
@@ -261,204 +262,73 @@ def cmd_disconnect(args, storage: StorageService) -> int:
     return 0
 
 
-def check_python_syntax(file_path: Path) -> tuple[bool, str]:
-    try:
-        with open(file_path) as f:
-            source = f.read()
-        ast.parse(source)
-        return True, ""
-    except SyntaxError as e:
-        return False, f"Line {e.lineno}: {e.msg}"
-
-
-def validate_app_dir(app_dir: Path) -> tuple[bool, dict | None, str | None, list[str]]:
-    """Validate app directory and return (valid, config, app_type, warnings)."""
-    warnings = []
-    
-    truffile = app_dir / "truffile.yaml"
-    if not truffile.exists():
-        error(f"No truffile.yaml found in {app_dir}")
-        return False, None, None, warnings
-    
-    try:
-        with open(truffile) as f:
-            config = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        error(f"Invalid truffile.yaml: {e}")
-        return False, None, None, warnings
-    
-    meta = config.get("metadata", {})
-    if not meta.get("name"):
-        error("metadata.name is required in truffile.yaml")
-        return False, None, None, warnings
-    
-    cfg_type = meta.get("type", "").lower()
-    if cfg_type in ("background", "ambient"):
-        app_type = "ambient"
-    elif cfg_type in ("foreground", "focus"):
-        app_type = "focus"
-    else:
-        app_type = "focus"
-        warnings.append(f"No type specified in truffile.yaml, defaulting to focus")
-    
-    icon_file = meta.get("icon_file")
-    if icon_file:
-        icon_path = app_dir / icon_file
-        if not icon_path.exists():
-            warnings.append(f"Icon file not found: {icon_file}")
-    else:
-        warnings.append("No icon specified in truffile.yaml")
-    
-    # Check files - either in steps or top-level files:
-    files_to_check = []
-    for step in config.get("steps", []):
-        if step.get("type") == "files":
-            files_to_check.extend(step.get("files", []))
-    # Also check top-level files: (simplified format)
-    files_to_check.extend(config.get("files", []))
-    
-    for f in files_to_check:
-        src = app_dir / f["source"]
-        if not src.exists():
-            error(f"Source file not found: {src}")
-            return False, None, None, warnings
-        if src.suffix == ".py":
-            ok, err = check_python_syntax(src)
-            if not ok:
-                error(f"Syntax error in {src.name}: {err}")
-                return False, None, None, warnings
-    
-    return True, config, app_type, warnings
-
-
-async def _do_deploy(client: TruffleClient, config: dict, app_dir: Path, app_type: str, device: str, interactive: bool = False) -> int:
-    meta = config["metadata"]
-    name = meta["name"]
-    description = meta.get("description", "")
-    process = meta.get("process", {})
-    cmd_list = process.get("cmd", ["python", "app.py"])
-    cwd = process.get("working_directory", "/")
-    env_dict = process.get("environment", {})
-    env = [f"{k}={v}" for k, v in env_dict.items()]
-    icon_file = meta.get("icon_file")
-    icon_path = (app_dir / icon_file) if icon_file and (app_dir / icon_file).exists() else None
-
-    spinner = Spinner(f"Connecting to {device}")
-    spinner.start()
-    await client.connect()
-    spinner.stop(success=True)
-    
-    spinner = Spinner("Starting build session")
-    spinner.start()
-    await client.start_build()
-    await asyncio.sleep(5)
-    spinner.stop(success=True)
-    print(f"  {C.DIM}Session: {client.app_uuid}{C.RESET}")
-    
-    # Always upload files first
-    files_to_upload = []
-    for step in config.get("steps", []):
-        if step.get("type") == "files":
-            files_to_upload.extend(step.get("files", []))
-    files_to_upload.extend(config.get("files", []))
-    
-    for f in files_to_upload:
-        src = app_dir / f["source"]
-        dest = f["destination"]
-        spinner = Spinner(f"Uploading {src.name} {ARROW} {dest}")
-        spinner.start()
-        result = await client.upload(src, dest)
-        spinner.stop(success=True)
-        print(f"  {C.DIM}{result.bytes} bytes, sha256={result.sha256[:12]}...{C.RESET}")
-    
-    # always run bash commands
-    bash_commands = []
-    for step in config.get("steps", []):
-        if step.get("type") == "bash":
-            bash_commands.append((step.get("name", "bash"), step["run"]))
-    if config.get("run"):
-        bash_commands.append(("Install dependencies", config["run"]))
-    
-    for step_name, run_cmd in bash_commands:
-        info(f"Running: {step_name}")
-        log = ScrollingLog(height=6, prefix="  ")
-        exit_code = 0
-        async for ev, data in client.exec_stream(run_cmd, cwd=cwd):
-            if ev == "log":
-                try:
-                    import json
-                    obj = json.loads(data)
-                    line = obj.get("line", "")
-                except Exception:
-                    line = data
-                log.add(line)
-            elif ev == "exit":
-                try:
-                    import json
-                    exit_code = int(json.loads(data).get("code", 0))
-                except (ValueError, KeyError):
-                    pass
-        log.finish()
-        if exit_code != 0:
-            error(f"Step '{step_name}' failed with exit code {exit_code}")
-            raise RuntimeError(f"Step '{step_name}' failed with exit code {exit_code}")
-    
-    if interactive:
-        # interactive mode: open shell after setup for testing/debugging
-        print()
-        info("Opening interactive shell (exit with Ctrl+D or 'exit' to finish deploy)")
-        ws_url = str(client.http_base or "").replace("http://", "ws://").replace("https://", "wss://") + "/term"
-        await _interactive_shell(ws_url)
-        print()
-    spinner = Spinner(f"Finishing as {app_type} app")
-    spinner.start()
-    
-    cmd = cmd_list[0] if cmd_list[0].startswith("/") else f"/usr/bin/{cmd_list[0]}"
-    
-    if app_type == "focus":
-        await client.finish_foreground(
-            name=name,
-            cmd=cmd,
-            args=cmd_list[1:],
-            cwd=cwd,
-            env=env,
-            description=description,
-            icon=icon_path,
-        )
-    else:
-        default_schedule = meta.get("default_schedule")
-        await client.finish_background(
-            name=name,
-            cmd=cmd,
-            args=cmd_list[1:],
-            cwd=cwd,
-            env=env,
-            description=description,
-            icon=icon_path,
-            default_schedule=default_schedule,
-        )
-    
-    spinner.stop(success=True)
-    print()
-    success(f"Deployed: {C.BOLD}{name}{C.RESET} ({app_type})")
-    return 0
-
-
 async def cmd_deploy(args, storage: StorageService) -> int:
     app_path = args.path if args.path else "."
     app_dir = Path(app_path).resolve()
     interactive = args.interactive
+    dry_run = bool(getattr(args, "dry_run", False))
     if not app_dir.exists() or not app_dir.is_dir():
         error(f"{app_dir} is not a valid directory")
         return 1
     
     info(f"Validating app in {app_dir.name}")
-    valid, config, app_type, warnings = validate_app_dir(app_dir)
+    valid, config, app_type, warnings, errors = validate_app_dir(app_dir)
     if not valid or not app_type:
+        for msg in errors:
+            error(msg)
         return 1
     
     for w in warnings:
         warn(w)
+
+    if dry_run:
+        try:
+            plan = build_deploy_plan(config=config, app_dir=app_dir, app_type=app_type)
+        except Exception as e:
+            error(f"Failed to build deploy plan: {e}")
+            return 1
+        print()
+        print(f"{C.BOLD}Dry Run: Deploy Plan{C.RESET}")
+        print(f"  Name: {plan['name']}")
+        print(f"  Bundle ID: {plan['bundle_id']}")
+        print(f"  Mode: {plan['finish_label']}")
+        print(f"  App Dir: {app_dir}")
+        print(f"  Exec CWD: {plan['exec_cwd']}")
+        if plan["icon_path"] is not None:
+            print(f"  Icon: {plan['icon_path']}")
+        else:
+            print(f"  Icon: {C.DIM}<none>{C.RESET}")
+
+        fg = plan["fg_payload"]
+        if fg is not None:
+            fg_keys = [e.split("=", 1)[0] for e in fg.get("env", []) if "=" in e]
+            print(f"  Foreground Cmd: {fg['cmd']} {' '.join(fg.get('args', []))}".rstrip())
+            print(f"  Foreground Env Keys: {', '.join(fg_keys) if fg_keys else '<none>'}")
+
+        bg = plan["bg_payload"]
+        if bg is not None:
+            bg_keys = [e.split('=', 1)[0] for e in bg.get("env", []) if "=" in e]
+            print(f"  Background Cmd: {bg['cmd']} {' '.join(bg.get('args', []))}".rstrip())
+            print(f"  Background Env Keys: {', '.join(bg_keys) if bg_keys else '<none>'}")
+            if plan["default_schedule"] is not None:
+                print(f"  Background Schedule: configured")
+            else:
+                print(f"  Background Schedule: {C.DIM}<default runtime policy>{C.RESET}")
+
+        files = plan["files_to_upload"]
+        print(f"  Files To Upload: {len(files)}")
+        for f in files:
+            src = f.get("source", "<missing>")
+            dst = f.get("destination", "<missing>")
+            print(f"    - {src} {ARROW} {dst}")
+
+        cmds = plan["bash_commands"]
+        print(f"  Bash Steps: {len(cmds)}")
+        for name, _cmd in cmds:
+            print(f"    - {name}")
+        print()
+        success("Dry run complete (no device changes made)")
+        return 0
     
     device = storage.state.last_used_device
     if not device:
@@ -496,7 +366,26 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     loop.add_signal_handler(signal.SIGINT, handle_sigint)
     
     try:
-        deploy_task = asyncio.create_task(_do_deploy(client, config, app_dir, app_type, device, interactive))
+        deploy_task = asyncio.create_task(
+            deploy_with_builder(
+                client=client,
+                config=config,
+                app_dir=app_dir,
+                app_type=app_type,
+                device=device,
+                interactive=interactive,
+                spinner_cls=Spinner,
+                scrolling_log_cls=ScrollingLog,
+                info=info,
+                success=success,
+                error=error,
+                color_dim=C.DIM,
+                color_reset=C.RESET,
+                color_bold=C.BOLD,
+                arrow=ARROW,
+                interactive_shell=_interactive_shell,
+            )
+        )
         return await deploy_task 
     except asyncio.CancelledError:
         print()
@@ -552,47 +441,55 @@ async def cmd_list_apps(storage: StorageService) -> int:
     
     try:
         await client.connect()
-        foreground, background = await client.get_all_apps()
+        apps = await client.get_all_apps()
         spinner.stop(success=True)
-        
-        if not foreground and not background:
+
+        if not apps:
             print(f"  {C.DIM}No apps installed{C.RESET}")
             return 0
-        
+
+        focus_apps = [app for app in apps if app.HasField("foreground")]
+        ambient_apps = [app for app in apps if app.HasField("background")]
+        both_apps = [app for app in apps if app.HasField("foreground") and app.HasField("background")]
+
         print()
-        if foreground:
+        if focus_apps:
             print(f"{C.BOLD}Focus Apps{C.RESET}")
-            for app in foreground:
+            for app in focus_apps:
                 print(f"  {C.CYAN}{DOT}{C.RESET} {app.metadata.name}")
                 setattr(app.metadata, "description", getattr(app.metadata, "description", ""))
                 if hasattr(app.metadata, "description") and app.metadata.description:
                     desc = app.metadata.description.strip().split('\n')[0][:55]
                     print(f"    {C.DIM}{desc}{C.RESET}")
-        
-        if background:
-            if foreground:
+
+        if ambient_apps:
+            if focus_apps:
                 print()
             print(f"{C.BOLD}Ambient Apps{C.RESET}")
-            for app in background:
+            for app in ambient_apps:
                 schedule = ""
-                if app.runtime_policy.HasField("interval"):
-                    secs = app.runtime_policy.interval.duration.seconds
+                policy = app.background.runtime_policy
+                if policy.HasField("interval"):
+                    secs = policy.interval.duration.seconds
                     if secs >= 3600:
                         schedule = f"every {secs // 3600}h"
                     elif secs >= 60:
                         schedule = f"every {secs // 60}m"
                     else:
                         schedule = f"every {secs}s"
-                elif app.runtime_policy.HasField("always"):
+                elif policy.HasField("always"):
                     schedule = "always"
                 print(f"  {C.CYAN}{DOT}{C.RESET} {app.metadata.name} {C.DIM}({schedule}){C.RESET}")
                 setattr(app.metadata, "description", getattr(app.metadata, "description", ""))
                 if hasattr(app.metadata, "description") and app.metadata.description:
                     desc = app.metadata.description.strip().split('\n')[0][:55]
                     print(f"    {C.DIM}{desc}{C.RESET}")
-        
+
         print()
-        print(f"{C.DIM}Total: {len(foreground)} focus, {len(background)} ambient{C.RESET}")
+        print(
+            f"{C.DIM}Total: {len(focus_apps)} focus, {len(ambient_apps)} ambient, "
+            f"{len(both_apps)} both{C.RESET}"
+        )
         return 0
         
     except Exception as e:
@@ -628,14 +525,21 @@ async def cmd_delete(args, storage: StorageService) -> int:
 
     try:
         await client.connect()
-        foreground, background = await client.get_all_apps()
+        apps = await client.get_all_apps()
         spinner.stop(success=True)
 
         all_apps = []
-        for app in foreground:
-            all_apps.append(("focus", app.uuid, app.metadata.name, app.metadata.description.strip().split('\n')[0][:55] if app.metadata.description else ""))
-        for app in background:
-            all_apps.append(("ambient", app.uuid, app.metadata.name, app.metadata.description.strip().split('\n')[0][:55] if app.metadata.description else ""))
+        for app in apps:
+            if app.HasField("foreground") and app.HasField("background"):
+                kind = "both"
+            elif app.HasField("foreground"):
+                kind = "focus"
+            elif app.HasField("background"):
+                kind = "ambient"
+            else:
+                kind = "unknown"
+            desc = app.metadata.description.strip().split('\n')[0][:55] if app.metadata.description else ""
+            all_apps.append((kind, app.uuid, app.metadata.name, desc))
 
         if not all_apps:
             print(f"  {C.DIM}No apps installed{C.RESET}")
@@ -800,7 +704,7 @@ def cmd_list(args, storage: StorageService) -> int:
 
 
 async def cmd_models(storage: StorageService) -> int:
-    """List models on the connected device."""
+    """List models on your Truffle."""
     device = storage.state.last_used_device
     if not device:
         error("No device connected")
@@ -815,140 +719,810 @@ async def cmd_models(storage: StorageService) -> int:
     except RuntimeError:
         spinner.fail(f"Could not resolve {device}.local")
         return 1
-    
+
     try:
-        channel = grpc.insecure_channel(f"{ip}:80")
-        stub = InferenceServiceStub(channel)
-        model_list = stub.GetModelList(GetModelListRequest(use_filter=False))
+        url = f"http://{ip}/if2/v1/models"
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            payload = resp.json()
         spinner.stop(success=True)
     except Exception as e:
-        spinner.fail(f"Failed to get models: {e}")
+        spinner.fail(f"Failed to get IF2 models: {e}")
         return 1
-    
-    loaded = [m for m in model_list.models if m.state == Model.MODEL_STATE_LOADED]
-    available = [m for m in model_list.models if m.state == Model.MODEL_STATE_AVAILABLE]
-    
+
+    models = payload.get("data", [])
+    if not isinstance(models, list):
+        spinner.fail("Invalid response: missing 'data' list")
+        return 1
+
     print()
-    print(f"{MUSHROOM} {C.BOLD}Models on {device}{C.RESET}")
+    print(f"{MUSHROOM} {C.BOLD}IF2 Models on {device}{C.RESET}")
     print()
-    
-    if loaded:
-        for m in loaded:
-            reasoner = f" {C.MAGENTA}reasoner{C.RESET}" if m.config.info.has_chain_of_thought else ""
-            print(f"  {C.GREEN}{CHECK}{C.RESET} {m.name}{reasoner}")
-            print(f"    {C.DIM}id: {m.uuid}{C.RESET}")
-    
-    if available:
-        for m in available:
-            print(f"  {C.DIM}○ {m.name} (not loaded){C.RESET}")
-    
-    if not loaded and not available:
+
+    if not models:
         print(f"  {C.DIM}No models found{C.RESET}")
-    
-    print()
-    total_mb = model_list.total_memory // (1024 * 1024) if model_list.total_memory else 0
-    used_mb = model_list.used_memory // (1024 * 1024) if model_list.used_memory else 0
-    print(f"{C.DIM}Memory: {used_mb}MB / {total_mb}MB{C.RESET}")
-    
+        return 0
+
+    for m in models:
+        if not isinstance(m, dict):
+            continue
+        model_id = m.get("id", "<unknown>")
+        name = m.get("name", model_id)
+        uuid = m.get("uuid", "<none>")
+        ctx = m.get("context_length", "<unknown>")
+        arch = m.get("architecture", {})
+        tokenizer = arch.get("tokenizer", "<unknown>") if isinstance(arch, dict) else "<unknown>"
+        max_batch = m.get("max_batch_size", "<unknown>")
+        print(f"  {C.GREEN}{CHECK}{C.RESET} {name}")
+        print(f"    {C.DIM}id: {model_id}{C.RESET}")
+        print(f"    {C.DIM}uuid: {uuid}{C.RESET}")
+        print(f"    {C.DIM}context: {ctx}, tokenizer: {tokenizer}, max_batch: {max_batch}{C.RESET}")
+
     return 0
 
 
-def cmd_proxy(args, storage: StorageService) -> int:
-    """Start the OpenAI-compatible proxy."""
-    device = args.device if hasattr(args, 'device') and args.device else storage.state.last_used_device
+async def _resolve_connected_device(storage: StorageService) -> tuple[str, str] | tuple[None, None]:
+    device = storage.state.last_used_device
+    if not device:
+        error("No device connected")
+        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+        return None, None
+    try:
+        ip = await resolve_mdns(f"{device}.local")
+    except RuntimeError:
+        error(f"Could not resolve {device}.local")
+        return None, None
+    return device, ip
+
+
+async def _default_model(ip: str) -> str | None:
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(f"http://{ip}/if2/v1/models")
+            resp.raise_for_status()
+            payload = resp.json()
+        models = payload.get("data", [])
+        if not isinstance(models, list) or not models:
+            return None
+        first = models[0]
+        if not isinstance(first, dict):
+            return None
+        return str(first.get("uuid") or first.get("id") or "")
+    except Exception:
+        return None
+
+
+async def cmd_chat(args, storage: StorageService) -> int:
+    device, ip = await _resolve_connected_device(storage)
+    if not device or not ip:
+        return 1
+
+    prompt = args.prompt
+    if not prompt and args.prompt_words:
+        prompt = " ".join(args.prompt_words).strip()
+    if not prompt:
+        error("Missing prompt")
+        print(f"  {C.DIM}Usage: truffile chat --prompt \"hello\"{C.RESET}")
+        print(f"  {C.DIM}Or:    truffile chat \"hello\"{C.RESET}")
+        return 1
+
+    model = args.model
+    if not model:
+        spinner = Spinner("Resolving default model")
+        spinner.start()
+        model = await _default_model(ip)
+        if not model:
+            spinner.fail("Failed to resolve default model from IF2")
+            return 1
+        spinner.stop(success=True)
+
+    stream = not args.no_stream and not args.json
+    messages: list[dict[str, str]] = []
+    if args.system:
+        messages.append({"role": "system", "content": args.system})
+    messages.append({"role": "user", "content": prompt})
+
+    payload: dict = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "reasoning": {"enabled": bool(args.reasoning)},
+    }
+    if args.max_tokens is not None:
+        payload["max_tokens"] = args.max_tokens
+    else:
+        payload["max_tokens"] = 512
+    if args.temperature is not None:
+        payload["temperature"] = args.temperature
+    if args.top_p is not None:
+        payload["top_p"] = args.top_p
+    if stream:
+        payload["stream_options"] = {"include_usage": True}
+
+    url = f"http://{ip}/if2/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+
+    spinner = Spinner(f"Connecting to {device}")
+    spinner.start()
+    try:
+        with httpx.Client(timeout=None) as client:
+            if stream:
+                with client.stream("POST", url, headers=headers, json=payload) as resp:
+                    resp.raise_for_status()
+                    spinner.stop(success=True)
+                    usage_printed = False
+                    for raw in resp.iter_lines():
+                        if not raw:
+                            continue
+                        line = raw.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[len("data:"):].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            evt = json.loads(data)
+                        except Exception:
+                            continue
+
+                        choices = evt.get("choices")
+                        if isinstance(choices, list) and choices:
+                            c0 = choices[0]
+                            if isinstance(c0, dict):
+                                delta = c0.get("delta", {})
+                                if isinstance(delta, dict):
+                                    txt = delta.get("content")
+                                    if isinstance(txt, str) and txt:
+                                        print(txt, end="", flush=True)
+                                    reasoning = delta.get("reasoning")
+                                    if args.reasoning and isinstance(reasoning, str) and reasoning:
+                                        print(reasoning, end="", flush=True)
+
+                        usage = evt.get("usage")
+                        if isinstance(usage, dict) and not usage_printed:
+                            usage_printed = True
+                            print(f"\n{C.DIM}[usage] {usage}{C.RESET}", flush=True)
+                    print()
+            else:
+                resp = client.post(url, headers=headers, json=payload, timeout=120.0)
+                resp.raise_for_status()
+                spinner.stop(success=True)
+                body = resp.json()
+                if args.json:
+                    print(json.dumps(body, indent=2))
+                else:
+                    content = ""
+                    try:
+                        choices = body.get("choices", [])
+                        if isinstance(choices, list) and choices:
+                            msg = choices[0].get("message", {})
+                            if isinstance(msg, dict):
+                                content = str(msg.get("content", ""))
+                    except Exception:
+                        content = ""
+                    print(content)
+        return 0
+    except Exception as e:
+        spinner.fail(f"Chat request failed: {e}")
+        return 1
+
+
+def _inject_reasoning_into_chunk(chunk: dict, state: dict) -> dict:
+    choices = chunk.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return chunk
+    c0 = choices[0]
+    if not isinstance(c0, dict):
+        return chunk
+    delta = c0.get("delta")
+    if not isinstance(delta, dict):
+        return chunk
+
+    reasoning = delta.get("reasoning")
+    content = delta.get("content")
+    merged = ""
+
+    if isinstance(reasoning, str) and reasoning:
+        if not state.get("thinking_open", False):
+            merged += "<think>\n"
+            state["thinking_open"] = True
+        merged += reasoning
+
+    if isinstance(content, str) and content:
+        if state.get("thinking_open", False):
+            merged += "\n</think>\n"
+            state["thinking_open"] = False
+        merged += content
+
+    if merged:
+        delta["content"] = merged
+    if "reasoning" in delta:
+        del delta["reasoning"]
+    return chunk
+
+
+def _normalize_finish_reason(fr: str | None) -> str | None:
+    if fr is None:
+        return None
+    s = str(fr).strip().lower()
+    if s in {"stop", "finish_stop"}:
+        return "stop"
+    if s in {"length", "finish_length"}:
+        return "length"
+    if s in {"tool_calls", "toolcalls", "finish_toolcalls"}:
+        return "tool_calls"
+    if s in {"content_filter"}:
+        return "content_filter"
+    return "stop"
+
+
+def _normalize_usage_dict(usage: dict | None) -> dict | None:
+    if not isinstance(usage, dict):
+        return usage
+    if {"prompt_tokens", "completion_tokens", "total_tokens"}.issubset(set(usage.keys())):
+        return usage
+    tokens = usage.get("tokens")
+    if isinstance(tokens, dict):
+        prompt = int(tokens.get("prompt", 0) or 0)
+        completion = int(tokens.get("completion", 0) or 0)
+        out = dict(usage)
+        out["prompt_tokens"] = prompt
+        out["completion_tokens"] = completion
+        out["total_tokens"] = prompt + completion
+        return out
+    return usage
+
+
+def _flatten_content(content: object) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "text":
+                parts.append(str(p.get("text", "")))
+        return "".join(parts)
+    return str(content)
+
+
+def _extract_tool_calls_and_clean(text: str) -> tuple[list[dict], str]:
+    calls: list[dict] = []
+    for m in TOOL_TAG_PATTERN.findall(text):
+        try:
+            obj = json.loads(m.strip())
+            if isinstance(obj, dict):
+                calls.append(obj)
+        except Exception:
+            continue
+    cleaned = TOOL_TAG_PATTERN.sub("", text).strip()
+    return calls, cleaned
+
+
+def _tool_prompt(tools_spec: list[dict]) -> str:
+    desc_lines: list[str] = []
+    for t in tools_spec:
+        if not isinstance(t, dict) or t.get("type") != "function":
+            continue
+        fn = t.get("function", {})
+        if not isinstance(fn, dict):
+            continue
+        name = fn.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        description = str(fn.get("description") or "")
+        params = fn.get("parameters") if isinstance(fn.get("parameters"), dict) else {"type": "object"}
+        desc_lines.append(f"{name}: {description}\nArg Schema: {json.dumps(params, indent=2)}")
+    if not desc_lines:
+        return ""
+    open_tag, close_tag = TOOL_TAGS
+    return (
+        "You have access to the following tools:\n"
+        + "\n".join(desc_lines)
+        + "\nWhen you decide to use a tool, respond with a JSON object enclosed by "
+        + f"{open_tag} and {close_tag} tags in this format:\n"
+        + f"{open_tag}\n"
+        + '{\n  "tool": "<tool_name>",\n  "args": {<tool_arguments_as_json_object>}\n}\n'
+        + f"{close_tag}\n"
+        + "Only use tools listed above, and ensure your JSON is valid."
+    )
+
+
+def _serialize_tool_calls(tool_calls: list[dict]) -> str:
+    blocks: list[str] = []
+    open_tag, close_tag = TOOL_TAGS
+    for tc in tool_calls:
+        if not isinstance(tc, dict) or tc.get("type") != "function":
+            continue
+        fn = tc.get("function", {})
+        if not isinstance(fn, dict):
+            continue
+        name = fn.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        args_raw = fn.get("arguments")
+        args = {}
+        if isinstance(args_raw, str):
+            try:
+                maybe = json.loads(args_raw)
+                if isinstance(maybe, dict):
+                    args = maybe
+            except Exception:
+                args = {"_raw": args_raw}
+        elif isinstance(args_raw, dict):
+            args = args_raw
+        blocks.append(f"{open_tag}\n{json.dumps({'tool': name, 'args': args})}\n{close_tag}")
+    return "\n".join(blocks)
+
+
+def _massage_messages_for_tools(messages: list[dict], tools_spec: list[dict], tool_choice: object) -> list[dict]:
+    out: list[dict] = []
+    prompt = _tool_prompt(tools_spec) if tool_choice != "none" else ""
+    injected = False
+
+    tool_name_by_id: dict[str, str] = {}
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls", []) or []:
+                if isinstance(tc, dict):
+                    tc_id = tc.get("id")
+                    fn = tc.get("function", {})
+                    if isinstance(tc_id, str) and isinstance(fn, dict) and isinstance(fn.get("name"), str):
+                        tool_name_by_id[tc_id] = fn["name"]
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = _flatten_content(msg.get("content"))
+
+        if role == "assistant" and isinstance(msg.get("tool_calls"), list):
+            serialized = _serialize_tool_calls(msg.get("tool_calls") or [])
+            if serialized:
+                content = (content + "\n" + serialized).strip()
+
+        if role == "tool":
+            tool_name = msg.get("name")
+            if not isinstance(tool_name, str) or not tool_name:
+                tcid = msg.get("tool_call_id")
+                if isinstance(tcid, str):
+                    tool_name = tool_name_by_id.get(tcid, "")
+            content = f'<tool_result> "tool" : "{tool_name or ""}" "output": "{content}" </tool_result>'
+
+        if role == "system" and prompt and not injected:
+            content = (content + "\n\n" + prompt).strip()
+            injected = True
+
+        out.append({"role": role, "content": content})
+
+    if prompt and not injected:
+        out.insert(0, {"role": "system", "content": prompt})
+    return out
+
+
+class _ToolTagStreamFilter:
+    def __init__(self):
+        self.buf = ""
+
+    def feed(self, text: str) -> str:
+        if not text:
+            return ""
+        s = self.buf + text
+        self.buf = ""
+        out: list[str] = []
+        open_tag, close_tag = TOOL_TAGS
+        while s:
+            start = s.find(open_tag)
+            if start == -1:
+                keep = len(open_tag) - 1
+                if len(s) > keep:
+                    out.append(s[:-keep] if keep > 0 else s)
+                    self.buf = s[-keep:] if keep > 0 else ""
+                else:
+                    self.buf = s
+                break
+            if start > 0:
+                out.append(s[:start])
+            s = s[start:]
+            end = s.find(close_tag)
+            if end == -1:
+                self.buf = s
+                break
+            s = s[end + len(close_tag):]
+        return "".join(out)
+
+    def finalize(self) -> str:
+        if not self.buf:
+            return ""
+        open_tag, _ = TOOL_TAGS
+        if open_tag in self.buf:
+            self.buf = ""
+            return ""
+        tail = self.buf
+        self.buf = ""
+        return tail
+
+
+def _inject_reasoning_into_response(body: dict) -> dict:
+    choices = body.get("choices")
+    if not isinstance(choices, list):
+        return body
+    for c in choices:
+        if not isinstance(c, dict):
+            continue
+        msg = c.get("message")
+        if not isinstance(msg, dict):
+            continue
+        reasoning = msg.get("reasoning")
+        content = msg.get("content", "")
+        if isinstance(reasoning, str) and reasoning:
+            content_text = content if isinstance(content, str) else str(content)
+            msg["content"] = f"<think>\n{reasoning}\n</think>\n{content_text}"
+        if "reasoning" in msg:
+            del msg["reasoning"]
+    return body
+
+
+async def cmd_proxy(args, storage: StorageService) -> int:
+    device = args.device if args.device else storage.state.last_used_device
     if not device:
         error("No device specified or connected")
         print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
         print(f"  {C.DIM}Or:  truffile proxy --device <device>{C.RESET}")
         return 1
-    
-    port = args.port if hasattr(args, 'port') else 8080
-    host = args.host if hasattr(args, 'host') else "127.0.0.1"
-    debug = args.debug if hasattr(args, 'debug') else False
-    
-    spinner = None
-    
+
+    spinner = Spinner(f"Resolving {device}.local")
+    spinner.start()
     try:
-        print(f"{MUSHROOM} {C.BOLD}Starting OpenAI proxy{C.RESET}")
-        print()
-        
-        spinner = Spinner(f"Resolving {device}.local")
-        spinner.start()
-        
-        hostname = f"{device}.local"
-        ip = socket.gethostbyname(hostname)
+        ip = await resolve_mdns(f"{device}.local")
         spinner.stop(success=True)
-        
-        grpc_address = f"{ip}:80"
-        
-        spinner = Spinner("Connecting to inference service")
-        spinner.start()
-        
-        from truffile.infer.proxy import OpenAIProxy, OpenAIProxyHandler
-        from http.server import ThreadingHTTPServer
-        
-        proxy = OpenAIProxy(grpc_address, include_debug=debug)
-        
-        channel = grpc.insecure_channel(grpc_address)
-        stub = InferenceServiceStub(channel)
-        model_list = stub.GetModelList(GetModelListRequest(use_filter=False))
-        loaded = [m for m in model_list.models if m.state == Model.MODEL_STATE_LOADED]
-        spinner.stop(success=True)
-        spinner = None
-        
-        print(f"  {C.DIM}Device: {device} ({ip}){C.RESET}")
-        print(f"  {C.DIM}Models: {len(loaded)} loaded{C.RESET}")
-        
-        print()
-        print(f"{C.GREEN}{CHECK}{C.RESET} Proxy running at {C.BOLD}http://{host}:{port}/v1{C.RESET}")
-        print()
-        print(f"  {C.DIM}Use with OpenAI SDK:{C.RESET}")
-        print(f"    {C.CYAN}from openai import OpenAI{C.RESET}")
-        print(f"    {C.CYAN}client = OpenAI(base_url=\"http://{host}:{port}/v1\", api_key=\"x\"){C.RESET}")
-        print()
-        print(f"  {C.DIM}Or set environment variables:{C.RESET}")
-        print(f"    {C.CYAN}export OPENAI_BASE_URL=http://{host}:{port}/v1{C.RESET}")
-        print(f"    {C.CYAN}export OPENAI_API_KEY=anything{C.RESET}")
-        print()
-        print(f"  {C.DIM}Press Ctrl+C to stop{C.RESET}")
-        print()
-        
-        class _Server(ThreadingHTTPServer):
-            def __init__(self, server_address, handler_cls):
-                super().__init__(server_address, handler_cls)
-                self.proxy = proxy
-        
-        server = _Server((host, port), OpenAIProxyHandler)
+    except RuntimeError:
+        spinner.fail(f"Could not resolve {device}.local")
+        return 1
+
+    target_base = f"http://{ip}"
+    host = args.host
+    port = args.port
+    include_think_tags = not args.no_think_tags
+
+    class ProxyHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, _format, *_args):
+            return
+
+        def _send_json(self, code: int, body: dict):
+            raw = json.dumps(body).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _map_path(self, path: str) -> str | None:
+            if path == "/v1/models":
+                return "/if2/v1/models"
+            if path == "/v1/chat/completions":
+                return "/if2/v1/chat/completions"
+            return None
+
+        def _forward_headers(self) -> dict[str, str]:
+            out: dict[str, str] = {"Content-Type": "application/json"}
+            auth = self.headers.get("Authorization")
+            if auth:
+                out["Authorization"] = auth
+            return out
+
+        def do_GET(self):
+            mapped = self._map_path(self.path)
+            if not mapped:
+                self._send_json(404, {"error": {"message": "Not found"}})
+                return
+
+            try:
+                with httpx.Client(timeout=30.0) as client:
+                    resp = client.get(f"{target_base}{mapped}", headers=self._forward_headers())
+                self.send_response(resp.status_code)
+                self.send_header("Content-Type", resp.headers.get("content-type", "application/json"))
+                self.send_header("Content-Length", str(len(resp.content)))
+                self.end_headers()
+                self.wfile.write(resp.content)
+            except Exception as e:
+                self._send_json(502, {"error": {"message": f"Upstream GET failed: {e}"}})
+
+        def do_POST(self):
+            mapped = self._map_path(self.path)
+            if not mapped:
+                self._send_json(404, {"error": {"message": "Not found"}})
+                return
+
+            raw_body = b""
+            try:
+                content_len = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(content_len) if content_len > 0 else b"{}"
+                body = json.loads(raw_body.decode("utf-8"))
+            except Exception as e:
+                self._send_json(400, {"error": {"message": f"Invalid JSON body: {e}"}})
+                return
+
+            if mapped == "/if2/v1/chat/completions":
+                if "reasoning" not in body:
+                    body["reasoning"] = {"enabled": False}
+                if isinstance(body.get("tools"), list):
+                    messages = body.get("messages", [])
+                    if isinstance(messages, list):
+                        body["messages"] = _massage_messages_for_tools(
+                            messages=messages,
+                            tools_spec=body.get("tools") or [],
+                            tool_choice=body.get("tool_choice"),
+                        )
+                # Let proxy map tool tags back to OpenAI tool_calls.
+                body.pop("tools", None)
+                body.pop("tool_choice", None)
+
+            stream_mode = bool(body.get("stream")) and mapped == "/if2/v1/chat/completions"
+
+            try:
+                with httpx.Client(timeout=None) as client:
+                    if stream_mode:
+                        with client.stream(
+                            "POST",
+                            f"{target_base}{mapped}",
+                            headers=self._forward_headers(),
+                            json=body,
+                        ) as resp:
+                            self.send_response(resp.status_code)
+                            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                            self.send_header("Cache-Control", "no-cache")
+                            self.send_header("Connection", "keep-alive")
+                            self.end_headers()
+
+                            state = {"thinking_open": False}
+                            tool_filter = _ToolTagStreamFilter()
+                            acc_text_parts: list[str] = []
+                            seen_finish_reason: str | None = None
+                            stream_id = None
+                            created = None
+                            model_name = None
+                            for raw_line in resp.iter_lines():
+                                line = raw_line if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace")
+                                if not line:
+                                    self.wfile.write(b"\n")
+                                    self.wfile.flush()
+                                    continue
+                                if line.startswith("data:"):
+                                    payload = line[5:].strip()
+                                    if payload == "[DONE]":
+                                        clean_tail = tool_filter.finalize()
+                                        if clean_tail:
+                                            chunk = {
+                                                "choices": [{"index": 0, "delta": {"content": clean_tail}, "finish_reason": None}]
+                                            }
+                                            if stream_id is not None:
+                                                chunk["id"] = stream_id
+                                            if created is not None:
+                                                chunk["created"] = created
+                                            if model_name is not None:
+                                                chunk["model"] = model_name
+                                            out = f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+                                            self.wfile.write(out.encode("utf-8"))
+
+                                        if acc_text_parts:
+                                            tool_calls, _clean = _extract_tool_calls_and_clean("".join(acc_text_parts))
+                                            if tool_calls:
+                                                tc_list = []
+                                                for i, tc in enumerate(tool_calls):
+                                                    name = str(tc.get("tool", ""))
+                                                    args = tc.get("args", {})
+                                                    if not isinstance(args, dict):
+                                                        args = {"_raw": str(args)}
+                                                    tc_list.append(
+                                                        {
+                                                            "id": f"call_{i+1}",
+                                                            "type": "function",
+                                                            "index": i,
+                                                            "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
+                                                        }
+                                                    )
+                                                tc_chunk = {
+                                                    "choices": [{"index": 0, "delta": {"tool_calls": tc_list}, "finish_reason": None}]
+                                                }
+                                                if stream_id is not None:
+                                                    tc_chunk["id"] = stream_id
+                                                if created is not None:
+                                                    tc_chunk["created"] = created
+                                                if model_name is not None:
+                                                    tc_chunk["model"] = model_name
+                                                out = f"data: {json.dumps(tc_chunk, separators=(',', ':'))}\n\n"
+                                                self.wfile.write(out.encode("utf-8"))
+                                                seen_finish_reason = "tool_calls"
+
+                                        if seen_finish_reason is None:
+                                            fin = {
+                                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                                            }
+                                            if stream_id is not None:
+                                                fin["id"] = stream_id
+                                            if created is not None:
+                                                fin["created"] = created
+                                            if model_name is not None:
+                                                fin["model"] = model_name
+                                            out = f"data: {json.dumps(fin, separators=(',', ':'))}\n\n"
+                                            self.wfile.write(out.encode("utf-8"))
+
+                                        if include_think_tags and state.get("thinking_open", False):
+                                            close_evt = {
+                                                "choices": [{"delta": {"content": "\n</think>\n"}, "index": 0}]
+                                            }
+                                            out = f"data: {json.dumps(close_evt, separators=(',', ':'))}\n\n"
+                                            self.wfile.write(out.encode("utf-8"))
+                                        self.wfile.write(b"data: [DONE]\n\n")
+                                        self.wfile.flush()
+                                        break
+                                    try:
+                                        evt = json.loads(payload)
+                                        if stream_id is None and isinstance(evt, dict):
+                                            stream_id = evt.get("id")
+                                            created = evt.get("created")
+                                            model_name = evt.get("model")
+                                        if include_think_tags:
+                                            evt = _inject_reasoning_into_chunk(evt, state)
+                                        else:
+                                            # OpenAI-style proxy field for reasoning deltas.
+                                            choices = evt.get("choices")
+                                            if isinstance(choices, list) and choices:
+                                                c0 = choices[0]
+                                                if isinstance(c0, dict):
+                                                    delta = c0.get("delta")
+                                                    if isinstance(delta, dict) and isinstance(delta.get("reasoning"), str):
+                                                        delta["reasoning_content"] = delta.pop("reasoning")
+                                        choices = evt.get("choices")
+                                        if isinstance(choices, list) and choices:
+                                            c0 = choices[0]
+                                            if isinstance(c0, dict):
+                                                fr = c0.get("finish_reason")
+                                                mapped_fr = _normalize_finish_reason(fr) if fr is not None else None
+                                                if fr is not None:
+                                                    c0["finish_reason"] = mapped_fr
+                                                    seen_finish_reason = mapped_fr
+                                                delta = c0.get("delta")
+                                                if isinstance(delta, dict):
+                                                    content = delta.get("content")
+                                                    if isinstance(content, str) and content:
+                                                        acc_text_parts.append(content)
+                                                        filtered = tool_filter.feed(content)
+                                                        if filtered != content:
+                                                            if filtered:
+                                                                delta["content"] = filtered
+                                                            else:
+                                                                delta.pop("content", None)
+                                        out = f"data: {json.dumps(evt, separators=(',', ':'))}\n\n"
+                                    except Exception:
+                                        out = f"{line}\n\n"
+                                    self.wfile.write(out.encode("utf-8"))
+                                else:
+                                    self.wfile.write((line + "\n").encode("utf-8"))
+                                self.wfile.flush()
+                    else:
+                        resp = client.post(
+                            f"{target_base}{mapped}",
+                            headers=self._forward_headers(),
+                            json=body,
+                            timeout=120.0,
+                        )
+                        content = resp.content
+                        if (
+                            mapped == "/if2/v1/chat/completions"
+                            and include_think_tags
+                            and "application/json" in resp.headers.get("content-type", "")
+                        ):
+                            try:
+                                parsed = json.loads(content.decode("utf-8"))
+                                parsed = _inject_reasoning_into_response(parsed)
+                                choices = parsed.get("choices")
+                                if isinstance(choices, list) and choices:
+                                    c0 = choices[0]
+                                    if isinstance(c0, dict):
+                                        msg = c0.get("message")
+                                        if isinstance(msg, dict):
+                                            msg_content = msg.get("content")
+                                            if isinstance(msg_content, str):
+                                                tool_calls, cleaned = _extract_tool_calls_and_clean(msg_content)
+                                                if tool_calls:
+                                                    tc_list = []
+                                                    for i, tc in enumerate(tool_calls):
+                                                        name = str(tc.get("tool", ""))
+                                                        args = tc.get("args", {})
+                                                        if not isinstance(args, dict):
+                                                            args = {"_raw": str(args)}
+                                                        tc_list.append(
+                                                            {
+                                                                "id": f"call_{i+1}",
+                                                                "type": "function",
+                                                                "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
+                                                            }
+                                                        )
+                                                    msg["tool_calls"] = tc_list
+                                                    msg["content"] = cleaned if cleaned else None
+                                                    c0["finish_reason"] = "tool_calls"
+                                        fr = c0.get("finish_reason")
+                                        c0["finish_reason"] = _normalize_finish_reason(fr) if fr is not None else None
+                                usage = parsed.get("usage")
+                                if isinstance(usage, dict):
+                                    parsed["usage"] = _normalize_usage_dict(usage)
+                                content = json.dumps(parsed).encode("utf-8")
+                            except Exception:
+                                pass
+                        elif mapped == "/if2/v1/chat/completions" and "application/json" in resp.headers.get("content-type", ""):
+                            try:
+                                parsed = json.loads(content.decode("utf-8"))
+                                choices = parsed.get("choices")
+                                if isinstance(choices, list) and choices:
+                                    c0 = choices[0]
+                                    if isinstance(c0, dict):
+                                        msg = c0.get("message")
+                                        if isinstance(msg, dict):
+                                            msg_content = msg.get("content")
+                                            if isinstance(msg_content, str):
+                                                tool_calls, cleaned = _extract_tool_calls_and_clean(msg_content)
+                                                if tool_calls:
+                                                    tc_list = []
+                                                    for i, tc in enumerate(tool_calls):
+                                                        name = str(tc.get("tool", ""))
+                                                        args = tc.get("args", {})
+                                                        if not isinstance(args, dict):
+                                                            args = {"_raw": str(args)}
+                                                        tc_list.append(
+                                                            {
+                                                                "id": f"call_{i+1}",
+                                                                "type": "function",
+                                                                "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
+                                                            }
+                                                        )
+                                                    msg["tool_calls"] = tc_list
+                                                    msg["content"] = cleaned if cleaned else None
+                                                    c0["finish_reason"] = "tool_calls"
+                                        fr = c0.get("finish_reason")
+                                        c0["finish_reason"] = _normalize_finish_reason(fr) if fr is not None else None
+                                usage = parsed.get("usage")
+                                if isinstance(usage, dict):
+                                    parsed["usage"] = _normalize_usage_dict(usage)
+                                content = json.dumps(parsed).encode("utf-8")
+                            except Exception:
+                                pass
+                        self.send_response(resp.status_code)
+                        self.send_header("Content-Type", resp.headers.get("content-type", "application/json"))
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+            except Exception as e:
+                self._send_json(502, {"error": {"message": f"Upstream POST failed: {e}"}})
+
+    print(f"{MUSHROOM} {C.BOLD}truffile proxy{C.RESET}")
+    print()
+    print(f"  {C.DIM}Device:{C.RESET} {device} ({ip})")
+    print(f"  {C.DIM}Listen:{C.RESET} http://{host}:{port}")
+    print(f"  {C.DIM}Upstream:{C.RESET} {target_base}/if2/v1/*")
+    print(f"  {C.DIM}Reasoning tags:{C.RESET} {'on' if include_think_tags else 'off'}")
+    print()
+    print(f"  {C.DIM}OpenAI-compatible base URL:{C.RESET}")
+    print(f"    {C.CYAN}http://{host}:{port}/v1{C.RESET}")
+    print()
+    print(f"  {C.DIM}Press Ctrl+C to stop{C.RESET}")
+    print()
+
+    try:
+        server = ThreadingHTTPServer((host, port), ProxyHandler)
         server.serve_forever()
-        
     except KeyboardInterrupt:
-        if spinner:
-            spinner.running = False
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
         print(f"{C.RED}{CROSS} Cancelled{C.RESET}")
         return 130
-    except socket.gaierror:
-        if spinner:
-            spinner.fail(f"Could not resolve {device}.local")
-        else:
-            error(f"Could not resolve {device}.local")
-        print(f"  {C.DIM}Try: ping {device}.local{C.RESET}")
-        return 1
     except OSError as e:
-        if spinner:
-            spinner.fail(str(e))
-        else:
-            error(f"Could not start server: {e}")
-        print(f"  {C.DIM}Port {port} may already be in use{C.RESET}")
+        error(f"Could not start proxy: {e}")
         return 1
-    except Exception as e:
-        if spinner:
-            spinner.fail(str(e))
-        else:
-            error(str(e))
-        return 1
-    
+
     return 0
 
 
@@ -1061,6 +1635,25 @@ async def cmd_scan(args, storage: StorageService) -> int:
         return 1
 
 
+def cmd_validate(args) -> int:
+    app_dir = Path(args.path).resolve()
+    if not app_dir.exists() or not app_dir.is_dir():
+        error(f"{app_dir} is not a valid directory")
+        return 1
+
+    info(f"Validating app in {app_dir.name}")
+    valid, _config, app_type, warnings, errors = validate_app_dir(app_dir)
+    for w in warnings:
+        warn(w)
+    if not valid:
+        for e in errors:
+            error(e)
+        return 1
+
+    success(f"Validation passed ({app_type})")
+    return 0
+
+
 def print_help():
     print(f"{MUSHROOM} {C.BOLD}truffile{C.RESET} - TruffleOS SDK")
     print()
@@ -1071,20 +1664,24 @@ def print_help():
     print(f"  {C.BLUE}connect{C.RESET} <device>         Connect to a Truffle device")
     print(f"  {C.BLUE}disconnect{C.RESET} <device|all>  Disconnect and clear credentials")
     print(f"  {C.BLUE}deploy{C.RESET} [path]            Deploy an app (reads type from truffile.yaml)")
+    print(f"  {C.BLUE}validate{C.RESET} [path]          Validate app config and files")
     print(f"  {C.BLUE}delete{C.RESET}                    Delete installed apps from device")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
-    print(f"  {C.BLUE}models{C.RESET}                    List AI models on connected device")
-    print(f"  {C.BLUE}proxy{C.RESET}                     Start OpenAI-compatible inference proxy")
+    print(f"  {C.BLUE}models{C.RESET}                    List models on your Truffle")
+    print(f"  {C.BLUE}chat{C.RESET} [prompt]            Chat with any model on your Truffle")
+    print(f"  {C.BLUE}proxy{C.RESET}                    Run OpenAI-compatible proxy")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
     print(f"  {C.DIM}truffile scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
     print(f"  {C.DIM}truffile connect truffle-6272{C.RESET}")
     print(f"  {C.DIM}truffile deploy ./my-app{C.RESET}")
+    print(f"  {C.DIM}truffile deploy --dry-run ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
+    print(f"  {C.DIM}truffile validate ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile list apps{C.RESET}")
-    print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show loaded models{C.RESET}")
-    print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# start proxy on :8080{C.RESET}")
-    print(f"  {C.DIM}truffile proxy --port 9000{C.RESET}")
+    print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show models on your Truffle{C.RESET}")
+    print(f"  {C.DIM}truffile chat \"hello\"{C.RESET}       {C.DIM}# run chat completion on your Truffle{C.RESET}")
+    print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# run local /v1 proxy{C.RESET}")
     print()
 
 
@@ -1112,6 +1709,10 @@ def main() -> int:
     p_deploy = subparsers.add_parser("deploy", add_help=False)
     p_deploy.add_argument("path", nargs="?", default=".")
     p_deploy.add_argument("-i", "--interactive", action="store_true", help="Interactive terminal mode")
+    p_deploy.add_argument("--dry-run", action="store_true", help="Show deploy plan without mutating device")
+
+    p_validate = subparsers.add_parser("validate", add_help=False)
+    p_validate.add_argument("path", nargs="?", default=".")
 
     p_delete = subparsers.add_parser("delete", add_help=False)
 
@@ -1119,12 +1720,24 @@ def main() -> int:
     p_list.add_argument("what", choices=["apps", "devices"], nargs="?")
 
     p_models = subparsers.add_parser("models", add_help=False)
-
+    
+    p_chat = subparsers.add_parser("chat", add_help=False)
+    p_chat.add_argument("prompt_words", nargs="*", help="Prompt text (alternative to --prompt)")
+    p_chat.add_argument("-p", "--prompt", help="Prompt text")
+    p_chat.add_argument("-m", "--model", help="Model id/uuid (default: first model from IF2 list)")
+    p_chat.add_argument("--system", help="System prompt")
+    p_chat.add_argument("--reasoning", action="store_true", help="Enable reasoning mode")
+    p_chat.add_argument("--max-tokens", type=int, help="Max response tokens")
+    p_chat.add_argument("--temperature", type=float, help="Sampling temperature")
+    p_chat.add_argument("--top-p", type=float, help="Nucleus sampling top-p")
+    p_chat.add_argument("--no-stream", action="store_true", help="Disable streaming output")
+    p_chat.add_argument("--json", action="store_true", help="Print full JSON response (non-stream)")
+    
     p_proxy = subparsers.add_parser("proxy", add_help=False)
-    p_proxy.add_argument("--device", "-d", help="Device name (defaults to last connected)")
-    p_proxy.add_argument("--port", "-p", type=int, default=8080, help="Port to listen on")
-    p_proxy.add_argument("--host", default="127.0.0.1", help="Host to bind to")
-    p_proxy.add_argument("--debug", action="store_true", help="Include reasoning in responses")
+    p_proxy.add_argument("--device", "-d", help="Device name (default: last connected)")
+    p_proxy.add_argument("--host", default="127.0.0.1", help="Host to bind")
+    p_proxy.add_argument("--port", "-p", type=int, default=8080, help="Port to bind")
+    p_proxy.add_argument("--no-think-tags", action="store_true", help="Do not inject <think> tags")
 
     args = parser.parse_args()
 
@@ -1164,8 +1777,12 @@ def main() -> int:
         return cmd_list(args, storage)
     elif args.command == "models":
         return run_async(cmd_models(storage))
+    elif args.command == "chat":
+        return run_async(cmd_chat(args, storage))
     elif args.command == "proxy":
-        return cmd_proxy(args, storage)
+        return run_async(cmd_proxy(args, storage))
+    elif args.command == "validate":
+        return cmd_validate(args)
 
     return 0
 

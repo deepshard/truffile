@@ -1,3 +1,5 @@
+import datetime
+
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from truffle.os import task_options_pb2 as _task_options_pb2
 from google.protobuf.internal import containers as _containers
@@ -48,4 +50,4 @@ class TaskInfo(_message.Message):
     created: _timestamp_pb2.Timestamp
     last_updated: _timestamp_pb2.Timestamp
     access_uri: str
-    def __init__(self, run_state: _Optional[_Union[TaskInfo.TaskRunState, str]] = ..., app_uuids: _Optional[_Iterable[str]] = ..., task_title: _Optional[str] = ..., options: _Optional[_Union[_task_options_pb2.TaskOptions, _Mapping]] = ..., created: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., last_updated: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., access_uri: _Optional[str] = ...) -> None: ...
+    def __init__(self, run_state: _Optional[_Union[TaskInfo.TaskRunState, str]] = ..., app_uuids: _Optional[_Iterable[str]] = ..., task_title: _Optional[str] = ..., options: _Optional[_Union[_task_options_pb2.TaskOptions, _Mapping]] = ..., created: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_updated: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., access_uri: _Optional[str] = ...) -> None: ...

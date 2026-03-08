@@ -1,0 +1,41 @@
+metadata:
+  name: Reddit
+  bundle_id: org.deepshard.reddit
+  description: |
+    Have your Truffle¹ browse Reddit and post relevant content to your feed.
+  background:
+    process:
+      cmd:
+        - python
+        - /opt/reddit.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        # Comma-separated subreddit list. Use "none" to disable and rely on USER_FEED_URL.
+        SUBREDDITS: "news,worldnews,technology"
+        # Optional personal Reddit JSON feed URL. Use "none" when not used.
+        USER_FEED_URL: "none"
+    default_schedule:
+      type: interval
+      interval:
+        duration: 60m
+        prod_duration: 60m
+        schedule:
+          daily_window: "00:00-23:59"
+  icon_file: ./icon.png  
+steps:
+  # - name: Reddit Setup
+  #   type: welcome
+  #   content: |
+  #     The Reddit app will allow your Truffle to post relevant content from Reddit on your feed.
+  #     You can customize which subreddits to follow in the configuration step.
+  #     Please use this app in accordance with Reddit's terms of service.
+  - name: Install dependencies
+    type: bash
+    run: |
+      pip install --no-cache-dir --force-reinstall requests feedparser trafilatura==2.0.0 tld==0.13.1 
+  - name: Copy application files
+    type: files
+    files:
+      - source: ./reddit.py
+        destination: ./opt/reddit.py

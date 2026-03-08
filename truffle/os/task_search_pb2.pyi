@@ -1,3 +1,5 @@
+import datetime
+
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from truffle.os import task_info_pb2 as _task_info_pb2
 from google.protobuf.internal import containers as _containers
@@ -33,7 +35,7 @@ class TaskSearchResult(_message.Message):
     task_info: _task_info_pb2.TaskInfo
     timestamp: _timestamp_pb2.Timestamp
     content: TaskSearchResult.TaskSearchContent
-    def __init__(self, task_id: _Optional[str] = ..., task_info: _Optional[_Union[_task_info_pb2.TaskInfo, _Mapping]] = ..., timestamp: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., content: _Optional[_Union[TaskSearchResult.TaskSearchContent, _Mapping]] = ...) -> None: ...
+    def __init__(self, task_id: _Optional[str] = ..., task_info: _Optional[_Union[_task_info_pb2.TaskInfo, _Mapping]] = ..., timestamp: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., content: _Optional[_Union[TaskSearchResult.TaskSearchContent, _Mapping]] = ...) -> None: ...
 
 class SearchTasksResponse(_message.Message):
     __slots__ = ("total_results", "current_offset", "results")

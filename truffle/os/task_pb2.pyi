@@ -1,3 +1,5 @@
+import datetime
+
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from truffle.common import file_pb2 as _file_pb2
 from truffle.os import task_info_pb2 as _task_info_pb2
@@ -42,29 +44,41 @@ class TasksList(_message.Message):
     def __init__(self, tasks: _Optional[_Iterable[_Union[Task, _Mapping]]] = ...) -> None: ...
 
 class TaskNode(_message.Message):
-    __slots__ = ("id", "parent_id", "child_ids", "files", "step", "user_msg")
+    __slots__ = ("id", "parent_id", "child_ids", "created_at", "files", "step", "user_msg")
     ID_FIELD_NUMBER: _ClassVar[int]
     PARENT_ID_FIELD_NUMBER: _ClassVar[int]
     CHILD_IDS_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     FILES_FIELD_NUMBER: _ClassVar[int]
     STEP_FIELD_NUMBER: _ClassVar[int]
     USER_MSG_FIELD_NUMBER: _ClassVar[int]
     id: int
     parent_id: int
     child_ids: _containers.RepeatedScalarFieldContainer[int]
+    created_at: _timestamp_pb2.Timestamp
     files: _containers.RepeatedCompositeFieldContainer[_file_pb2.AttachedFile]
     step: _task_step_pb2.Step
     user_msg: _task_user_response_pb2.UserMessage
-    def __init__(self, id: _Optional[int] = ..., parent_id: _Optional[int] = ..., child_ids: _Optional[_Iterable[int]] = ..., files: _Optional[_Iterable[_Union[_file_pb2.AttachedFile, _Mapping]]] = ..., step: _Optional[_Union[_task_step_pb2.Step, _Mapping]] = ..., user_msg: _Optional[_Union[_task_user_response_pb2.UserMessage, _Mapping]] = ...) -> None: ...
+    def __init__(self, id: _Optional[int] = ..., parent_id: _Optional[int] = ..., child_ids: _Optional[_Iterable[int]] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., files: _Optional[_Iterable[_Union[_file_pb2.AttachedFile, _Mapping]]] = ..., step: _Optional[_Union[_task_step_pb2.Step, _Mapping]] = ..., user_msg: _Optional[_Union[_task_user_response_pb2.UserMessage, _Mapping]] = ...) -> None: ...
+
+class StreamingTaskStepResult(_message.Message):
+    __slots__ = ("node_id", "partial_content")
+    NODE_ID_FIELD_NUMBER: _ClassVar[int]
+    PARTIAL_CONTENT_FIELD_NUMBER: _ClassVar[int]
+    node_id: int
+    partial_content: str
+    def __init__(self, node_id: _Optional[int] = ..., partial_content: _Optional[str] = ...) -> None: ...
 
 class TaskStreamUpdate(_message.Message):
-    __slots__ = ("task_id", "info", "nodes", "error")
+    __slots__ = ("task_id", "info", "nodes", "error", "streaming_step_result")
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     INFO_FIELD_NUMBER: _ClassVar[int]
     NODES_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    STREAMING_STEP_RESULT_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     info: _task_info_pb2.TaskInfo
     nodes: _containers.RepeatedCompositeFieldContainer[TaskNode]
     error: _task_error_pb2.TaskError
-    def __init__(self, task_id: _Optional[str] = ..., info: _Optional[_Union[_task_info_pb2.TaskInfo, _Mapping]] = ..., nodes: _Optional[_Iterable[_Union[TaskNode, _Mapping]]] = ..., error: _Optional[_Union[_task_error_pb2.TaskError, _Mapping]] = ...) -> None: ...
+    streaming_step_result: StreamingTaskStepResult
+    def __init__(self, task_id: _Optional[str] = ..., info: _Optional[_Union[_task_info_pb2.TaskInfo, _Mapping]] = ..., nodes: _Optional[_Iterable[_Union[TaskNode, _Mapping]]] = ..., error: _Optional[_Union[_task_error_pb2.TaskError, _Mapping]] = ..., streaming_step_result: _Optional[_Union[StreamingTaskStepResult, _Mapping]] = ...) -> None: ...

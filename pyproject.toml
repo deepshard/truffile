@@ -28,7 +28,6 @@ dependencies = [
 
 [project.scripts]
 truffile = "truffile.cli:main"
-truffleinferproxy = "truffile.infer.proxy:main"
 
 [project.optional-dependencies]
 dev = [

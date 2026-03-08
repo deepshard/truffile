@@ -15,6 +15,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 from truffle.os.task_pb2 import Task as Task
 from truffle.os.task_pb2 import TasksList as TasksList
 from truffle.os.task_pb2 import TaskNode as TaskNode
+from truffle.os.task_pb2 import StreamingTaskStepResult as StreamingTaskStepResult
 from truffle.os.task_pb2 import TaskStreamUpdate as TaskStreamUpdate
 from truffle.os.task_target_pb2 import TargetTask as TargetTask
 from truffle.os.task_options_pb2 import TaskOptions as TaskOptions
