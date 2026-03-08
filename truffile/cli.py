@@ -10,7 +10,7 @@ from pathlib import Path
 from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
 from truffile.schema import validate_app_dir
-from truffile.deploy.builder import deploy_with_builder
+from truffile.deploy import build_deploy_plan, deploy_with_builder
 
 import grpc
 from truffle.infer.infer_pb2_grpc import InferenceServiceStub
@@ -264,6 +264,7 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     app_path = args.path if args.path else "."
     app_dir = Path(app_path).resolve()
     interactive = args.interactive
+    dry_run = bool(getattr(args, "dry_run", False))
     if not app_dir.exists() or not app_dir.is_dir():
         error(f"{app_dir} is not a valid directory")
         return 1
@@ -277,6 +278,55 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     
     for w in warnings:
         warn(w)
+
+    if dry_run:
+        try:
+            plan = build_deploy_plan(config=config, app_dir=app_dir, app_type=app_type)
+        except Exception as e:
+            error(f"Failed to build deploy plan: {e}")
+            return 1
+        print()
+        print(f"{C.BOLD}Dry Run: Deploy Plan{C.RESET}")
+        print(f"  Name: {plan['name']}")
+        print(f"  Bundle ID: {plan['bundle_id']}")
+        print(f"  Mode: {plan['finish_label']}")
+        print(f"  App Dir: {app_dir}")
+        print(f"  Exec CWD: {plan['exec_cwd']}")
+        if plan["icon_path"] is not None:
+            print(f"  Icon: {plan['icon_path']}")
+        else:
+            print(f"  Icon: {C.DIM}<none>{C.RESET}")
+
+        fg = plan["fg_payload"]
+        if fg is not None:
+            fg_keys = [e.split("=", 1)[0] for e in fg.get("env", []) if "=" in e]
+            print(f"  Foreground Cmd: {fg['cmd']} {' '.join(fg.get('args', []))}".rstrip())
+            print(f"  Foreground Env Keys: {', '.join(fg_keys) if fg_keys else '<none>'}")
+
+        bg = plan["bg_payload"]
+        if bg is not None:
+            bg_keys = [e.split('=', 1)[0] for e in bg.get("env", []) if "=" in e]
+            print(f"  Background Cmd: {bg['cmd']} {' '.join(bg.get('args', []))}".rstrip())
+            print(f"  Background Env Keys: {', '.join(bg_keys) if bg_keys else '<none>'}")
+            if plan["default_schedule"] is not None:
+                print(f"  Background Schedule: configured")
+            else:
+                print(f"  Background Schedule: {C.DIM}<default runtime policy>{C.RESET}")
+
+        files = plan["files_to_upload"]
+        print(f"  Files To Upload: {len(files)}")
+        for f in files:
+            src = f.get("source", "<missing>")
+            dst = f.get("destination", "<missing>")
+            print(f"    - {src} {ARROW} {dst}")
+
+        cmds = plan["bash_commands"]
+        print(f"  Bash Steps: {len(cmds)}")
+        for name, _cmd in cmds:
+            print(f"    - {name}")
+        print()
+        success("Dry run complete (no device changes made)")
+        return 0
     
     device = storage.state.last_used_device
     if not device:
@@ -913,6 +963,25 @@ async def cmd_scan(args, storage: StorageService) -> int:
         return 1
 
 
+def cmd_validate(args) -> int:
+    app_dir = Path(args.path).resolve()
+    if not app_dir.exists() or not app_dir.is_dir():
+        error(f"{app_dir} is not a valid directory")
+        return 1
+
+    info(f"Validating app in {app_dir.name}")
+    valid, _config, app_type, warnings, errors = validate_app_dir(app_dir)
+    for w in warnings:
+        warn(w)
+    if not valid:
+        for e in errors:
+            error(e)
+        return 1
+
+    success(f"Validation passed ({app_type})")
+    return 0
+
+
 def print_help():
     print(f"{MUSHROOM} {C.BOLD}truffile{C.RESET} - TruffleOS SDK")
     print()
@@ -923,6 +992,7 @@ def print_help():
     print(f"  {C.BLUE}connect{C.RESET} <device>         Connect to a Truffle device")
     print(f"  {C.BLUE}disconnect{C.RESET} <device|all>  Disconnect and clear credentials")
     print(f"  {C.BLUE}deploy{C.RESET} [path]            Deploy an app (reads type from truffile.yaml)")
+    print(f"  {C.BLUE}validate{C.RESET} [path]          Validate app config and files")
     print(f"  {C.BLUE}delete{C.RESET}                    Delete installed apps from device")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
     print(f"  {C.BLUE}models{C.RESET}                    List AI models on connected device")
@@ -932,7 +1002,9 @@ def print_help():
     print(f"  {C.DIM}truffile scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
     print(f"  {C.DIM}truffile connect truffle-6272{C.RESET}")
     print(f"  {C.DIM}truffile deploy ./my-app{C.RESET}")
+    print(f"  {C.DIM}truffile deploy --dry-run ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
+    print(f"  {C.DIM}truffile validate ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile list apps{C.RESET}")
     print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show loaded models{C.RESET}")
     print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# start proxy on :8080{C.RESET}")
@@ -964,6 +1036,10 @@ def main() -> int:
     p_deploy = subparsers.add_parser("deploy", add_help=False)
     p_deploy.add_argument("path", nargs="?", default=".")
     p_deploy.add_argument("-i", "--interactive", action="store_true", help="Interactive terminal mode")
+    p_deploy.add_argument("--dry-run", action="store_true", help="Show deploy plan without mutating device")
+
+    p_validate = subparsers.add_parser("validate", add_help=False)
+    p_validate.add_argument("path", nargs="?", default=".")
 
     p_delete = subparsers.add_parser("delete", add_help=False)
 
@@ -1018,6 +1094,8 @@ def main() -> int:
         return run_async(cmd_models(storage))
     elif args.command == "proxy":
         return cmd_proxy(args, storage)
+    elif args.command == "validate":
+        return cmd_validate(args)
 
     return 0
 

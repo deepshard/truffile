@@ -34,41 +34,12 @@ def _extract_process(process_cfg: dict[str, Any] | None) -> tuple[str, list[str]
     return cmd, args, cwd, env
 
 
-async def _wait_for_build_session_ready(client: TruffleClient, timeout_sec: float = 45.0) -> None:
-    deadline = asyncio.get_event_loop().time() + timeout_sec
-    last_error: Exception | None = None
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            result = await client.exec("echo ready", cwd="/")
-            if result.exit_code == 0:
-                return
-        except Exception as e:
-            last_error = e
-        await asyncio.sleep(1.0)
-    if last_error is not None:
-        raise RuntimeError(f"build session endpoint did not become ready in time: {last_error}")
-    raise RuntimeError("build session endpoint did not become ready in time")
-
-
-async def deploy_with_builder(
+def build_deploy_plan(
     *,
-    client: TruffleClient,
     config: dict[str, Any],
     app_dir: Path,
     app_type: str,
-    device: str,
-    interactive: bool,
-    spinner_cls: Any,
-    scrolling_log_cls: Any,
-    info: Callable[[str], None],
-    success: Callable[[str], None],
-    error: Callable[[str], None],
-    color_dim: str,
-    color_reset: str,
-    color_bold: str,
-    arrow: str,
-    interactive_shell: Callable[[str], Any],
-) -> int:
+) -> dict[str, Any]:
     meta = config["metadata"]
     name = meta["name"]
     description = meta.get("description", "")
@@ -105,6 +76,95 @@ async def deploy_with_builder(
         if exec_cwd == "/" and bg_cwd:
             exec_cwd = bg_cwd
 
+    if has_fg and has_bg:
+        finish_label = "foreground+background"
+    elif has_fg:
+        finish_label = "foreground"
+    else:
+        finish_label = "background"
+
+    default_schedule = None
+    if isinstance(bg_cfg, dict):
+        default_schedule = bg_cfg.get("default_schedule")
+    elif has_bg:
+        default_schedule = meta.get("default_schedule")
+
+    files_to_upload = []
+    for step in config.get("steps", []):
+        if isinstance(step, dict) and step.get("type") == "files":
+            files_to_upload.extend(step.get("files", []))
+    files_to_upload.extend(config.get("files", []))
+
+    bash_commands = []
+    for step in config.get("steps", []):
+        if isinstance(step, dict) and step.get("type") == "bash":
+            bash_commands.append((step.get("name", "bash"), step["run"]))
+    if config.get("run"):
+        bash_commands.append(("Install dependencies", config["run"]))
+
+    return {
+        "name": name,
+        "description": description,
+        "bundle_id": bundle_id,
+        "icon_path": icon_path,
+        "fg_payload": fg_payload,
+        "bg_payload": bg_payload,
+        "exec_cwd": exec_cwd,
+        "finish_label": finish_label,
+        "default_schedule": default_schedule,
+        "files_to_upload": files_to_upload,
+        "bash_commands": bash_commands,
+    }
+
+
+async def _wait_for_build_session_ready(client: TruffleClient, timeout_sec: float = 45.0) -> None:
+    deadline = asyncio.get_event_loop().time() + timeout_sec
+    last_error: Exception | None = None
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            result = await client.exec("echo ready", cwd="/")
+            if result.exit_code == 0:
+                return
+        except Exception as e:
+            last_error = e
+        await asyncio.sleep(1.0)
+    if last_error is not None:
+        raise RuntimeError(f"build session endpoint did not become ready in time: {last_error}")
+    raise RuntimeError("build session endpoint did not become ready in time")
+
+
+async def deploy_with_builder(
+    *,
+    client: TruffleClient,
+    config: dict[str, Any],
+    app_dir: Path,
+    app_type: str,
+    device: str,
+    interactive: bool,
+    spinner_cls: Any,
+    scrolling_log_cls: Any,
+    info: Callable[[str], None],
+    success: Callable[[str], None],
+    error: Callable[[str], None],
+    color_dim: str,
+    color_reset: str,
+    color_bold: str,
+    arrow: str,
+    interactive_shell: Callable[[str], Any],
+) -> int:
+    plan = build_deploy_plan(config=config, app_dir=app_dir, app_type=app_type)
+    name = plan["name"]
+    description = plan["description"]
+    bundle_id = plan["bundle_id"]
+    icon_path = plan["icon_path"]
+    fg_payload = plan["fg_payload"]
+    bg_payload = plan["bg_payload"]
+    exec_cwd = plan["exec_cwd"]
+    finish_label = plan["finish_label"]
+    default_schedule = plan["default_schedule"]
+    files_to_upload = plan["files_to_upload"]
+    bash_commands = plan["bash_commands"]
+
     spinner = spinner_cls(f"Connecting to {device}")
     spinner.start()
     await client.connect()
@@ -117,12 +177,6 @@ async def deploy_with_builder(
     spinner.stop(success=True)
     print(f"  {color_dim}Session: {client.app_uuid}{color_reset}")
 
-    files_to_upload = []
-    for step in config.get("steps", []):
-        if step.get("type") == "files":
-            files_to_upload.extend(step.get("files", []))
-    files_to_upload.extend(config.get("files", []))
-
     for f in files_to_upload:
         src = app_dir / f["source"]
         dest = f["destination"]
@@ -131,13 +185,6 @@ async def deploy_with_builder(
         result = await client.upload(src, dest)
         spinner.stop(success=True)
         print(f"  {color_dim}{result.bytes} bytes, sha256={result.sha256[:12]}...{color_reset}")
-
-    bash_commands = []
-    for step in config.get("steps", []):
-        if step.get("type") == "bash":
-            bash_commands.append((step.get("name", "bash"), step["run"]))
-    if config.get("run"):
-        bash_commands.append(("Install dependencies", config["run"]))
 
     for step_name, run_cmd in bash_commands:
         info(f"Running: {step_name}")
@@ -170,20 +217,8 @@ async def deploy_with_builder(
         await interactive_shell(ws_url)
         print()
 
-    if has_fg and has_bg:
-        finish_label = "foreground+background"
-    elif has_fg:
-        finish_label = "foreground"
-    else:
-        finish_label = "background"
     spinner = spinner_cls(f"Finishing as {finish_label} app")
     spinner.start()
-
-    default_schedule = None
-    if isinstance(bg_cfg, dict):
-        default_schedule = bg_cfg.get("default_schedule")
-    elif has_bg:
-        default_schedule = meta.get("default_schedule")
 
     await client.finish_app(
         name=name,
