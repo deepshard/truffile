@@ -389,47 +389,55 @@ async def cmd_list_apps(storage: StorageService) -> int:
     
     try:
         await client.connect()
-        foreground, background = await client.get_all_apps()
+        apps = await client.get_all_apps()
         spinner.stop(success=True)
-        
-        if not foreground and not background:
+
+        if not apps:
             print(f"  {C.DIM}No apps installed{C.RESET}")
             return 0
-        
+
+        focus_apps = [app for app in apps if app.HasField("foreground")]
+        ambient_apps = [app for app in apps if app.HasField("background")]
+        both_apps = [app for app in apps if app.HasField("foreground") and app.HasField("background")]
+
         print()
-        if foreground:
+        if focus_apps:
             print(f"{C.BOLD}Focus Apps{C.RESET}")
-            for app in foreground:
+            for app in focus_apps:
                 print(f"  {C.CYAN}{DOT}{C.RESET} {app.metadata.name}")
                 setattr(app.metadata, "description", getattr(app.metadata, "description", ""))
                 if hasattr(app.metadata, "description") and app.metadata.description:
                     desc = app.metadata.description.strip().split('\n')[0][:55]
                     print(f"    {C.DIM}{desc}{C.RESET}")
-        
-        if background:
-            if foreground:
+
+        if ambient_apps:
+            if focus_apps:
                 print()
             print(f"{C.BOLD}Ambient Apps{C.RESET}")
-            for app in background:
+            for app in ambient_apps:
                 schedule = ""
-                if app.runtime_policy.HasField("interval"):
-                    secs = app.runtime_policy.interval.duration.seconds
+                policy = app.background.runtime_policy
+                if policy.HasField("interval"):
+                    secs = policy.interval.duration.seconds
                     if secs >= 3600:
                         schedule = f"every {secs // 3600}h"
                     elif secs >= 60:
                         schedule = f"every {secs // 60}m"
                     else:
                         schedule = f"every {secs}s"
-                elif app.runtime_policy.HasField("always"):
+                elif policy.HasField("always"):
                     schedule = "always"
                 print(f"  {C.CYAN}{DOT}{C.RESET} {app.metadata.name} {C.DIM}({schedule}){C.RESET}")
                 setattr(app.metadata, "description", getattr(app.metadata, "description", ""))
                 if hasattr(app.metadata, "description") and app.metadata.description:
                     desc = app.metadata.description.strip().split('\n')[0][:55]
                     print(f"    {C.DIM}{desc}{C.RESET}")
-        
+
         print()
-        print(f"{C.DIM}Total: {len(foreground)} focus, {len(background)} ambient{C.RESET}")
+        print(
+            f"{C.DIM}Total: {len(focus_apps)} focus, {len(ambient_apps)} ambient, "
+            f"{len(both_apps)} both{C.RESET}"
+        )
         return 0
         
     except Exception as e:
@@ -465,14 +473,21 @@ async def cmd_delete(args, storage: StorageService) -> int:
 
     try:
         await client.connect()
-        foreground, background = await client.get_all_apps()
+        apps = await client.get_all_apps()
         spinner.stop(success=True)
 
         all_apps = []
-        for app in foreground:
-            all_apps.append(("focus", app.uuid, app.metadata.name, app.metadata.description.strip().split('\n')[0][:55] if app.metadata.description else ""))
-        for app in background:
-            all_apps.append(("ambient", app.uuid, app.metadata.name, app.metadata.description.strip().split('\n')[0][:55] if app.metadata.description else ""))
+        for app in apps:
+            if app.HasField("foreground") and app.HasField("background"):
+                kind = "both"
+            elif app.HasField("foreground"):
+                kind = "focus"
+            elif app.HasField("background"):
+                kind = "ambient"
+            else:
+                kind = "unknown"
+            desc = app.metadata.description.strip().split('\n')[0][:55] if app.metadata.description else ""
+            all_apps.append((kind, app.uuid, app.metadata.name, desc))
 
         if not all_apps:
             print(f"  {C.DIM}No apps installed{C.RESET}")
