@@ -2,6 +2,16 @@
 
 TruffleOS SDK - deploy apps to Truffle devices
 
+## proto sync
+
+`truffile` vendors generated protobuf modules from `pyfw/python/truffle`.
+
+To refresh them:
+
+```bash
+./scripts/sync_protos.sh
+```
+
 ## install
 
 ```bash
@@ -39,11 +49,26 @@ truffile list apps
 # list connected devices
 truffile list devices
 
+# list IF2 models on the connected device
+truffile models
+
+# chat with IF2 model (streaming by default)
+truffile chat "hello"
+
+# chat with explicit model + system prompt
+truffile chat --model <model-id-or-uuid> --system "You are concise" --prompt "Summarize this"
+
+# run OpenAI-compatible proxy backed by IF2
+truffile proxy --host 127.0.0.1 --port 8080
+
 # disconnect from a device
 truffile disconnect truffle-6272
 
 # disconnect from all devices
 truffile disconnect all
+
+# OpenAI-compatible base URL (proxy mode)
+# http://127.0.0.1:8080/v1
 ```
 
 ## truffile.yaml
@@ -103,5 +128,5 @@ default_schedule:
 ## example apps
 
 see `example-apps/` for working examples:
-- `example-apps/ambient/hedge` - background app
-- `example-apps/focus/finance` - foreground app
+- `example-apps/kalshi` - foreground + background app
+- `example-apps/reddit` - background app

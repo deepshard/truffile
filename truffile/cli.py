@@ -1,20 +1,19 @@
 import argparse
 import asyncio
+import json
 import signal
 import socket
 import sys
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import httpx
 from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
 from truffile.schema import validate_app_dir
 from truffile.deploy import build_deploy_plan, deploy_with_builder
-
-import grpc
-from truffle.infer.infer_pb2_grpc import InferenceServiceStub
-from truffle.infer.model_pb2 import GetModelListRequest, Model
 
 
 # ANSI colors
@@ -702,7 +701,7 @@ def cmd_list(args, storage: StorageService) -> int:
 
 
 async def cmd_models(storage: StorageService) -> int:
-    """List models on the connected device."""
+    """List IF2 models on the connected device."""
     device = storage.state.last_used_device
     if not device:
         error("No device connected")
@@ -717,140 +716,432 @@ async def cmd_models(storage: StorageService) -> int:
     except RuntimeError:
         spinner.fail(f"Could not resolve {device}.local")
         return 1
-    
+
     try:
-        channel = grpc.insecure_channel(f"{ip}:80")
-        stub = InferenceServiceStub(channel)
-        model_list = stub.GetModelList(GetModelListRequest(use_filter=False))
+        url = f"http://{ip}/if2/v1/models"
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            payload = resp.json()
         spinner.stop(success=True)
     except Exception as e:
-        spinner.fail(f"Failed to get models: {e}")
+        spinner.fail(f"Failed to get IF2 models: {e}")
         return 1
-    
-    loaded = [m for m in model_list.models if m.state == Model.MODEL_STATE_LOADED]
-    available = [m for m in model_list.models if m.state == Model.MODEL_STATE_AVAILABLE]
-    
+
+    models = payload.get("data", [])
+    if not isinstance(models, list):
+        spinner.fail("Invalid response: missing 'data' list")
+        return 1
+
     print()
-    print(f"{MUSHROOM} {C.BOLD}Models on {device}{C.RESET}")
+    print(f"{MUSHROOM} {C.BOLD}IF2 Models on {device}{C.RESET}")
     print()
-    
-    if loaded:
-        for m in loaded:
-            reasoner = f" {C.MAGENTA}reasoner{C.RESET}" if m.config.info.has_chain_of_thought else ""
-            print(f"  {C.GREEN}{CHECK}{C.RESET} {m.name}{reasoner}")
-            print(f"    {C.DIM}id: {m.uuid}{C.RESET}")
-    
-    if available:
-        for m in available:
-            print(f"  {C.DIM}○ {m.name} (not loaded){C.RESET}")
-    
-    if not loaded and not available:
+
+    if not models:
         print(f"  {C.DIM}No models found{C.RESET}")
-    
-    print()
-    total_mb = model_list.total_memory // (1024 * 1024) if model_list.total_memory else 0
-    used_mb = model_list.used_memory // (1024 * 1024) if model_list.used_memory else 0
-    print(f"{C.DIM}Memory: {used_mb}MB / {total_mb}MB{C.RESET}")
-    
+        return 0
+
+    for m in models:
+        if not isinstance(m, dict):
+            continue
+        model_id = m.get("id", "<unknown>")
+        name = m.get("name", model_id)
+        uuid = m.get("uuid", "<none>")
+        ctx = m.get("context_length", "<unknown>")
+        arch = m.get("architecture", {})
+        tokenizer = arch.get("tokenizer", "<unknown>") if isinstance(arch, dict) else "<unknown>"
+        max_batch = m.get("max_batch_size", "<unknown>")
+        print(f"  {C.GREEN}{CHECK}{C.RESET} {name}")
+        print(f"    {C.DIM}id: {model_id}{C.RESET}")
+        print(f"    {C.DIM}uuid: {uuid}{C.RESET}")
+        print(f"    {C.DIM}context: {ctx}, tokenizer: {tokenizer}, max_batch: {max_batch}{C.RESET}")
+
     return 0
 
 
-def cmd_proxy(args, storage: StorageService) -> int:
-    """Start the OpenAI-compatible proxy."""
-    device = args.device if hasattr(args, 'device') and args.device else storage.state.last_used_device
+async def _resolve_connected_device(storage: StorageService) -> tuple[str, str] | tuple[None, None]:
+    device = storage.state.last_used_device
+    if not device:
+        error("No device connected")
+        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+        return None, None
+    try:
+        ip = await resolve_mdns(f"{device}.local")
+    except RuntimeError:
+        error(f"Could not resolve {device}.local")
+        return None, None
+    return device, ip
+
+
+async def _default_model(ip: str) -> str | None:
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(f"http://{ip}/if2/v1/models")
+            resp.raise_for_status()
+            payload = resp.json()
+        models = payload.get("data", [])
+        if not isinstance(models, list) or not models:
+            return None
+        first = models[0]
+        if not isinstance(first, dict):
+            return None
+        return str(first.get("uuid") or first.get("id") or "")
+    except Exception:
+        return None
+
+
+async def cmd_chat(args, storage: StorageService) -> int:
+    device, ip = await _resolve_connected_device(storage)
+    if not device or not ip:
+        return 1
+
+    prompt = args.prompt
+    if not prompt and args.prompt_words:
+        prompt = " ".join(args.prompt_words).strip()
+    if not prompt:
+        error("Missing prompt")
+        print(f"  {C.DIM}Usage: truffile chat --prompt \"hello\"{C.RESET}")
+        print(f"  {C.DIM}Or:    truffile chat \"hello\"{C.RESET}")
+        return 1
+
+    model = args.model
+    if not model:
+        spinner = Spinner("Resolving default model")
+        spinner.start()
+        model = await _default_model(ip)
+        if not model:
+            spinner.fail("Failed to resolve default model from IF2")
+            return 1
+        spinner.stop(success=True)
+
+    stream = not args.no_stream and not args.json
+    messages: list[dict[str, str]] = []
+    if args.system:
+        messages.append({"role": "system", "content": args.system})
+    messages.append({"role": "user", "content": prompt})
+
+    payload: dict = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "reasoning": {"enabled": bool(args.reasoning)},
+    }
+    if args.max_tokens is not None:
+        payload["max_tokens"] = args.max_tokens
+    else:
+        payload["max_tokens"] = 512
+    if args.temperature is not None:
+        payload["temperature"] = args.temperature
+    if args.top_p is not None:
+        payload["top_p"] = args.top_p
+    if stream:
+        payload["stream_options"] = {"include_usage": True}
+
+    url = f"http://{ip}/if2/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+
+    spinner = Spinner(f"Connecting to {device}")
+    spinner.start()
+    try:
+        with httpx.Client(timeout=None) as client:
+            if stream:
+                with client.stream("POST", url, headers=headers, json=payload) as resp:
+                    resp.raise_for_status()
+                    spinner.stop(success=True)
+                    usage_printed = False
+                    for raw in resp.iter_lines():
+                        if not raw:
+                            continue
+                        line = raw.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[len("data:"):].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            evt = json.loads(data)
+                        except Exception:
+                            continue
+
+                        choices = evt.get("choices")
+                        if isinstance(choices, list) and choices:
+                            c0 = choices[0]
+                            if isinstance(c0, dict):
+                                delta = c0.get("delta", {})
+                                if isinstance(delta, dict):
+                                    txt = delta.get("content")
+                                    if isinstance(txt, str) and txt:
+                                        print(txt, end="", flush=True)
+                                    reasoning = delta.get("reasoning")
+                                    if args.reasoning and isinstance(reasoning, str) and reasoning:
+                                        print(reasoning, end="", flush=True)
+
+                        usage = evt.get("usage")
+                        if isinstance(usage, dict) and not usage_printed:
+                            usage_printed = True
+                            print(f"\n{C.DIM}[usage] {usage}{C.RESET}", flush=True)
+                    print()
+            else:
+                resp = client.post(url, headers=headers, json=payload, timeout=120.0)
+                resp.raise_for_status()
+                spinner.stop(success=True)
+                body = resp.json()
+                if args.json:
+                    print(json.dumps(body, indent=2))
+                else:
+                    content = ""
+                    try:
+                        choices = body.get("choices", [])
+                        if isinstance(choices, list) and choices:
+                            msg = choices[0].get("message", {})
+                            if isinstance(msg, dict):
+                                content = str(msg.get("content", ""))
+                    except Exception:
+                        content = ""
+                    print(content)
+        return 0
+    except Exception as e:
+        spinner.fail(f"Chat request failed: {e}")
+        return 1
+
+
+def _inject_reasoning_into_chunk(chunk: dict, state: dict) -> dict:
+    choices = chunk.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return chunk
+    c0 = choices[0]
+    if not isinstance(c0, dict):
+        return chunk
+    delta = c0.get("delta")
+    if not isinstance(delta, dict):
+        return chunk
+
+    reasoning = delta.get("reasoning")
+    content = delta.get("content")
+    merged = ""
+
+    if isinstance(reasoning, str) and reasoning:
+        if not state.get("thinking_open", False):
+            merged += "<think>\n"
+            state["thinking_open"] = True
+        merged += reasoning
+
+    if isinstance(content, str) and content:
+        if state.get("thinking_open", False):
+            merged += "\n</think>\n"
+            state["thinking_open"] = False
+        merged += content
+
+    if merged:
+        delta["content"] = merged
+    if "reasoning" in delta:
+        del delta["reasoning"]
+    return chunk
+
+
+def _inject_reasoning_into_response(body: dict) -> dict:
+    choices = body.get("choices")
+    if not isinstance(choices, list):
+        return body
+    for c in choices:
+        if not isinstance(c, dict):
+            continue
+        msg = c.get("message")
+        if not isinstance(msg, dict):
+            continue
+        reasoning = msg.get("reasoning")
+        content = msg.get("content", "")
+        if isinstance(reasoning, str) and reasoning:
+            content_text = content if isinstance(content, str) else str(content)
+            msg["content"] = f"<think>\n{reasoning}\n</think>\n{content_text}"
+        if "reasoning" in msg:
+            del msg["reasoning"]
+    return body
+
+
+async def cmd_proxy(args, storage: StorageService) -> int:
+    device = args.device if args.device else storage.state.last_used_device
     if not device:
         error("No device specified or connected")
         print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
         print(f"  {C.DIM}Or:  truffile proxy --device <device>{C.RESET}")
         return 1
-    
-    port = args.port if hasattr(args, 'port') else 8080
-    host = args.host if hasattr(args, 'host') else "127.0.0.1"
-    debug = args.debug if hasattr(args, 'debug') else False
-    
-    spinner = None
-    
+
+    spinner = Spinner(f"Resolving {device}.local")
+    spinner.start()
     try:
-        print(f"{MUSHROOM} {C.BOLD}Starting OpenAI proxy{C.RESET}")
-        print()
-        
-        spinner = Spinner(f"Resolving {device}.local")
-        spinner.start()
-        
-        hostname = f"{device}.local"
-        ip = socket.gethostbyname(hostname)
+        ip = await resolve_mdns(f"{device}.local")
         spinner.stop(success=True)
-        
-        grpc_address = f"{ip}:80"
-        
-        spinner = Spinner("Connecting to inference service")
-        spinner.start()
-        
-        from truffile.infer.proxy import OpenAIProxy, OpenAIProxyHandler
-        from http.server import ThreadingHTTPServer
-        
-        proxy = OpenAIProxy(grpc_address, include_debug=debug)
-        
-        channel = grpc.insecure_channel(grpc_address)
-        stub = InferenceServiceStub(channel)
-        model_list = stub.GetModelList(GetModelListRequest(use_filter=False))
-        loaded = [m for m in model_list.models if m.state == Model.MODEL_STATE_LOADED]
-        spinner.stop(success=True)
-        spinner = None
-        
-        print(f"  {C.DIM}Device: {device} ({ip}){C.RESET}")
-        print(f"  {C.DIM}Models: {len(loaded)} loaded{C.RESET}")
-        
-        print()
-        print(f"{C.GREEN}{CHECK}{C.RESET} Proxy running at {C.BOLD}http://{host}:{port}/v1{C.RESET}")
-        print()
-        print(f"  {C.DIM}Use with OpenAI SDK:{C.RESET}")
-        print(f"    {C.CYAN}from openai import OpenAI{C.RESET}")
-        print(f"    {C.CYAN}client = OpenAI(base_url=\"http://{host}:{port}/v1\", api_key=\"x\"){C.RESET}")
-        print()
-        print(f"  {C.DIM}Or set environment variables:{C.RESET}")
-        print(f"    {C.CYAN}export OPENAI_BASE_URL=http://{host}:{port}/v1{C.RESET}")
-        print(f"    {C.CYAN}export OPENAI_API_KEY=anything{C.RESET}")
-        print()
-        print(f"  {C.DIM}Press Ctrl+C to stop{C.RESET}")
-        print()
-        
-        class _Server(ThreadingHTTPServer):
-            def __init__(self, server_address, handler_cls):
-                super().__init__(server_address, handler_cls)
-                self.proxy = proxy
-        
-        server = _Server((host, port), OpenAIProxyHandler)
+    except RuntimeError:
+        spinner.fail(f"Could not resolve {device}.local")
+        return 1
+
+    target_base = f"http://{ip}"
+    host = args.host
+    port = args.port
+    include_think_tags = not args.no_think_tags
+
+    class ProxyHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, _format, *_args):
+            return
+
+        def _send_json(self, code: int, body: dict):
+            raw = json.dumps(body).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _map_path(self, path: str) -> str | None:
+            if path == "/v1/models":
+                return "/if2/v1/models"
+            if path == "/v1/chat/completions":
+                return "/if2/v1/chat/completions"
+            return None
+
+        def _forward_headers(self) -> dict[str, str]:
+            out: dict[str, str] = {"Content-Type": "application/json"}
+            auth = self.headers.get("Authorization")
+            if auth:
+                out["Authorization"] = auth
+            return out
+
+        def do_GET(self):
+            mapped = self._map_path(self.path)
+            if not mapped:
+                self._send_json(404, {"error": {"message": "Not found"}})
+                return
+
+            try:
+                with httpx.Client(timeout=30.0) as client:
+                    resp = client.get(f"{target_base}{mapped}", headers=self._forward_headers())
+                self.send_response(resp.status_code)
+                self.send_header("Content-Type", resp.headers.get("content-type", "application/json"))
+                self.send_header("Content-Length", str(len(resp.content)))
+                self.end_headers()
+                self.wfile.write(resp.content)
+            except Exception as e:
+                self._send_json(502, {"error": {"message": f"Upstream GET failed: {e}"}})
+
+        def do_POST(self):
+            mapped = self._map_path(self.path)
+            if not mapped:
+                self._send_json(404, {"error": {"message": "Not found"}})
+                return
+
+            raw_body = b""
+            try:
+                content_len = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(content_len) if content_len > 0 else b"{}"
+                body = json.loads(raw_body.decode("utf-8"))
+            except Exception as e:
+                self._send_json(400, {"error": {"message": f"Invalid JSON body: {e}"}})
+                return
+
+            if mapped == "/if2/v1/chat/completions":
+                if "reasoning" not in body:
+                    body["reasoning"] = {"enabled": False}
+
+            stream_mode = bool(body.get("stream")) and mapped == "/if2/v1/chat/completions"
+
+            try:
+                with httpx.Client(timeout=None) as client:
+                    if stream_mode:
+                        with client.stream(
+                            "POST",
+                            f"{target_base}{mapped}",
+                            headers=self._forward_headers(),
+                            json=body,
+                        ) as resp:
+                            self.send_response(resp.status_code)
+                            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                            self.send_header("Cache-Control", "no-cache")
+                            self.send_header("Connection", "keep-alive")
+                            self.end_headers()
+
+                            state = {"thinking_open": False}
+                            for raw_line in resp.iter_lines():
+                                line = raw_line if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace")
+                                if not line:
+                                    self.wfile.write(b"\n")
+                                    self.wfile.flush()
+                                    continue
+                                if line.startswith("data:"):
+                                    payload = line[5:].strip()
+                                    if payload == "[DONE]":
+                                        if include_think_tags and state.get("thinking_open", False):
+                                            close_evt = {
+                                                "choices": [{"delta": {"content": "\n</think>\n"}, "index": 0}]
+                                            }
+                                            out = f"data: {json.dumps(close_evt, separators=(',', ':'))}\n\n"
+                                            self.wfile.write(out.encode("utf-8"))
+                                        self.wfile.write(b"data: [DONE]\n\n")
+                                        self.wfile.flush()
+                                        break
+                                    try:
+                                        evt = json.loads(payload)
+                                        if include_think_tags:
+                                            evt = _inject_reasoning_into_chunk(evt, state)
+                                        out = f"data: {json.dumps(evt, separators=(',', ':'))}\n\n"
+                                    except Exception:
+                                        out = f"{line}\n\n"
+                                    self.wfile.write(out.encode("utf-8"))
+                                else:
+                                    self.wfile.write((line + "\n").encode("utf-8"))
+                                self.wfile.flush()
+                    else:
+                        resp = client.post(
+                            f"{target_base}{mapped}",
+                            headers=self._forward_headers(),
+                            json=body,
+                            timeout=120.0,
+                        )
+                        content = resp.content
+                        if (
+                            mapped == "/if2/v1/chat/completions"
+                            and include_think_tags
+                            and "application/json" in resp.headers.get("content-type", "")
+                        ):
+                            try:
+                                parsed = json.loads(content.decode("utf-8"))
+                                parsed = _inject_reasoning_into_response(parsed)
+                                content = json.dumps(parsed).encode("utf-8")
+                            except Exception:
+                                pass
+                        self.send_response(resp.status_code)
+                        self.send_header("Content-Type", resp.headers.get("content-type", "application/json"))
+                        self.send_header("Content-Length", str(len(content)))
+                        self.end_headers()
+                        self.wfile.write(content)
+            except Exception as e:
+                self._send_json(502, {"error": {"message": f"Upstream POST failed: {e}"}})
+
+    print(f"{MUSHROOM} {C.BOLD}truffile proxy{C.RESET}")
+    print()
+    print(f"  {C.DIM}Device:{C.RESET} {device} ({ip})")
+    print(f"  {C.DIM}Listen:{C.RESET} http://{host}:{port}")
+    print(f"  {C.DIM}Upstream:{C.RESET} {target_base}/if2/v1/*")
+    print(f"  {C.DIM}Reasoning tags:{C.RESET} {'on' if include_think_tags else 'off'}")
+    print()
+    print(f"  {C.DIM}OpenAI-compatible base URL:{C.RESET}")
+    print(f"    {C.CYAN}http://{host}:{port}/v1{C.RESET}")
+    print()
+    print(f"  {C.DIM}Press Ctrl+C to stop{C.RESET}")
+    print()
+
+    try:
+        server = ThreadingHTTPServer((host, port), ProxyHandler)
         server.serve_forever()
-        
     except KeyboardInterrupt:
-        if spinner:
-            spinner.running = False
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
         print(f"{C.RED}{CROSS} Cancelled{C.RESET}")
         return 130
-    except socket.gaierror:
-        if spinner:
-            spinner.fail(f"Could not resolve {device}.local")
-        else:
-            error(f"Could not resolve {device}.local")
-        print(f"  {C.DIM}Try: ping {device}.local{C.RESET}")
-        return 1
     except OSError as e:
-        if spinner:
-            spinner.fail(str(e))
-        else:
-            error(f"Could not start server: {e}")
-        print(f"  {C.DIM}Port {port} may already be in use{C.RESET}")
+        error(f"Could not start proxy: {e}")
         return 1
-    except Exception as e:
-        if spinner:
-            spinner.fail(str(e))
-        else:
-            error(str(e))
-        return 1
-    
+
     return 0
 
 
@@ -995,8 +1286,9 @@ def print_help():
     print(f"  {C.BLUE}validate{C.RESET} [path]          Validate app config and files")
     print(f"  {C.BLUE}delete{C.RESET}                    Delete installed apps from device")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
-    print(f"  {C.BLUE}models{C.RESET}                    List AI models on connected device")
-    print(f"  {C.BLUE}proxy{C.RESET}                     Start OpenAI-compatible inference proxy")
+    print(f"  {C.BLUE}models{C.RESET}                    List IF2 models on connected device")
+    print(f"  {C.BLUE}chat{C.RESET} [prompt]            Chat with IF2 model on connected device")
+    print(f"  {C.BLUE}proxy{C.RESET}                    Run OpenAI-compatible IF2 proxy")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
     print(f"  {C.DIM}truffile scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
@@ -1006,9 +1298,9 @@ def print_help():
     print(f"  {C.DIM}truffile deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
     print(f"  {C.DIM}truffile validate ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile list apps{C.RESET}")
-    print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show loaded models{C.RESET}")
-    print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# start proxy on :8080{C.RESET}")
-    print(f"  {C.DIM}truffile proxy --port 9000{C.RESET}")
+    print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show IF2 models{C.RESET}")
+    print(f"  {C.DIM}truffile chat \"hello\"{C.RESET}       {C.DIM}# run IF2 chat completion{C.RESET}")
+    print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# run local /v1 proxy{C.RESET}")
     print()
 
 
@@ -1047,12 +1339,24 @@ def main() -> int:
     p_list.add_argument("what", choices=["apps", "devices"], nargs="?")
 
     p_models = subparsers.add_parser("models", add_help=False)
-
+    
+    p_chat = subparsers.add_parser("chat", add_help=False)
+    p_chat.add_argument("prompt_words", nargs="*", help="Prompt text (alternative to --prompt)")
+    p_chat.add_argument("-p", "--prompt", help="Prompt text")
+    p_chat.add_argument("-m", "--model", help="Model id/uuid (default: first model from IF2 list)")
+    p_chat.add_argument("--system", help="System prompt")
+    p_chat.add_argument("--reasoning", action="store_true", help="Enable reasoning mode")
+    p_chat.add_argument("--max-tokens", type=int, help="Max response tokens")
+    p_chat.add_argument("--temperature", type=float, help="Sampling temperature")
+    p_chat.add_argument("--top-p", type=float, help="Nucleus sampling top-p")
+    p_chat.add_argument("--no-stream", action="store_true", help="Disable streaming output")
+    p_chat.add_argument("--json", action="store_true", help="Print full JSON response (non-stream)")
+    
     p_proxy = subparsers.add_parser("proxy", add_help=False)
-    p_proxy.add_argument("--device", "-d", help="Device name (defaults to last connected)")
-    p_proxy.add_argument("--port", "-p", type=int, default=8080, help="Port to listen on")
-    p_proxy.add_argument("--host", default="127.0.0.1", help="Host to bind to")
-    p_proxy.add_argument("--debug", action="store_true", help="Include reasoning in responses")
+    p_proxy.add_argument("--device", "-d", help="Device name (default: last connected)")
+    p_proxy.add_argument("--host", default="127.0.0.1", help="Host to bind")
+    p_proxy.add_argument("--port", "-p", type=int, default=8080, help="Port to bind")
+    p_proxy.add_argument("--no-think-tags", action="store_true", help="Do not inject <think> tags")
 
     args = parser.parse_args()
 
@@ -1092,8 +1396,10 @@ def main() -> int:
         return cmd_list(args, storage)
     elif args.command == "models":
         return run_async(cmd_models(storage))
+    elif args.command == "chat":
+        return run_async(cmd_chat(args, storage))
     elif args.command == "proxy":
-        return cmd_proxy(args, storage)
+        return run_async(cmd_proxy(args, storage))
     elif args.command == "validate":
         return cmd_validate(args)
 
