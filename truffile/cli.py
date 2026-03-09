@@ -98,6 +98,42 @@ class Spinner:
         sys.stdout.flush()
 
 
+class MushroomPulse:
+    FRAMES = ["(🍄   )", "(🍄.  )", "(🍄.. )", "(🍄...)", "(🍄 ..)", "(🍄  .)"]
+
+    def __init__(self, message: str = "thinking", interval: float = 0.09):
+        self.message = message
+        self.interval = interval
+        self.running = False
+        self.thread: threading.Thread | None = None
+        self.frame_idx = 0
+        self.enabled = bool(sys.stdout.isatty())
+
+    def _spin(self) -> None:
+        while self.running:
+            frame = self.FRAMES[self.frame_idx % len(self.FRAMES)]
+            sys.stdout.write(f"\r{C.MAGENTA}{frame}{C.RESET} {C.DIM}{self.message}{C.RESET}")
+            sys.stdout.flush()
+            self.frame_idx += 1
+            time.sleep(self.interval)
+
+    def start(self) -> None:
+        if not self.enabled or self.running:
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._spin, daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        if not self.running:
+            return
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=0.2)
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+
+
 class ScrollingLog:
     #felt a little fancy lol
     """A scrolling log window that shows the last N lines in place."""
@@ -1247,6 +1283,8 @@ def _run_single_chat_request(
     args: argparse.Namespace,
     stream: bool,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, bool]:
+    wait_anim = MushroomPulse("thinking")
+    wait_anim.start()
     if stream:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
@@ -1254,6 +1292,7 @@ def _run_single_chat_request(
         tool_calls_by_index: dict[int, dict[str, Any]] = {}
         reasoning_stream_started = False
         interrupted = False
+        first_event_seen = False
 
         try:
             with StreamAbortWatcher() as abort_watcher:
@@ -1275,6 +1314,9 @@ def _run_single_chat_request(
                             evt = json.loads(data)
                         except Exception:
                             continue
+                        if not first_event_seen:
+                            wait_anim.stop()
+                            first_event_seen = True
 
                         if isinstance(evt.get("usage"), dict):
                             usage = evt.get("usage")
@@ -1330,6 +1372,8 @@ def _run_single_chat_request(
                                     entry["function"]["arguments"] += str(fn["arguments"])
         except KeyboardInterrupt:
             interrupted = True
+        finally:
+            wait_anim.stop()
 
         msg: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts).strip()}
         reasoning_text = "".join(reasoning_parts).strip()
@@ -1350,9 +1394,12 @@ def _run_single_chat_request(
             print(f"{C.YELLOW}response interrupted{C.RESET}")
         return msg, usage, interrupted
 
-    resp = client.post(url, headers=headers, json=payload, timeout=120.0)
-    resp.raise_for_status()
-    body = resp.json()
+    try:
+        resp = client.post(url, headers=headers, json=payload, timeout=120.0)
+        resp.raise_for_status()
+        body = resp.json()
+    finally:
+        wait_anim.stop()
     if args.json:
         print(json.dumps(body, indent=2))
 
@@ -2326,6 +2373,11 @@ def cmd_validate(args) -> int:
 
 
 def print_help():
+    if sys.stdout.isatty():
+        intro = MushroomPulse("truffile", interval=0.08)
+        intro.start()
+        time.sleep(0.65)
+        intro.stop()
     print(f"{MUSHROOM} {C.BOLD}truffile{C.RESET} - TruffleOS SDK")
     print()
     print(f"{C.BOLD}Usage:{C.RESET} truffile <command> [options]")
@@ -2353,6 +2405,7 @@ def print_help():
     print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show models on your Truffle{C.RESET}")
     print(f"  {C.DIM}truffile chat{C.RESET}               {C.DIM}# open interactive REPL chat{C.RESET}")
     print(f"  {C.DIM}truffile chat --no-repl \"hello\"{C.RESET} {C.DIM}# one-shot chat{C.RESET}")
+    print(f"  {C.DIM}truffile chat --no-reasoning{C.RESET} {C.DIM}# disable reasoning output{C.RESET}")
     print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# run local /v1 proxy{C.RESET}")
     print()
 
@@ -2398,7 +2451,12 @@ def main() -> int:
     p_chat.add_argument("-p", "--prompt", help="Prompt text")
     p_chat.add_argument("-m", "--model", help="Model id/uuid (default: first model from IF2 list)")
     p_chat.add_argument("--system", help="System prompt")
-    p_chat.add_argument("--reasoning", action="store_true", help="Enable reasoning mode")
+    p_chat.add_argument(
+        "--reasoning",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable reasoning output (default: enabled)",
+    )
     p_chat.add_argument("--max-tokens", type=int, help="Max response tokens")
     p_chat.add_argument("--temperature", type=float, help="Sampling temperature")
     p_chat.add_argument("--top-p", type=float, help="Nucleus sampling top-p")
