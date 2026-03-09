@@ -58,7 +58,9 @@ truffile deploy --dry-run [app_dir]
 truffile list apps
 truffile delete
 truffile models
-truffile chat "hello"
+truffile chat
+truffile chat --no-repl "hello"
+truffile chat --no-default-tools
 truffile proxy --host 127.0.0.1 --port 8080
 ```
 
