@@ -1,3 +1,8 @@
+import os
+
+# Keep gRPC from enabling fork support in this CLI process.
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
+
 try:
     from ._version import __version__
 except ImportError:

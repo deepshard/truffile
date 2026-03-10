@@ -1,5 +1,12 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "setuptools_scm>=8"]
+requires = [
+    "setuptools>=70",
+    "setuptools_scm>=8",
+    "wheel",
+    "grpcio-tools==1.76.0",
+    "protobuf>=6.30.0",
+    "googleapis-common-protos>=1.63.2",
+]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
@@ -13,17 +20,19 @@ name = "truffile"
 dynamic = ["version"]
 description = "truffile the TruffleOS SDK - Connect and deploy apps to Truffle devices"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 
 dependencies = [
-    "grpcio>=1.60.0",
-    "protobuf>=4.25.0",
+    "protobuf>=6.30.0",
+    "googleapis-common-protos>=1.63.2",
+    "grpcio==1.76.0",
     "httpx>=0.27.0",
     "pyyaml>=6.0",
     "platformdirs>=3.10.0",
     "websockets>=12.0",
     "zeroconf>=0.131.0",
+    "mcp==1.26.0",
 ]
 
 [project.scripts]
@@ -31,8 +40,8 @@ truffile = "truffile.cli:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "grpcio-tools>=1.60.0",
+    "pytest>=9.0.2",
+    "grpcio-tools==1.76.0",
 ]
 
 [tool.setuptools.packages.find]
