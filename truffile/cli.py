@@ -9,6 +9,7 @@ import socket
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -56,7 +57,26 @@ WARN = "⚠"
 HAMMER = "🔨"
 TOOL_TAGS = ("<toolcall>", "</toolcall>")
 TOOL_TAG_PATTERN = re.compile(r"<toolcall>\s*(.*?)\s*</toolcall>", re.DOTALL)
-REPL_COMMANDS = ["/help", "/", "/history", "/reset", "/models", "/exit", "/quit"]
+REPL_COMMANDS = [
+    "/help",
+    "/",
+    "/history",
+    "/reset",
+    "/models",
+    "/config",
+    "/reasoning",
+    "/stream",
+    "/json",
+    "/tools",
+    "/max_tokens",
+    "/temperature",
+    "/top_p",
+    "/max_rounds",
+    "/system",
+    "/mcp",
+    "/exit",
+    "/quit",
+]
 
 
 class Spinner:
@@ -972,6 +992,125 @@ def _fetch_models_payload(client: httpx.Client, ip: str) -> list[dict[str, Any]]
     return out
 
 
+@dataclass
+class ChatSettings:
+    model: str
+    system_prompt: str | None = None
+    reasoning: bool = True
+    stream: bool = True
+    json_mode: bool = False
+    max_tokens: int = 512
+    temperature: float | None = None
+    top_p: float | None = None
+    default_tools: bool = True
+    max_tool_rounds: int = 8
+
+
+class ChatMCPClient:
+    def __init__(self) -> None:
+        self._group: Any | None = None
+        self.endpoint: str | None = None
+
+    @property
+    def connected(self) -> bool:
+        return self._group is not None
+
+    async def connect_streamable_http(self, endpoint: str) -> None:
+        from mcp.client.session_group import ClientSessionGroup, StreamableHttpParameters
+
+        await self.disconnect()
+        group = ClientSessionGroup()
+        await group.__aenter__()
+        try:
+            await group.connect_to_server(StreamableHttpParameters(url=endpoint))
+        except Exception:
+            await group.__aexit__(None, None, None)
+            raise
+        self._group = group
+        self.endpoint = endpoint
+
+    async def disconnect(self) -> None:
+        if self._group is None:
+            self.endpoint = None
+            return
+        await self._group.__aexit__(None, None, None)
+        self._group = None
+        self.endpoint = None
+
+    def list_tool_names(self) -> list[str]:
+        if self._group is None:
+            return []
+        return sorted(self._group.tools.keys())
+
+    def build_openai_tools(self) -> list[dict[str, Any]]:
+        if self._group is None:
+            return []
+        out: list[dict[str, Any]] = []
+        for name, tool in sorted(self._group.tools.items(), key=lambda kv: kv[0]):
+            params = tool.inputSchema if isinstance(tool.inputSchema, dict) else {"type": "object", "properties": {}}
+            out.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": str(tool.description or f"MCP tool {name}"),
+                        "parameters": params,
+                    },
+                }
+            )
+        return out
+
+    def has_tool(self, name: str) -> bool:
+        if self._group is None:
+            return False
+        return name in self._group.tools
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._group is None:
+            return {"error": "mcp not connected"}
+        try:
+            result = await self._group.call_tool(name=name, arguments=arguments)
+            content: list[dict[str, Any]] = []
+            for part in result.content:
+                if hasattr(part, "model_dump"):
+                    content.append(part.model_dump())  # type: ignore[call-arg]
+                elif isinstance(part, dict):
+                    content.append(part)
+                else:
+                    content.append({"value": str(part)})
+            return {
+                "is_error": bool(result.isError),
+                "structured_content": result.structuredContent,
+                "content": content,
+            }
+        except Exception as exc:
+            return {"error": "mcp call failed", "tool": name, "detail": str(exc)}
+
+
+def _print_chat_config(settings: ChatSettings, mcp_client: ChatMCPClient) -> None:
+    print(f"{C.BLUE}chat config{C.RESET}")
+    print(f"  {C.DIM}model:{C.RESET} {settings.model}")
+    print(f"  {C.DIM}reasoning:{C.RESET} {settings.reasoning}")
+    print(f"  {C.DIM}stream:{C.RESET} {settings.stream}")
+    print(f"  {C.DIM}json:{C.RESET} {settings.json_mode}")
+    print(f"  {C.DIM}tools:{C.RESET} {settings.default_tools}")
+    print(f"  {C.DIM}max_tokens:{C.RESET} {settings.max_tokens}")
+    print(f"  {C.DIM}temperature:{C.RESET} {settings.temperature}")
+    print(f"  {C.DIM}top_p:{C.RESET} {settings.top_p}")
+    print(f"  {C.DIM}max_rounds:{C.RESET} {settings.max_tool_rounds}")
+    print(f"  {C.DIM}system:{C.RESET} {settings.system_prompt or '<none>'}")
+    print(f"  {C.DIM}mcp:{C.RESET} {mcp_client.endpoint or '<disconnected>'}")
+
+
+def _parse_on_off(value: str) -> bool | None:
+    v = value.strip().lower()
+    if v in {"on", "true", "1", "yes"}:
+        return True
+    if v in {"off", "false", "0", "no"}:
+        return False
+    return None
+
+
 def _build_default_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -1117,7 +1256,7 @@ def _build_chat_payload(
     *,
     model: str,
     messages: list[dict[str, Any]],
-    args: argparse.Namespace,
+    settings: ChatSettings,
     stream: bool,
     tools: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
@@ -1125,13 +1264,13 @@ def _build_chat_payload(
         "model": model,
         "messages": messages,
         "stream": stream,
-        "reasoning": {"enabled": bool(args.reasoning)},
-        "max_tokens": int(args.max_tokens) if args.max_tokens is not None else 512,
+        "reasoning": {"enabled": bool(settings.reasoning)},
+        "max_tokens": int(settings.max_tokens),
     }
-    if args.temperature is not None:
-        body["temperature"] = args.temperature
-    if args.top_p is not None:
-        body["top_p"] = args.top_p
+    if settings.temperature is not None:
+        body["temperature"] = settings.temperature
+    if settings.top_p is not None:
+        body["top_p"] = settings.top_p
     if stream:
         body["stream_options"] = {"include_usage": True}
     if tools:
@@ -1280,7 +1419,7 @@ def _run_single_chat_request(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
-    args: argparse.Namespace,
+    settings: ChatSettings,
     stream: bool,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, bool]:
     wait_anim = MushroomPulse("thinking")
@@ -1334,7 +1473,7 @@ def _run_single_chat_request(
                         reasoning_chunk = delta.get("reasoning")
                         if isinstance(reasoning_chunk, str) and reasoning_chunk:
                             reasoning_parts.append(reasoning_chunk)
-                            if args.reasoning:
+                            if settings.reasoning:
                                 if not reasoning_stream_started:
                                     print(f"{C.GRAY}thinking:{C.RESET}")
                                     reasoning_stream_started = True
@@ -1343,7 +1482,7 @@ def _run_single_chat_request(
                         content_chunk = delta.get("content")
                         if isinstance(content_chunk, str) and content_chunk:
                             content_parts.append(content_chunk)
-                            if not args.reasoning:
+                            if not settings.reasoning:
                                 print(content_chunk, end="", flush=True)
 
                         for tc in delta.get("tool_calls") or []:
@@ -1381,7 +1520,7 @@ def _run_single_chat_request(
             msg["reasoning_content"] = reasoning_text
         if tool_calls_by_index:
             msg["tool_calls"] = [tool_calls_by_index[i] for i in sorted(tool_calls_by_index)]
-        if args.reasoning:
+        if settings.reasoning:
             if reasoning_stream_started:
                 print()
             response_text = str(msg.get("content") or "")
@@ -1400,7 +1539,7 @@ def _run_single_chat_request(
         body = resp.json()
     finally:
         wait_anim.stop()
-    if args.json:
+    if settings.json_mode:
         print(json.dumps(body, indent=2))
 
     choices = body.get("choices", [])
@@ -1417,30 +1556,42 @@ def _run_single_chat_request(
     _print_reasoning_and_response(
         str(out.get("reasoning_content") or ""),
         str(out.get("content") or ""),
-        bool(args.reasoning),
+        bool(settings.reasoning),
     )
     return out, body.get("usage") if isinstance(body.get("usage"), dict) else None, False
 
 
-def _run_chat_turn(
+async def _run_chat_turn(
     *,
     client: httpx.Client,
     url: str,
     headers: dict[str, str],
     model: str,
-    args: argparse.Namespace,
-    stream: bool,
-    tools: list[dict[str, Any]] | None,
+    settings: ChatSettings,
+    mcp_client: ChatMCPClient,
     messages: list[dict[str, Any]],
     user_text: str,
 ) -> int:
     messages.append({"role": "user", "content": user_text})
 
-    max_rounds = max(1, int(getattr(args, "max_tool_rounds", 8)))
+    max_rounds = max(1, int(settings.max_tool_rounds))
     for _ in range(max_rounds):
-        payload = _build_chat_payload(model=model, messages=messages, args=args, stream=stream, tools=tools)
+        stream = settings.stream and not settings.json_mode
+        tools: list[dict[str, Any]] = []
+        if settings.default_tools:
+            tools.extend(_build_default_tools())
+        if mcp_client.connected:
+            tools.extend(mcp_client.build_openai_tools())
+
+        payload = _build_chat_payload(
+            model=model,
+            messages=messages,
+            settings=settings,
+            stream=stream,
+            tools=tools or None,
+        )
         assistant_msg, usage, interrupted = _run_single_chat_request(
-            client=client, url=url, headers=headers, payload=payload, args=args, stream=stream
+            client=client, url=url, headers=headers, payload=payload, settings=settings, stream=stream
         )
         messages.append(assistant_msg)
         if isinstance(usage, dict):
@@ -1464,8 +1615,15 @@ def _run_chat_turn(
                 parsed_args = json.loads(raw_args)
             except json.JSONDecodeError:
                 parsed_args = {"_raw": raw_args}
-            print(f"{C.CYAN}{HAMMER} tool{C.RESET} {name}")
-            tool_result = _execute_default_tool(name, parsed_args)
+            if name in {"web_search", "web_fetch"}:
+                print(f"{C.CYAN}{HAMMER} tool{C.RESET} {name}")
+                tool_result = _execute_default_tool(name, parsed_args)
+            elif mcp_client.has_tool(name):
+                print(f"{C.CYAN}{HAMMER} mcp{C.RESET} {name}")
+                tool_result = await mcp_client.call_tool(name, parsed_args)
+            else:
+                print(f"{C.YELLOW}{WARN} unknown tool{C.RESET} {name}")
+                tool_result = {"error": f"unknown tool '{name}'"}
             messages.append(
                 {
                     "role": "tool",
@@ -1479,33 +1637,23 @@ def _run_chat_turn(
 
 
 async def cmd_chat(args, storage: StorageService) -> int:
-    prompt = args.prompt
-    if not prompt and args.prompt_words:
-        prompt = " ".join(args.prompt_words).strip()
-    if args.no_repl and not prompt:
-        error("Missing prompt")
-        print(f"  {C.DIM}Usage: truffile chat --no-repl \"hello\"{C.RESET}")
-        return 1
+    prompt = ""
 
     device, ip = await _resolve_connected_device(storage)
     if not device or not ip:
         return 1
 
-    model = args.model
+    spinner = Spinner("Resolving default model")
+    spinner.start()
+    model = await _default_model(ip)
     if not model:
-        spinner = Spinner("Resolving default model")
-        spinner.start()
-        model = await _default_model(ip)
-        if not model:
-            spinner.fail("Failed to resolve default model from IF2")
-            return 1
-        spinner.stop(success=True)
+        spinner.fail("Failed to resolve default model from IF2")
+        return 1
+    spinner.stop(success=True)
 
-    stream = not args.no_stream and not args.json
-    tools = _build_default_tools() if getattr(args, "default_tools", True) else None
+    settings = ChatSettings(model=model)
+    mcp_client = ChatMCPClient()
     messages: list[dict[str, Any]] = []
-    if args.system:
-        messages.append({"role": "system", "content": args.system})
 
     url = f"http://{ip}/if2/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
@@ -1516,43 +1664,31 @@ async def cmd_chat(args, storage: StorageService) -> int:
         with httpx.Client(timeout=None) as client:
             spinner.stop(success=True)
 
-            # Single-turn mode.
-            if args.no_repl:
-                return _run_chat_turn(
-                    client=client,
-                    url=url,
-                    headers=headers,
-                    model=model,
-                    args=args,
-                    stream=stream,
-                    tools=tools,
-                    messages=messages,
-                    user_text=prompt or "",
-                )
-
             # REPL mode (default).
-            print(f"{C.DIM}model: {model}{C.RESET}")
+            print(f"{C.DIM}model: {settings.model}{C.RESET}")
             print(
-                f"{C.DIM}commands: /help, /history, /reset, /models, /exit{C.RESET}"
+                f"{C.DIM}commands: /help, /history, /reset, /models, /config, /mcp, /exit{C.RESET}"
             )
 
             cleanup_repl = _install_repl_completer(REPL_COMMANDS)
             try:
                 if prompt:
                     print(f"{C.CYAN}> {prompt}{C.RESET}")
-                    rc = _run_chat_turn(
+                    rc = await _run_chat_turn(
                         client=client,
                         url=url,
                         headers=headers,
-                        model=model,
-                        args=args,
-                        stream=stream,
-                        tools=tools,
+                        model=settings.model,
+                        settings=settings,
+                        mcp_client=mcp_client,
                         messages=messages,
                         user_text=prompt,
                     )
                     if rc != 0:
-                        return rc
+                        if rc == 130:
+                            prompt = ""
+                        else:
+                            return rc
 
                 while True:
                     try:
@@ -1576,19 +1712,179 @@ async def cmd_chat(args, storage: StorageService) -> int:
                         continue
                     if line == "/reset":
                         messages = []
-                        if args.system:
-                            messages.append({"role": "system", "content": args.system})
+                        if settings.system_prompt:
+                            messages.append({"role": "system", "content": settings.system_prompt})
                         print(f"{C.YELLOW}history reset{C.RESET}")
                         continue
                     if line == "/models":
                         try:
                             models = _fetch_models_payload(client, ip)
-                            selected_model = _pick_model_interactive(models, model)
-                            if selected_model and selected_model != model:
-                                model = selected_model
-                                print(f"{C.GREEN}{CHECK}{C.RESET} model switched: {model}")
+                            selected_model = _pick_model_interactive(models, settings.model)
+                            if selected_model and selected_model != settings.model:
+                                settings.model = selected_model
+                                print(f"{C.GREEN}{CHECK}{C.RESET} model switched: {settings.model}")
                         except Exception as exc:
                             error(f"failed to list models: {exc}")
+                        continue
+                    if line == "/config":
+                        _print_chat_config(settings, mcp_client)
+                        continue
+                    if line.startswith("/reasoning"):
+                        arg = line[len("/reasoning"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}reasoning={settings.reasoning}{C.RESET}")
+                            continue
+                        val = _parse_on_off(arg)
+                        if val is None:
+                            warn("usage: /reasoning <on|off>")
+                            continue
+                        settings.reasoning = val
+                        print(f"{C.GREEN}{CHECK}{C.RESET} reasoning={settings.reasoning}")
+                        continue
+                    if line.startswith("/stream"):
+                        arg = line[len("/stream"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}stream={settings.stream}{C.RESET}")
+                            continue
+                        val = _parse_on_off(arg)
+                        if val is None:
+                            warn("usage: /stream <on|off>")
+                            continue
+                        settings.stream = val
+                        print(f"{C.GREEN}{CHECK}{C.RESET} stream={settings.stream}")
+                        continue
+                    if line.startswith("/json"):
+                        arg = line[len("/json"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}json={settings.json_mode}{C.RESET}")
+                            continue
+                        val = _parse_on_off(arg)
+                        if val is None:
+                            warn("usage: /json <on|off>")
+                            continue
+                        settings.json_mode = val
+                        print(f"{C.GREEN}{CHECK}{C.RESET} json={settings.json_mode}")
+                        continue
+                    if line.startswith("/tools"):
+                        arg = line[len("/tools"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}tools={settings.default_tools}{C.RESET}")
+                            continue
+                        val = _parse_on_off(arg)
+                        if val is None:
+                            warn("usage: /tools <on|off>")
+                            continue
+                        settings.default_tools = val
+                        print(f"{C.GREEN}{CHECK}{C.RESET} tools={settings.default_tools}")
+                        continue
+                    if line.startswith("/max_tokens"):
+                        arg = line[len("/max_tokens"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}max_tokens={settings.max_tokens}{C.RESET}")
+                            continue
+                        try:
+                            settings.max_tokens = max(1, int(arg))
+                            print(f"{C.GREEN}{CHECK}{C.RESET} max_tokens={settings.max_tokens}")
+                        except ValueError:
+                            warn("usage: /max_tokens <int>")
+                        continue
+                    if line.startswith("/temperature"):
+                        arg = line[len("/temperature"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}temperature={settings.temperature}{C.RESET}")
+                            continue
+                        if arg.lower() in {"off", "none"}:
+                            settings.temperature = None
+                            print(f"{C.GREEN}{CHECK}{C.RESET} temperature=None")
+                            continue
+                        try:
+                            settings.temperature = float(arg)
+                            print(f"{C.GREEN}{CHECK}{C.RESET} temperature={settings.temperature}")
+                        except ValueError:
+                            warn("usage: /temperature <float|off>")
+                        continue
+                    if line.startswith("/top_p"):
+                        arg = line[len("/top_p"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}top_p={settings.top_p}{C.RESET}")
+                            continue
+                        if arg.lower() in {"off", "none"}:
+                            settings.top_p = None
+                            print(f"{C.GREEN}{CHECK}{C.RESET} top_p=None")
+                            continue
+                        try:
+                            settings.top_p = float(arg)
+                            print(f"{C.GREEN}{CHECK}{C.RESET} top_p={settings.top_p}")
+                        except ValueError:
+                            warn("usage: /top_p <float|off>")
+                        continue
+                    if line.startswith("/max_rounds"):
+                        arg = line[len("/max_rounds"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}max_rounds={settings.max_tool_rounds}{C.RESET}")
+                            continue
+                        try:
+                            settings.max_tool_rounds = max(1, int(arg))
+                            print(f"{C.GREEN}{CHECK}{C.RESET} max_rounds={settings.max_tool_rounds}")
+                        except ValueError:
+                            warn("usage: /max_rounds <int>")
+                        continue
+                    if line.startswith("/system"):
+                        arg = line[len("/system"):].strip()
+                        if not arg:
+                            print(f"{C.DIM}system={settings.system_prompt or '<none>'}{C.RESET}")
+                            continue
+                        if arg.lower() in {"off", "none", "clear"}:
+                            settings.system_prompt = None
+                            if messages and messages[0].get("role") == "system":
+                                messages.pop(0)
+                            print(f"{C.GREEN}{CHECK}{C.RESET} system prompt cleared")
+                            continue
+                        settings.system_prompt = arg
+                        if messages and messages[0].get("role") == "system":
+                            messages[0]["content"] = arg
+                        else:
+                            messages.insert(0, {"role": "system", "content": arg})
+                        print(f"{C.GREEN}{CHECK}{C.RESET} system prompt updated")
+                        continue
+                    if line.startswith("/mcp"):
+                        parts = line.split(maxsplit=2)
+                        if len(parts) == 1 or parts[1] == "status":
+                            print(
+                                f"{C.DIM}mcp={mcp_client.endpoint or '<disconnected>'} "
+                                f"tools={len(mcp_client.list_tool_names())}{C.RESET}"
+                            )
+                            continue
+                        sub = parts[1].lower()
+                        if sub == "connect":
+                            if len(parts) < 3:
+                                warn("usage: /mcp connect <streamable-http-url>")
+                                continue
+                            endpoint = parts[2].strip()
+                            if not endpoint.startswith(("http://", "https://")):
+                                warn("mcp endpoint must start with http:// or https://")
+                                continue
+                            try:
+                                await mcp_client.connect_streamable_http(endpoint)
+                                print(
+                                    f"{C.GREEN}{CHECK}{C.RESET} mcp connected: {endpoint} "
+                                    f"({len(mcp_client.list_tool_names())} tools)"
+                                )
+                            except Exception as exc:
+                                error(f"mcp connect failed: {exc}")
+                            continue
+                        if sub == "disconnect":
+                            await mcp_client.disconnect()
+                            print(f"{C.GREEN}{CHECK}{C.RESET} mcp disconnected")
+                            continue
+                        if sub == "tools":
+                            names = mcp_client.list_tool_names()
+                            if not names:
+                                print(f"{C.DIM}no mcp tools available{C.RESET}")
+                            else:
+                                print(f"{C.BLUE}mcp tools:{C.RESET} {', '.join(names)}")
+                            continue
+                        warn("usage: /mcp <connect|disconnect|status|tools>")
                         continue
                     if line.startswith("/"):
                         matches = [cmd for cmd in REPL_COMMANDS if cmd.startswith(line)]
@@ -1599,14 +1895,13 @@ async def cmd_chat(args, storage: StorageService) -> int:
                             _print_repl_commands()
                         continue
 
-                    rc = _run_chat_turn(
+                    rc = await _run_chat_turn(
                         client=client,
                         url=url,
                         headers=headers,
-                        model=model,
-                        args=args,
-                        stream=stream,
-                        tools=tools,
+                        model=settings.model,
+                        settings=settings,
+                        mcp_client=mcp_client,
                         messages=messages,
                         user_text=line,
                     )
@@ -1617,6 +1912,7 @@ async def cmd_chat(args, storage: StorageService) -> int:
             finally:
                 if cleanup_repl:
                     cleanup_repl()
+                await mcp_client.disconnect()
         return 0
     except Exception as e:
         try:
@@ -2391,7 +2687,7 @@ def print_help():
     print(f"  {C.BLUE}delete{C.RESET}                    Delete installed apps from device")
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
     print(f"  {C.BLUE}models{C.RESET}                    List models on your Truffle")
-    print(f"  {C.BLUE}chat{C.RESET} [prompt]            Chat on your Truffle (REPL by default)")
+    print(f"  {C.BLUE}chat{C.RESET}                     Chat on your Truffle (REPL by default)")
     print(f"  {C.BLUE}proxy{C.RESET}                    Run OpenAI-compatible proxy")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
@@ -2404,8 +2700,7 @@ def print_help():
     print(f"  {C.DIM}truffile list apps{C.RESET}")
     print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show models on your Truffle{C.RESET}")
     print(f"  {C.DIM}truffile chat{C.RESET}               {C.DIM}# open interactive REPL chat{C.RESET}")
-    print(f"  {C.DIM}truffile chat --no-repl \"hello\"{C.RESET} {C.DIM}# one-shot chat{C.RESET}")
-    print(f"  {C.DIM}truffile chat --no-reasoning{C.RESET} {C.DIM}# disable reasoning output{C.RESET}")
+    print(f"  {C.DIM}# in chat: /help, /config, /reasoning on|off, /mcp connect <url>{C.RESET}")
     print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# run local /v1 proxy{C.RESET}")
     print()
 
@@ -2447,38 +2742,6 @@ def main() -> int:
     p_models = subparsers.add_parser("models", add_help=False)
     
     p_chat = subparsers.add_parser("chat", add_help=False)
-    p_chat.add_argument("prompt_words", nargs="*", help="Prompt text (alternative to --prompt)")
-    p_chat.add_argument("-p", "--prompt", help="Prompt text")
-    p_chat.add_argument("-m", "--model", help="Model id/uuid (default: first model from IF2 list)")
-    p_chat.add_argument("--system", help="System prompt")
-    p_chat.add_argument(
-        "--reasoning",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable/disable reasoning output (default: enabled)",
-    )
-    p_chat.add_argument("--max-tokens", type=int, help="Max response tokens")
-    p_chat.add_argument("--temperature", type=float, help="Sampling temperature")
-    p_chat.add_argument("--top-p", type=float, help="Nucleus sampling top-p")
-    p_chat.add_argument("--no-stream", action="store_true", help="Disable streaming output")
-    p_chat.add_argument("--json", action="store_true", help="Print full JSON response (non-stream)")
-    p_chat.add_argument(
-        "--default-tools",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable built-in web_search/web_fetch tools",
-    )
-    p_chat.add_argument(
-        "--max-tool-rounds",
-        type=int,
-        default=8,
-        help="Max assistant/tool loop rounds per user turn",
-    )
-    p_chat.add_argument(
-        "--no-repl",
-        action="store_true",
-        help="Run single-turn chat and exit",
-    )
     
     p_proxy = subparsers.add_parser("proxy", add_help=False)
     p_proxy.add_argument("--device", "-d", help="Device name (default: last connected)")

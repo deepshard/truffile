@@ -59,10 +59,21 @@ truffile list apps
 truffile delete
 truffile models
 truffile chat
-truffile chat --no-repl "hello"
-truffile chat --no-default-tools
 truffile proxy --host 127.0.0.1 --port 8080
 ```
+
+In `truffile chat`, runtime controls are slash commands (not launch flags):
+
+- `/help` for all chat commands
+- `/config` to show current chat config
+- `/reasoning on|off`
+- `/stream on|off`
+- `/json on|off`
+- `/tools on|off`
+- `/max_tokens <int>`, `/temperature <float|off>`, `/top_p <float|off>`, `/max_rounds <int>`
+- `/models` to switch model
+- `/system <text|clear>`
+- `/mcp connect <http(s)://...>`, `/mcp tools`, `/mcp status`, `/mcp disconnect`
 
 ## Inference Interfaces
 
