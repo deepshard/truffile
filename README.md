@@ -8,7 +8,6 @@ Python SDK/CLI for Truffle devices.
 - validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
 - manages installed apps (`list apps`, `delete`)
 - talks to inference directly (`models`, `chat`)
-- exposes an OpenAI-compatible local proxy (`proxy`)
 
 ## Start making your Own Apps
 
@@ -59,7 +58,6 @@ truffile list apps
 truffile delete
 truffile models
 truffile chat
-truffile proxy --host 127.0.0.1 --port 8080
 ```
 
 In `truffile chat`, runtime controls are slash commands (not launch flags):
@@ -72,6 +70,7 @@ In `truffile chat`, runtime controls are slash commands (not launch flags):
 - `/tools on|off`
 - `/max_tokens <int>`, `/temperature <float|off>`, `/top_p <float|off>`, `/max_rounds <int>`
 - `/models` to switch model
+- `/attach <path-or-url>` to attach an image for the next user message (local path or `http(s)` URL)
 - `/system <text|clear>`
 - `/mcp connect <http(s)://...>`, `/mcp tools`, `/mcp status`, `/mcp disconnect`
 
@@ -84,20 +83,6 @@ Direct IF2:
 CLI wrappers:
 - `truffile models`
 - `truffile chat` (streaming by default)
-
-## Proxy
-
-`truffile proxy` serves OpenAI-compatible routes locally and forwards to device IF2:
-
-- `GET /v1/models`
-- `POST /v1/chat/completions`
-
-Default local base URL:
-- `http://127.0.0.1:8080/v1`
-
-Reasoning behavior:
-- default: proxy can inject reasoning into `content` as `<think>...</think>`
-- `--no-think-tags`: keeps reasoning separate as `reasoning_content` in stream deltas
 
 ## Proto Sync
 

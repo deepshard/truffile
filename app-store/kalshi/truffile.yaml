@@ -21,9 +21,8 @@ metadata:
       type: interval
       interval:
         duration: 30m
-        prod_duration: 60m
         schedule:
-        daily_window: "00:00-23:59"
+          daily_window: "00:00-23:59"
   foreground:
     process:
       cmd:
