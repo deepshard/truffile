@@ -1,6 +1,8 @@
 import argparse
 import asyncio
+import base64
 import json
+import mimetypes
 import os
 import re
 import select
@@ -10,7 +12,6 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
@@ -55,8 +56,7 @@ ARROW = "→"
 DOT = "•"
 WARN = "⚠"
 HAMMER = "🔨"
-TOOL_TAGS = ("<toolcall>", "</toolcall>")
-TOOL_TAG_PATTERN = re.compile(r"<toolcall>\s*(.*?)\s*</toolcall>", re.DOTALL)
+SUPPORTED_SERVER_MIME_TYPES = {"image/jpeg", "image/png", "image/bmp"}
 REPL_COMMANDS = [
     "/help",
     "/",
@@ -74,6 +74,7 @@ REPL_COMMANDS = [
     "/max_rounds",
     "/system",
     "/mcp",
+    "/attach",
     "/exit",
     "/quit",
 ]
@@ -1111,6 +1112,82 @@ def _parse_on_off(value: str) -> bool | None:
     return None
 
 
+def _resolve_image_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"image file not found: {path}")
+    return path
+
+
+def _guess_mime_type(path: Path) -> str:
+    mime, _ = mimetypes.guess_type(str(path))
+    return mime or "image/jpeg"
+
+
+def _normalize_image_for_server(image_bytes: bytes, mime: str) -> tuple[bytes, str, bool]:
+    mime_l = mime.lower()
+    if mime_l in SUPPORTED_SERVER_MIME_TYPES:
+        return image_bytes, mime_l, False
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise RuntimeError(
+            f"image mime {mime!r} is not supported by server decoder and Pillow is unavailable: {exc}"
+        ) from exc
+
+    from io import BytesIO
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as im:
+            rgb = im.convert("RGB")
+            out = BytesIO()
+            rgb.save(out, format="PNG")
+            return out.getvalue(), "image/png", True
+    except Exception as exc:
+        raise RuntimeError(f"failed to transcode unsupported image mime {mime!r}: {exc}") from exc
+
+
+def _resolve_image_bytes_and_mime(image_path_or_url: str) -> tuple[bytes, str, str]:
+    if image_path_or_url.startswith("http://") or image_path_or_url.startswith("https://"):
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.get(image_path_or_url)
+            resp.raise_for_status()
+            content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            mime = content_type if content_type.startswith("image/") else "image/jpeg"
+            size_kib = len(resp.content) / 1024.0
+            image_bytes, mime, transcoded = _normalize_image_for_server(resp.content, mime)
+            desc = f"url={image_path_or_url} size={size_kib:.1f} KiB mime={mime}"
+            if transcoded:
+                desc += " (transcoded)"
+            return image_bytes, mime, desc
+
+    path = _resolve_image_path(image_path_or_url)
+    size_kib = path.stat().st_size / 1024.0
+    mime = _guess_mime_type(path)
+    image_bytes, mime, transcoded = _normalize_image_for_server(path.read_bytes(), mime)
+    desc = f"path={path} size={size_kib:.1f} KiB mime={mime}"
+    if transcoded:
+        desc += " (transcoded)"
+    return image_bytes, mime, desc
+
+
+def _to_data_url(image_bytes: bytes, mime: str) -> str:
+    payload = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{mime};base64,{payload}"
+
+
+def _make_user_message(text: str, image_data_url: str | None) -> dict[str, Any]:
+    if image_data_url is None:
+        return {"role": "user", "content": text}
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ],
+    }
+
+
 def _build_default_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -1290,14 +1367,16 @@ def _print_reasoning_and_response(reasoning_text: str, response_text: str, show_
 
 
 def _print_repl_commands(prefix: str | None = None) -> None:
+    command_pool = [cmd for cmd in REPL_COMMANDS if cmd != "/"]
     if prefix is None:
-        matches = REPL_COMMANDS
+        matches = command_pool
     else:
-        matches = [cmd for cmd in REPL_COMMANDS if cmd.startswith(prefix)]
+        matches = [cmd for cmd in command_pool if cmd.startswith(prefix)]
     if not matches:
         print(f"{C.YELLOW}no command matches: {prefix}{C.RESET}")
         return
-    print(f"{C.BLUE}commands: {', '.join(matches)}{C.RESET}")
+    rendered = ", ".join(f"{C.BLUE}{cmd}{C.RESET}" for cmd in matches)
+    print(f"commands: {rendered}")
 
 
 def _install_repl_completer(commands: list[str]) -> Callable[[], None] | None:
@@ -1309,6 +1388,7 @@ def _install_repl_completer(commands: list[str]) -> Callable[[], None] | None:
         prev_display_hook = getattr(readline, "get_completion_display_matches_hook", lambda: None)()
         readline.parse_and_bind("tab: complete")
         readline.parse_and_bind("set show-all-if-ambiguous on")
+        readline.parse_and_bind("set show-all-if-unmodified on")
         readline.parse_and_bind("set completion-ignore-case on")
         readline.set_completer_delims(" \t\n")
         matches: list[str] = []
@@ -1319,7 +1399,11 @@ def _install_repl_completer(commands: list[str]) -> Callable[[], None] | None:
                 buffer = readline.get_line_buffer().lstrip()
                 if buffer.startswith("/"):
                     prefix = buffer.split()[0]
-                    matches = [cmd for cmd in commands if cmd.startswith(prefix)]
+                    command_pool = [cmd for cmd in commands if cmd != "/"]
+                    if prefix == "/":
+                        matches = command_pool
+                    else:
+                        matches = [cmd for cmd in command_pool if cmd.startswith(prefix)]
                 else:
                     matches = []
             if state < len(matches):
@@ -1333,7 +1417,8 @@ def _install_repl_completer(commands: list[str]) -> Callable[[], None] | None:
                 if not display_matches:
                     return
                 print()
-                print(f"{C.BLUE}commands: {', '.join(display_matches)}{C.RESET}")
+                rendered = ", ".join(f"{C.BLUE}{cmd}{C.RESET}" for cmd in display_matches)
+                print(f"commands: {rendered}")
                 try:
                     readline.redisplay()
                 except Exception:
@@ -1570,9 +1655,9 @@ async def _run_chat_turn(
     settings: ChatSettings,
     mcp_client: ChatMCPClient,
     messages: list[dict[str, Any]],
-    user_text: str,
+    user_message: dict[str, Any],
 ) -> int:
-    messages.append({"role": "user", "content": user_text})
+    messages.append(user_message)
 
     max_rounds = max(1, int(settings.max_tool_rounds))
     for _ in range(max_rounds):
@@ -1637,7 +1722,8 @@ async def _run_chat_turn(
 
 
 async def cmd_chat(args, storage: StorageService) -> int:
-    prompt = ""
+    prompt_words = getattr(args, "prompt_words", None)
+    prompt = " ".join(prompt_words).strip() if prompt_words else ""
 
     device, ip = await _resolve_connected_device(storage)
     if not device or not ip:
@@ -1654,6 +1740,8 @@ async def cmd_chat(args, storage: StorageService) -> int:
     settings = ChatSettings(model=model)
     mcp_client = ChatMCPClient()
     messages: list[dict[str, Any]] = []
+    pending_image_data_url: str | None = None
+    pending_image_desc: str | None = None
 
     url = f"http://{ip}/if2/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
@@ -1667,7 +1755,7 @@ async def cmd_chat(args, storage: StorageService) -> int:
             # REPL mode (default).
             print(f"{C.DIM}model: {settings.model}{C.RESET}")
             print(
-                f"{C.DIM}commands: /help, /history, /reset, /models, /config, /mcp, /exit{C.RESET}"
+                f"{C.DIM}commands: /help, /history, /reset, /models, /attach, /config, /mcp, /exit{C.RESET}"
             )
 
             cleanup_repl = _install_repl_completer(REPL_COMMANDS)
@@ -1682,13 +1770,16 @@ async def cmd_chat(args, storage: StorageService) -> int:
                         settings=settings,
                         mcp_client=mcp_client,
                         messages=messages,
-                        user_text=prompt,
+                        user_message=_make_user_message(prompt, pending_image_data_url),
                     )
                     if rc != 0:
                         if rc == 130:
-                            prompt = ""
+                            return 0
                         else:
                             return rc
+                    else:
+                        pending_image_data_url = None
+                        pending_image_desc = None
 
                 while True:
                     try:
@@ -1698,7 +1789,7 @@ async def cmd_chat(args, storage: StorageService) -> int:
                         return 0
                     except KeyboardInterrupt:
                         print()
-                        continue
+                        return 0
 
                     if not line:
                         continue
@@ -1714,7 +1805,9 @@ async def cmd_chat(args, storage: StorageService) -> int:
                         messages = []
                         if settings.system_prompt:
                             messages.append({"role": "system", "content": settings.system_prompt})
-                        print(f"{C.YELLOW}history reset{C.RESET}")
+                        pending_image_data_url = None
+                        pending_image_desc = None
+                        print(f"{C.YELLOW}history reset (and cleared pending attachment){C.RESET}")
                         continue
                     if line == "/models":
                         try:
@@ -1851,8 +1944,15 @@ async def cmd_chat(args, storage: StorageService) -> int:
                         parts = line.split(maxsplit=2)
                         if len(parts) == 1 or parts[1] == "status":
                             print(
+                                f"{C.BLUE}/mcp status{C.RESET} "
                                 f"{C.DIM}mcp={mcp_client.endpoint or '<disconnected>'} "
                                 f"tools={len(mcp_client.list_tool_names())}{C.RESET}"
+                            )
+                            print(
+                                f"{C.DIM}subcommands:{C.RESET} "
+                                f"{C.BLUE}/mcp connect <url>{C.RESET}, "
+                                f"{C.BLUE}/mcp tools{C.RESET}, "
+                                f"{C.BLUE}/mcp disconnect{C.RESET}"
                             )
                             continue
                         sub = parts[1].lower()
@@ -1867,7 +1967,8 @@ async def cmd_chat(args, storage: StorageService) -> int:
                             try:
                                 await mcp_client.connect_streamable_http(endpoint)
                                 print(
-                                    f"{C.GREEN}{CHECK}{C.RESET} mcp connected: {endpoint} "
+                                    f"{C.BLUE}/mcp connect{C.RESET} "
+                                    f"{C.GREEN}{CHECK}{C.RESET} {endpoint} "
                                     f"({len(mcp_client.list_tool_names())} tools)"
                                 )
                             except Exception as exc:
@@ -1875,16 +1976,34 @@ async def cmd_chat(args, storage: StorageService) -> int:
                             continue
                         if sub == "disconnect":
                             await mcp_client.disconnect()
-                            print(f"{C.GREEN}{CHECK}{C.RESET} mcp disconnected")
+                            print(f"{C.BLUE}/mcp disconnect{C.RESET} {C.GREEN}{CHECK}{C.RESET}")
                             continue
                         if sub == "tools":
                             names = mcp_client.list_tool_names()
                             if not names:
-                                print(f"{C.DIM}no mcp tools available{C.RESET}")
+                                print(f"{C.BLUE}/mcp tools{C.RESET} {C.DIM}no tools available{C.RESET}")
                             else:
-                                print(f"{C.BLUE}mcp tools:{C.RESET} {', '.join(names)}")
+                                print(f"{C.BLUE}/mcp tools{C.RESET} {', '.join(names)}")
                             continue
                         warn("usage: /mcp <connect|disconnect|status|tools>")
+                        continue
+                    if line.startswith("/attach"):
+                        parts = line.split(maxsplit=1)
+                        if len(parts) != 2 or not parts[1].strip():
+                            warn("usage: /attach <path-or-url>")
+                            continue
+                        src = parts[1].strip()
+                        try:
+                            image_bytes, mime, desc = _resolve_image_bytes_and_mime(src)
+                            pending_image_data_url = _to_data_url(image_bytes, mime)
+                            pending_image_desc = desc
+                            print(f"{C.GREEN}{CHECK}{C.RESET} attachment ready: {desc}")
+                        except FileNotFoundError as exc:
+                            error(str(exc))
+                        except httpx.HTTPError as exc:
+                            error(f"failed to fetch image: {exc}")
+                        except RuntimeError as exc:
+                            error(str(exc))
                         continue
                     if line.startswith("/"):
                         matches = [cmd for cmd in REPL_COMMANDS if cmd.startswith(line)]
@@ -1895,6 +2014,8 @@ async def cmd_chat(args, storage: StorageService) -> int:
                             _print_repl_commands()
                         continue
 
+                    if pending_image_data_url is not None:
+                        print(f"{C.MAGENTA}[attach]{C.RESET} sending with image: {pending_image_desc}")
                     rc = await _run_chat_turn(
                         client=client,
                         url=url,
@@ -1903,12 +2024,14 @@ async def cmd_chat(args, storage: StorageService) -> int:
                         settings=settings,
                         mcp_client=mcp_client,
                         messages=messages,
-                        user_text=line,
+                        user_message=_make_user_message(line, pending_image_data_url),
                     )
                     if rc != 0:
                         if rc == 130:
-                            continue
+                            return 0
                         return rc
+                    pending_image_data_url = None
+                    pending_image_desc = None
             finally:
                 if cleanup_repl:
                     cleanup_repl()
@@ -1920,624 +2043,6 @@ async def cmd_chat(args, storage: StorageService) -> int:
         except Exception:
             error(f"Chat request failed: {e}")
         return 1
-
-
-def _inject_reasoning_into_chunk(chunk: dict, state: dict) -> dict:
-    choices = chunk.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return chunk
-    c0 = choices[0]
-    if not isinstance(c0, dict):
-        return chunk
-    delta = c0.get("delta")
-    if not isinstance(delta, dict):
-        return chunk
-
-    reasoning = delta.get("reasoning")
-    content = delta.get("content")
-    merged = ""
-
-    if isinstance(reasoning, str) and reasoning:
-        if not state.get("thinking_open", False):
-            merged += "<think>\n"
-            state["thinking_open"] = True
-        merged += reasoning
-
-    if isinstance(content, str) and content:
-        if state.get("thinking_open", False):
-            merged += "\n</think>\n"
-            state["thinking_open"] = False
-        merged += content
-
-    if merged:
-        delta["content"] = merged
-    if "reasoning" in delta:
-        del delta["reasoning"]
-    return chunk
-
-
-def _normalize_finish_reason(fr: str | None) -> str | None:
-    if fr is None:
-        return None
-    s = str(fr).strip().lower()
-    if s in {"stop", "finish_stop"}:
-        return "stop"
-    if s in {"length", "finish_length"}:
-        return "length"
-    if s in {"tool_calls", "toolcalls", "finish_toolcalls"}:
-        return "tool_calls"
-    if s in {"content_filter"}:
-        return "content_filter"
-    return "stop"
-
-
-def _normalize_usage_dict(usage: dict | None) -> dict | None:
-    if not isinstance(usage, dict):
-        return usage
-    if {"prompt_tokens", "completion_tokens", "total_tokens"}.issubset(set(usage.keys())):
-        return usage
-    tokens = usage.get("tokens")
-    if isinstance(tokens, dict):
-        prompt = int(tokens.get("prompt", 0) or 0)
-        completion = int(tokens.get("completion", 0) or 0)
-        out = dict(usage)
-        out["prompt_tokens"] = prompt
-        out["completion_tokens"] = completion
-        out["total_tokens"] = prompt + completion
-        return out
-    return usage
-
-
-def _flatten_content(content: object) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for p in content:
-            if isinstance(p, dict) and p.get("type") == "text":
-                parts.append(str(p.get("text", "")))
-        return "".join(parts)
-    return str(content)
-
-
-def _extract_tool_calls_and_clean(text: str) -> tuple[list[dict], str]:
-    calls: list[dict] = []
-    for m in TOOL_TAG_PATTERN.findall(text):
-        try:
-            obj = json.loads(m.strip())
-            if isinstance(obj, dict):
-                calls.append(obj)
-        except Exception:
-            continue
-    cleaned = TOOL_TAG_PATTERN.sub("", text).strip()
-    return calls, cleaned
-
-
-def _tool_prompt(tools_spec: list[dict]) -> str:
-    desc_lines: list[str] = []
-    for t in tools_spec:
-        if not isinstance(t, dict) or t.get("type") != "function":
-            continue
-        fn = t.get("function", {})
-        if not isinstance(fn, dict):
-            continue
-        name = fn.get("name")
-        if not isinstance(name, str) or not name:
-            continue
-        description = str(fn.get("description") or "")
-        params = fn.get("parameters") if isinstance(fn.get("parameters"), dict) else {"type": "object"}
-        desc_lines.append(f"{name}: {description}\nArg Schema: {json.dumps(params, indent=2)}")
-    if not desc_lines:
-        return ""
-    open_tag, close_tag = TOOL_TAGS
-    return (
-        "You have access to the following tools:\n"
-        + "\n".join(desc_lines)
-        + "\nWhen you decide to use a tool, respond with a JSON object enclosed by "
-        + f"{open_tag} and {close_tag} tags in this format:\n"
-        + f"{open_tag}\n"
-        + '{\n  "tool": "<tool_name>",\n  "args": {<tool_arguments_as_json_object>}\n}\n'
-        + f"{close_tag}\n"
-        + "Only use tools listed above, and ensure your JSON is valid."
-    )
-
-
-def _serialize_tool_calls(tool_calls: list[dict]) -> str:
-    blocks: list[str] = []
-    open_tag, close_tag = TOOL_TAGS
-    for tc in tool_calls:
-        if not isinstance(tc, dict) or tc.get("type") != "function":
-            continue
-        fn = tc.get("function", {})
-        if not isinstance(fn, dict):
-            continue
-        name = fn.get("name")
-        if not isinstance(name, str) or not name:
-            continue
-        args_raw = fn.get("arguments")
-        args = {}
-        if isinstance(args_raw, str):
-            try:
-                maybe = json.loads(args_raw)
-                if isinstance(maybe, dict):
-                    args = maybe
-            except Exception:
-                args = {"_raw": args_raw}
-        elif isinstance(args_raw, dict):
-            args = args_raw
-        blocks.append(f"{open_tag}\n{json.dumps({'tool': name, 'args': args})}\n{close_tag}")
-    return "\n".join(blocks)
-
-
-def _massage_messages_for_tools(messages: list[dict], tools_spec: list[dict], tool_choice: object) -> list[dict]:
-    out: list[dict] = []
-    prompt = _tool_prompt(tools_spec) if tool_choice != "none" else ""
-    injected = False
-
-    tool_name_by_id: dict[str, str] = {}
-    for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "assistant":
-            for tc in msg.get("tool_calls", []) or []:
-                if isinstance(tc, dict):
-                    tc_id = tc.get("id")
-                    fn = tc.get("function", {})
-                    if isinstance(tc_id, str) and isinstance(fn, dict) and isinstance(fn.get("name"), str):
-                        tool_name_by_id[tc_id] = fn["name"]
-
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        role = msg.get("role")
-        content = _flatten_content(msg.get("content"))
-
-        if role == "assistant" and isinstance(msg.get("tool_calls"), list):
-            serialized = _serialize_tool_calls(msg.get("tool_calls") or [])
-            if serialized:
-                content = (content + "\n" + serialized).strip()
-
-        if role == "tool":
-            tool_name = msg.get("name")
-            if not isinstance(tool_name, str) or not tool_name:
-                tcid = msg.get("tool_call_id")
-                if isinstance(tcid, str):
-                    tool_name = tool_name_by_id.get(tcid, "")
-            content = f'<tool_result> "tool" : "{tool_name or ""}" "output": "{content}" </tool_result>'
-
-        if role == "system" and prompt and not injected:
-            content = (content + "\n\n" + prompt).strip()
-            injected = True
-
-        out.append({"role": role, "content": content})
-
-    if prompt and not injected:
-        out.insert(0, {"role": "system", "content": prompt})
-    return out
-
-
-class _ToolTagStreamFilter:
-    def __init__(self):
-        self.buf = ""
-
-    def feed(self, text: str) -> str:
-        if not text:
-            return ""
-        s = self.buf + text
-        self.buf = ""
-        out: list[str] = []
-        open_tag, close_tag = TOOL_TAGS
-        while s:
-            start = s.find(open_tag)
-            if start == -1:
-                keep = len(open_tag) - 1
-                if len(s) > keep:
-                    out.append(s[:-keep] if keep > 0 else s)
-                    self.buf = s[-keep:] if keep > 0 else ""
-                else:
-                    self.buf = s
-                break
-            if start > 0:
-                out.append(s[:start])
-            s = s[start:]
-            end = s.find(close_tag)
-            if end == -1:
-                self.buf = s
-                break
-            s = s[end + len(close_tag):]
-        return "".join(out)
-
-    def finalize(self) -> str:
-        if not self.buf:
-            return ""
-        open_tag, _ = TOOL_TAGS
-        if open_tag in self.buf:
-            self.buf = ""
-            return ""
-        tail = self.buf
-        self.buf = ""
-        return tail
-
-
-def _inject_reasoning_into_response(body: dict) -> dict:
-    choices = body.get("choices")
-    if not isinstance(choices, list):
-        return body
-    for c in choices:
-        if not isinstance(c, dict):
-            continue
-        msg = c.get("message")
-        if not isinstance(msg, dict):
-            continue
-        reasoning = msg.get("reasoning")
-        content = msg.get("content", "")
-        if isinstance(reasoning, str) and reasoning:
-            content_text = content if isinstance(content, str) else str(content)
-            msg["content"] = f"<think>\n{reasoning}\n</think>\n{content_text}"
-        if "reasoning" in msg:
-            del msg["reasoning"]
-    return body
-
-
-async def cmd_proxy(args, storage: StorageService) -> int:
-    device = args.device if args.device else storage.state.last_used_device
-    if not device:
-        error("No device specified or connected")
-        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
-        print(f"  {C.DIM}Or:  truffile proxy --device <device>{C.RESET}")
-        return 1
-
-    spinner = Spinner(f"Resolving {device}.local")
-    spinner.start()
-    try:
-        ip = await resolve_mdns(f"{device}.local")
-        spinner.stop(success=True)
-    except RuntimeError:
-        spinner.fail(f"Could not resolve {device}.local")
-        return 1
-
-    target_base = f"http://{ip}"
-    host = args.host
-    port = args.port
-    include_think_tags = not args.no_think_tags
-
-    class ProxyHandler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def log_message(self, _format, *_args):
-            return
-
-        def _send_json(self, code: int, body: dict):
-            raw = json.dumps(body).encode("utf-8")
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(raw)))
-            self.end_headers()
-            self.wfile.write(raw)
-
-        def _map_path(self, path: str) -> str | None:
-            if path == "/v1/models":
-                return "/if2/v1/models"
-            if path == "/v1/chat/completions":
-                return "/if2/v1/chat/completions"
-            return None
-
-        def _forward_headers(self) -> dict[str, str]:
-            out: dict[str, str] = {"Content-Type": "application/json"}
-            auth = self.headers.get("Authorization")
-            if auth:
-                out["Authorization"] = auth
-            return out
-
-        def do_GET(self):
-            mapped = self._map_path(self.path)
-            if not mapped:
-                self._send_json(404, {"error": {"message": "Not found"}})
-                return
-
-            try:
-                with httpx.Client(timeout=30.0) as client:
-                    resp = client.get(f"{target_base}{mapped}", headers=self._forward_headers())
-                self.send_response(resp.status_code)
-                self.send_header("Content-Type", resp.headers.get("content-type", "application/json"))
-                self.send_header("Content-Length", str(len(resp.content)))
-                self.end_headers()
-                self.wfile.write(resp.content)
-            except Exception as e:
-                self._send_json(502, {"error": {"message": f"Upstream GET failed: {e}"}})
-
-        def do_POST(self):
-            mapped = self._map_path(self.path)
-            if not mapped:
-                self._send_json(404, {"error": {"message": "Not found"}})
-                return
-
-            raw_body = b""
-            try:
-                content_len = int(self.headers.get("Content-Length", "0"))
-                raw_body = self.rfile.read(content_len) if content_len > 0 else b"{}"
-                body = json.loads(raw_body.decode("utf-8"))
-            except Exception as e:
-                self._send_json(400, {"error": {"message": f"Invalid JSON body: {e}"}})
-                return
-
-            if mapped == "/if2/v1/chat/completions":
-                if "reasoning" not in body:
-                    body["reasoning"] = {"enabled": False}
-                if isinstance(body.get("tools"), list):
-                    messages = body.get("messages", [])
-                    if isinstance(messages, list):
-                        body["messages"] = _massage_messages_for_tools(
-                            messages=messages,
-                            tools_spec=body.get("tools") or [],
-                            tool_choice=body.get("tool_choice"),
-                        )
-                # Let proxy map tool tags back to OpenAI tool_calls.
-                body.pop("tools", None)
-                body.pop("tool_choice", None)
-
-            stream_mode = bool(body.get("stream")) and mapped == "/if2/v1/chat/completions"
-
-            try:
-                with httpx.Client(timeout=None) as client:
-                    if stream_mode:
-                        with client.stream(
-                            "POST",
-                            f"{target_base}{mapped}",
-                            headers=self._forward_headers(),
-                            json=body,
-                        ) as resp:
-                            self.send_response(resp.status_code)
-                            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-                            self.send_header("Cache-Control", "no-cache")
-                            self.send_header("Connection", "keep-alive")
-                            self.end_headers()
-
-                            state = {"thinking_open": False}
-                            tool_filter = _ToolTagStreamFilter()
-                            acc_text_parts: list[str] = []
-                            seen_finish_reason: str | None = None
-                            stream_id = None
-                            created = None
-                            model_name = None
-                            for raw_line in resp.iter_lines():
-                                line = raw_line if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace")
-                                if not line:
-                                    self.wfile.write(b"\n")
-                                    self.wfile.flush()
-                                    continue
-                                if line.startswith("data:"):
-                                    payload = line[5:].strip()
-                                    if payload == "[DONE]":
-                                        clean_tail = tool_filter.finalize()
-                                        if clean_tail:
-                                            chunk = {
-                                                "choices": [{"index": 0, "delta": {"content": clean_tail}, "finish_reason": None}]
-                                            }
-                                            if stream_id is not None:
-                                                chunk["id"] = stream_id
-                                            if created is not None:
-                                                chunk["created"] = created
-                                            if model_name is not None:
-                                                chunk["model"] = model_name
-                                            out = f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
-                                            self.wfile.write(out.encode("utf-8"))
-
-                                        if acc_text_parts:
-                                            tool_calls, _clean = _extract_tool_calls_and_clean("".join(acc_text_parts))
-                                            if tool_calls:
-                                                tc_list = []
-                                                for i, tc in enumerate(tool_calls):
-                                                    name = str(tc.get("tool", ""))
-                                                    args = tc.get("args", {})
-                                                    if not isinstance(args, dict):
-                                                        args = {"_raw": str(args)}
-                                                    tc_list.append(
-                                                        {
-                                                            "id": f"call_{i+1}",
-                                                            "type": "function",
-                                                            "index": i,
-                                                            "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
-                                                        }
-                                                    )
-                                                tc_chunk = {
-                                                    "choices": [{"index": 0, "delta": {"tool_calls": tc_list}, "finish_reason": None}]
-                                                }
-                                                if stream_id is not None:
-                                                    tc_chunk["id"] = stream_id
-                                                if created is not None:
-                                                    tc_chunk["created"] = created
-                                                if model_name is not None:
-                                                    tc_chunk["model"] = model_name
-                                                out = f"data: {json.dumps(tc_chunk, separators=(',', ':'))}\n\n"
-                                                self.wfile.write(out.encode("utf-8"))
-                                                seen_finish_reason = "tool_calls"
-
-                                        if seen_finish_reason is None:
-                                            fin = {
-                                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
-                                            }
-                                            if stream_id is not None:
-                                                fin["id"] = stream_id
-                                            if created is not None:
-                                                fin["created"] = created
-                                            if model_name is not None:
-                                                fin["model"] = model_name
-                                            out = f"data: {json.dumps(fin, separators=(',', ':'))}\n\n"
-                                            self.wfile.write(out.encode("utf-8"))
-
-                                        if include_think_tags and state.get("thinking_open", False):
-                                            close_evt = {
-                                                "choices": [{"delta": {"content": "\n</think>\n"}, "index": 0}]
-                                            }
-                                            out = f"data: {json.dumps(close_evt, separators=(',', ':'))}\n\n"
-                                            self.wfile.write(out.encode("utf-8"))
-                                        self.wfile.write(b"data: [DONE]\n\n")
-                                        self.wfile.flush()
-                                        break
-                                    try:
-                                        evt = json.loads(payload)
-                                        if stream_id is None and isinstance(evt, dict):
-                                            stream_id = evt.get("id")
-                                            created = evt.get("created")
-                                            model_name = evt.get("model")
-                                        if include_think_tags:
-                                            evt = _inject_reasoning_into_chunk(evt, state)
-                                        else:
-                                            # OpenAI-style proxy field for reasoning deltas.
-                                            choices = evt.get("choices")
-                                            if isinstance(choices, list) and choices:
-                                                c0 = choices[0]
-                                                if isinstance(c0, dict):
-                                                    delta = c0.get("delta")
-                                                    if isinstance(delta, dict) and isinstance(delta.get("reasoning"), str):
-                                                        delta["reasoning_content"] = delta.pop("reasoning")
-                                        choices = evt.get("choices")
-                                        if isinstance(choices, list) and choices:
-                                            c0 = choices[0]
-                                            if isinstance(c0, dict):
-                                                fr = c0.get("finish_reason")
-                                                mapped_fr = _normalize_finish_reason(fr) if fr is not None else None
-                                                if fr is not None:
-                                                    c0["finish_reason"] = mapped_fr
-                                                    seen_finish_reason = mapped_fr
-                                                delta = c0.get("delta")
-                                                if isinstance(delta, dict):
-                                                    content = delta.get("content")
-                                                    if isinstance(content, str) and content:
-                                                        acc_text_parts.append(content)
-                                                        filtered = tool_filter.feed(content)
-                                                        if filtered != content:
-                                                            if filtered:
-                                                                delta["content"] = filtered
-                                                            else:
-                                                                delta.pop("content", None)
-                                        out = f"data: {json.dumps(evt, separators=(',', ':'))}\n\n"
-                                    except Exception:
-                                        out = f"{line}\n\n"
-                                    self.wfile.write(out.encode("utf-8"))
-                                else:
-                                    self.wfile.write((line + "\n").encode("utf-8"))
-                                self.wfile.flush()
-                    else:
-                        resp = client.post(
-                            f"{target_base}{mapped}",
-                            headers=self._forward_headers(),
-                            json=body,
-                            timeout=120.0,
-                        )
-                        content = resp.content
-                        if (
-                            mapped == "/if2/v1/chat/completions"
-                            and include_think_tags
-                            and "application/json" in resp.headers.get("content-type", "")
-                        ):
-                            try:
-                                parsed = json.loads(content.decode("utf-8"))
-                                parsed = _inject_reasoning_into_response(parsed)
-                                choices = parsed.get("choices")
-                                if isinstance(choices, list) and choices:
-                                    c0 = choices[0]
-                                    if isinstance(c0, dict):
-                                        msg = c0.get("message")
-                                        if isinstance(msg, dict):
-                                            msg_content = msg.get("content")
-                                            if isinstance(msg_content, str):
-                                                tool_calls, cleaned = _extract_tool_calls_and_clean(msg_content)
-                                                if tool_calls:
-                                                    tc_list = []
-                                                    for i, tc in enumerate(tool_calls):
-                                                        name = str(tc.get("tool", ""))
-                                                        args = tc.get("args", {})
-                                                        if not isinstance(args, dict):
-                                                            args = {"_raw": str(args)}
-                                                        tc_list.append(
-                                                            {
-                                                                "id": f"call_{i+1}",
-                                                                "type": "function",
-                                                                "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
-                                                            }
-                                                        )
-                                                    msg["tool_calls"] = tc_list
-                                                    msg["content"] = cleaned if cleaned else None
-                                                    c0["finish_reason"] = "tool_calls"
-                                        fr = c0.get("finish_reason")
-                                        c0["finish_reason"] = _normalize_finish_reason(fr) if fr is not None else None
-                                usage = parsed.get("usage")
-                                if isinstance(usage, dict):
-                                    parsed["usage"] = _normalize_usage_dict(usage)
-                                content = json.dumps(parsed).encode("utf-8")
-                            except Exception:
-                                pass
-                        elif mapped == "/if2/v1/chat/completions" and "application/json" in resp.headers.get("content-type", ""):
-                            try:
-                                parsed = json.loads(content.decode("utf-8"))
-                                choices = parsed.get("choices")
-                                if isinstance(choices, list) and choices:
-                                    c0 = choices[0]
-                                    if isinstance(c0, dict):
-                                        msg = c0.get("message")
-                                        if isinstance(msg, dict):
-                                            msg_content = msg.get("content")
-                                            if isinstance(msg_content, str):
-                                                tool_calls, cleaned = _extract_tool_calls_and_clean(msg_content)
-                                                if tool_calls:
-                                                    tc_list = []
-                                                    for i, tc in enumerate(tool_calls):
-                                                        name = str(tc.get("tool", ""))
-                                                        args = tc.get("args", {})
-                                                        if not isinstance(args, dict):
-                                                            args = {"_raw": str(args)}
-                                                        tc_list.append(
-                                                            {
-                                                                "id": f"call_{i+1}",
-                                                                "type": "function",
-                                                                "function": {"name": name, "arguments": json.dumps(args, separators=(',', ':'))},
-                                                            }
-                                                        )
-                                                    msg["tool_calls"] = tc_list
-                                                    msg["content"] = cleaned if cleaned else None
-                                                    c0["finish_reason"] = "tool_calls"
-                                        fr = c0.get("finish_reason")
-                                        c0["finish_reason"] = _normalize_finish_reason(fr) if fr is not None else None
-                                usage = parsed.get("usage")
-                                if isinstance(usage, dict):
-                                    parsed["usage"] = _normalize_usage_dict(usage)
-                                content = json.dumps(parsed).encode("utf-8")
-                            except Exception:
-                                pass
-                        self.send_response(resp.status_code)
-                        self.send_header("Content-Type", resp.headers.get("content-type", "application/json"))
-                        self.send_header("Content-Length", str(len(content)))
-                        self.end_headers()
-                        self.wfile.write(content)
-            except Exception as e:
-                self._send_json(502, {"error": {"message": f"Upstream POST failed: {e}"}})
-
-    print(f"{MUSHROOM} {C.BOLD}truffile proxy{C.RESET}")
-    print()
-    print(f"  {C.DIM}Device:{C.RESET} {device} ({ip})")
-    print(f"  {C.DIM}Listen:{C.RESET} http://{host}:{port}")
-    print(f"  {C.DIM}Upstream:{C.RESET} {target_base}/if2/v1/*")
-    print(f"  {C.DIM}Reasoning tags:{C.RESET} {'on' if include_think_tags else 'off'}")
-    print()
-    print(f"  {C.DIM}OpenAI-compatible base URL:{C.RESET}")
-    print(f"    {C.CYAN}http://{host}:{port}/v1{C.RESET}")
-    print()
-    print(f"  {C.DIM}Press Ctrl+C to stop{C.RESET}")
-    print()
-
-    try:
-        server = ThreadingHTTPServer((host, port), ProxyHandler)
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print(f"{C.RED}{CROSS} Cancelled{C.RESET}")
-        return 130
-    except OSError as e:
-        error(f"Could not start proxy: {e}")
-        return 1
-
-    return 0
 
 
 async def cmd_scan(args, storage: StorageService) -> int:
@@ -2688,7 +2193,6 @@ def print_help():
     print(f"  {C.BLUE}list{C.RESET} <apps|devices>      List installed apps or devices")
     print(f"  {C.BLUE}models{C.RESET}                    List models on your Truffle")
     print(f"  {C.BLUE}chat{C.RESET}                     Chat on your Truffle (REPL by default)")
-    print(f"  {C.BLUE}proxy{C.RESET}                    Run OpenAI-compatible proxy")
     print()
     print(f"{C.BOLD}Examples:{C.RESET}")
     print(f"  {C.DIM}truffile scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
@@ -2700,8 +2204,9 @@ def print_help():
     print(f"  {C.DIM}truffile list apps{C.RESET}")
     print(f"  {C.DIM}truffile models{C.RESET}              {C.DIM}# show models on your Truffle{C.RESET}")
     print(f"  {C.DIM}truffile chat{C.RESET}               {C.DIM}# open interactive REPL chat{C.RESET}")
-    print(f"  {C.DIM}# in chat: /help, /config, /reasoning on|off, /mcp connect <url>{C.RESET}")
-    print(f"  {C.DIM}truffile proxy{C.RESET}               {C.DIM}# run local /v1 proxy{C.RESET}")
+    print(
+        f"  {C.DIM}# in chat: /help, /attach <path-or-url>, /config, /reasoning on|off, /mcp connect <url>{C.RESET}"
+    )
     print()
 
 
@@ -2743,12 +2248,6 @@ def main() -> int:
     
     p_chat = subparsers.add_parser("chat", add_help=False)
     
-    p_proxy = subparsers.add_parser("proxy", add_help=False)
-    p_proxy.add_argument("--device", "-d", help="Device name (default: last connected)")
-    p_proxy.add_argument("--host", default="127.0.0.1", help="Host to bind")
-    p_proxy.add_argument("--port", "-p", type=int, default=8080, help="Port to bind")
-    p_proxy.add_argument("--no-think-tags", action="store_true", help="Do not inject <think> tags")
-
     args = parser.parse_args()
 
     if args.command is None:
@@ -2789,8 +2288,6 @@ def main() -> int:
         return run_async(cmd_models(storage))
     elif args.command == "chat":
         return run_async(cmd_chat(args, storage))
-    elif args.command == "proxy":
-        return run_async(cmd_proxy(args, storage))
     elif args.command == "validate":
         return cmd_validate(args)
 
