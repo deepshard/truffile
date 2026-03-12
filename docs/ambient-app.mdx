@@ -1,0 +1,165 @@
+---
+title: Build a Background App
+description: "Create a scheduled app that submits context to agent on your Truffle"
+---
+
+Background apps run on a schedule and submit context to Truffle's proactive agent.
+
+To put it simply:
+
+- foreground apps are callable tools
+- background apps are context producers
+
+The richer and cleaner your background submissions are, the better proactive behavior you should expect, using cool things like metrics for the model to decide importance on, formatting for submission etc matter a lot here!
+
+---
+
+## What We're Building
+
+This walkthrough uses Kalshi app as an example specifcially the background functionality:
+
+- source: [`app-store/kalshi/kalshi_background.py`](https://github.com/deepshard/truffile/blob/main/app-store/kalshi/kalshi_background.py)
+- worker: [`app-store/kalshi/bg_worker.py`](https://github.com/deepshard/truffile/blob/main/app-store/kalshi/bg_worker.py)
+- config: [`app-store/kalshi/truffile.yaml`](https://github.com/deepshard/truffile/blob/main/app-store/kalshi/truffile.yaml) (`metadata.background`)
+- app source repo: [`app-store/kalshi`](https://github.com/deepshard/truffile/tree/main/app-store/kalshi)
+
+Kalshi background generates:
+
+- portfolio summaries
+- price movement alerts
+- settlement alerts
+- order status updates
+- feed/event digests
+
+and submits each item with explicit priority. feel free to do your own version!
+
+---
+
+## Step 1: Background Config in `truffile.yaml`
+
+```yaml
+metadata:
+  name: Kalshi
+  bundle_id: org.deepshard.kalshi
+  description: |
+    Have Truffle trade and monitor Kalshi prediction markets for you.
+  icon_file: ./icon.png
+
+  background:
+    process:
+      cmd:
+        - python
+        - kalshi_background.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        KALSHI_API_KEY: "REPLACE_WITH_KALSHI_API_KEY"
+        KALSHI_PRIVATE_KEY: |
+          REPLACE_WITH_KALSHI_PRIVATE_KEY_PEM
+    default_schedule:
+      type: interval
+      interval:
+        duration: 30m
+        schedule:
+          daily_window: "00:00-23:59"
+
+steps:
+  - name: Install dependencies
+    type: bash
+    run: |
+      apk add --no-cache gcc musl-dev libffi-dev openssl-dev
+      pip install --no-cache-dir "httpx>=0.27.0" "cryptography>=42.0.0"
+  - name: Copy application files
+    type: files
+    files:
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./client.py
+        destination: ./client.py
+      - source: ./bg_worker.py
+        destination: ./bg_worker.py
+      - source: ./kalshi_background.py
+        destination: ./kalshi_background.py
+```
+
+---
+
+## Step 2: Runtime Pattern
+
+Kalshi background uses the app runtime background loop (coming soon but for now you can use the example apps to see how to use it for your apps!):
+
+```python
+from app_runtime.background import BackgroundRunContext, run_background
+
+def kalshi_ambient(ctx: BackgroundRunContext) -> None:
+    ...
+    ctx.bg.submit_context(content=content, uris=[], priority=priority)
+
+if __name__ == "__main__":
+    run_background(kalshi_ambient)
+```
+
+Core idea:
+
+1. gather external state (APIs, events, account state)
+2. create context messages with enough detail to be actionable
+3. submit with priority (`LOW`, `DEFAULT`, `HIGH`) based on urgency
+
+---
+
+## Step 3: Submit Rich Context (Not Generic Text)
+
+From Kalshi, stronger context items include concrete fields:
+
+- ticker and title
+- absolute and relative price change
+- before/after values
+- settlement result and revenue impact
+- order IDs and status change
+
+Example style:
+
+```text
+Price alert: FED-RATE-SEP moved up 12c (was 41c, now 53c)
+```
+
+This is much better for proactivity than broad summaries without entity/time/value details.
+
+---
+
+## Step 4: Reliability and Cleanup
+
+Kalshi background explicitly closes resources on shutdown (This is important and needs to be done for your apps! Your apps will fail at runtime otherwise):
+
+- `atexit.register(_cleanup)` in `kalshi_background.py`
+- `_cleanup()` closes `KalshiBackgroundWorker` client and event loop
+- worker itself exposes `close()` and wraps API failures
+
+Do the same in your app. Leaving connections open at shutdown is a common source of flaky reruns and container instability.
+
+---
+
+## Step 5: Deploy and Verify
+
+```bash
+truffile validate ./app-store/kalshi
+truffile deploy --dry-run ./app-store/kalshi
+truffile deploy ./app-store/kalshi
+```
+
+Then verify:
+
+- scheduled runs execute at expected interval/window (Tip: Keep interval small when testing to see results earlier, you can adjust it and redeploy later when you know it works!)
+- context submissions are visible in runtime logs, right now there is not a away for you to go and watch runtime logs for your background apps, we will be adding this feature soon to the sdk. Till then please make sure you follow the example app templates!
+
+---
+
+## When to Use Background
+
+Use background apps when you need:
+
+- periodic polling/monitoring
+- context emission for proactive behavior, you would like Truffle to take an action! (Do not be restrained in thinking that a background app can only influence actions for that app only, if I get an instagram message regarding an amazon order, Truffle can use that to do an action of adding said item to my cart!)
+- domain-specific event digestion over time
+
+If your app also needs callable tools, keep both blocks in one app (`metadata.foreground` + `metadata.background`) as shown in Kalshi.

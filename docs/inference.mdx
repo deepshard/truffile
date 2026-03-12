@@ -1,0 +1,164 @@
+---
+title: Inference
+description: "Use models and chat on your Truffle, including image attachments in chat"
+---
+
+Your Truffle exposes inference directly over `/if2/v1/*`.
+
+- `truffile models` — list models on your connected device
+- `truffile chat` — interactive chat REPL (runtime config is done with `/` commands)
+
+---
+
+## Quick Start
+
+### 1) List models
+
+```bash
+truffile models
+```
+
+This calls the device endpoint:
+
+- `GET /if2/v1/models`
+
+---
+
+### 2) Start chat REPL
+
+```bash
+truffile chat
+```
+
+`truffile chat` is REPL-first. Use slash commands inside chat to configure behavior live.
+
+Chat requests are sent to:
+
+- `POST /if2/v1/chat/completions`
+
+---
+
+## Image Input in Chat
+
+Use `/attach` to attach an image to the next user message.
+
+Local file:
+
+```text
+truffile chat
+/attach ./my-image.png
+What is in this image?
+```
+
+Remote URL:
+
+```text
+truffile chat
+/attach https://example.com/image.jpg
+Describe this scene briefly.
+```
+
+After the next prompt is sent, the pending attachment is cleared.
+
+---
+
+## Chat Commands
+
+Use `/help` in REPL to list commands.
+
+### Core REPL commands
+
+| Command | What it does |
+|---------|---------------|
+| `/help` or `/` | Show available commands |
+| `/history` | Show current conversation history summary |
+| `/reset` | Clear current conversation state |
+| `/models` | Open model picker and switch active model |
+| `/attach <path-or-url>` | Attach image (local path or `http(s)` URL) for next message |
+| `/config` | Show current chat config values |
+| `/exit` or `/quit` | Exit chat |
+
+### Generation controls
+
+| Command | What it does |
+|---------|---------------|
+| `/reasoning on\|off` | Toggle reasoning output |
+| `/stream on\|off` | Toggle streaming output |
+| `/json on\|off` | Toggle JSON response mode |
+| `/tools on\|off` | Toggle built-in default tools (`web_search`, `web_fetch`) |
+| `/max_tokens <int>` | Set max output tokens |
+| `/temperature <float\|off>` | Set/clear temperature |
+| `/top_p <float\|off>` | Set/clear top-p |
+| `/max_rounds <int>` | Set max assistant/tool loop rounds |
+| `/system <text>` | Set system prompt |
+| `/system clear` | Clear system prompt |
+
+### MCP in chat
+
+| Command | What it does |
+|---------|---------------|
+| `/mcp status` | Show connected MCP endpoint + tool count |
+| `/mcp connect <streamable-http-url>` | Connect external MCP server |
+| `/mcp tools` | List tools from connected MCP |
+| `/mcp disconnect` | Disconnect MCP session |
+
+`/mcp connect` expects an HTTP(S) streamable MCP endpoint.
+
+---
+
+## Direct HTTP Endpoints
+
+Use your device hostname/IP directly when needed.
+
+List models:
+
+```bash
+curl -sS http://<device-host>/if2/v1/models
+```
+
+Chat completion:
+
+```bash
+curl -sS http://<device-host>/if2/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<model-id-or-uuid>",
+    "messages": [
+      {"role": "user", "content": "Give me one sentence about Truffle."}
+    ]
+  }'
+```
+
+---
+
+## MCP Testing Workflow (Local and Hosted)
+
+`truffile chat` can be used as an MCP integration test harness before app deployment.
+
+### Local MCP test
+
+1. Start your local MCP server with streamable HTTP transport.
+2. In chat, connect it:
+   - `/mcp connect http://127.0.0.1:8000/mcp`
+3. Verify discovered tools:
+   - `/mcp tools`
+4. Ask for explicit tool use and verify calls in output.
+
+### Hosted MCP test (Exa example)
+
+Use a hosted MCP endpoint exactly the same way:
+
+- `/mcp connect https://mcp.exa.ai/mcp?exaApiKey=<EXA_API_KEY>&tools=web_search_exa,web_search_advanced_exa,get_code_context_exa,crawling_exa,company_research_exa,people_search_exa,deep_researcher_start,deep_researcher_check`
+- `/mcp tools`
+- prompt example: `use the company research exa tool to find me information about OpenAI`
+
+---
+
+## Command Reference
+
+| Command | Purpose |
+|---------|---------|
+| `truffile models` | List models on connected Truffle |
+| `truffile chat` | Start interactive chat REPL |
+
+---
