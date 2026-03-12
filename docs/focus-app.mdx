@@ -1,0 +1,197 @@
+---
+title: Build a Foreground App
+description: "Give your Truffle MCP tools it can call on demand"
+---
+
+Foreground apps are MCP servers. They expose tools that Truffle can call during active tasks.
+
+<Warning>
+Foreground apps on Truffle must serve MCP over `streamable-http`. `stdio` transport is not supported for deployed foreground apps.
+</Warning>
+
+If you are new to MCP itself, read the protocol docs here:
+
+- [Model Context Protocol Documentation](https://modelcontextprotocol.io/docs)
+
+<Note>
+Truffle foreground apps currently support the MCP tool surface (tool registration and tool invocation over streamable HTTP). Full MCP features are still work in progress
+</Note>
+
+### Coming Soon
+
+- Additional MCP assets: resources, prompts, files, and skills
+- Tool icons and richer tool metadata
+- Read-only tool semantics
+- Tool-driven user elicitation (requesting user input from a tool flow)
+- Expanded authentication and session handling for stateful MCP servers
+
+---
+
+## What We Are Building
+
+This walkthrough uses the Kalshi foreground service:
+
+- source: [`app-store/kalshi/kalshi_foreground.py`](https://github.com/deepshard/truffile/blob/main/app-store/kalshi/kalshi_foreground.py)
+- config: [`app-store/kalshi/truffile.yaml`](https://github.com/deepshard/truffile/blob/main/app-store/kalshi/truffile.yaml) (`metadata.foreground.process`)
+- app source repo: [`app-store/kalshi`](https://github.com/deepshard/truffile/tree/main/app-store/kalshi)
+
+It exposes callable tools like:
+
+- `get_markets`
+- `get_market`
+- `get_positions`
+- `create_order`
+- `cancel_order`
+- `kalshi_health`
+
+These are regular Python functions decorated as MCP tools with clear descriptions and typed parameters.
+
+---
+
+## Step 1: Foreground Config in `truffile.yaml`
+
+```yaml
+metadata:
+  name: Kalshi
+  bundle_id: org.deepshard.kalshi
+  description: |
+    Have Truffle trade and monitor Kalshi prediction markets for you.
+  icon_file: ./icon.png
+
+  foreground:
+    process:
+      cmd:
+        - python
+        - kalshi_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        KALSHI_API_KEY: "REPLACE_WITH_KALSHI_API_KEY"
+        KALSHI_PRIVATE_KEY: |
+          REPLACE_WITH_KALSHI_PRIVATE_KEY_PEM
+
+steps:
+  - name: Install dependencies
+    type: bash
+    run: |
+      apk add --no-cache gcc musl-dev libffi-dev openssl-dev
+      pip install --no-cache-dir "httpx>=0.27.0" "cryptography>=42.0.0"
+  - name: Copy application files
+    type: files
+    files:
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./client.py
+        destination: ./client.py
+      - source: ./kalshi_foreground.py
+        destination: ./kalshi_foreground.py
+```
+
+Use literal block style (`|`) for multiline secrets like PEM keys.
+
+---
+
+## Step 2: MCP Server Bootstrap Pattern
+
+Kalshi foreground uses this runtime pattern:
+
+```python
+from app_runtime.mcp import create_mcp_server, run_mcp_server
+
+mcp = create_mcp_server("kalshi")
+
+@mcp.tool("get_market", description="Get details for a specific market ticker.")
+async def get_market(ticker: str) -> dict:
+    ...
+
+def main() -> None:
+    run_mcp_server(mcp, logger)
+```
+
+`create_mcp_server(...)` and `run_mcp_server(...)` are the Truffle app runtime wrappers used by foreground apps.
+
+---
+
+## Step 3: Tool Design Guidance (from Kalshi)
+
+Kalshi tools follow a useful pattern worth copying:
+
+1. Validate inputs early (`limit`, `depth`, enum-like args).
+2. Return structured success/error payloads, not plain strings.
+3. Keep tool descriptions explicit so the model can route correctly.
+4. Report auth/runtime issues using runtime error reporting where needed.
+
+Example tools in Kalshi:
+
+- read path: `get_markets`, `get_market`, `get_orderbook`, `get_positions`
+- write path: `create_order`, `cancel_order`, `batch_cancel_orders`
+- health path: `kalshi_health`
+
+---
+
+## Step 4: Test MCP Tools in Chat Before Deploy
+
+You can test your MCP server with Truffle chat before shipping app changes.
+
+1. Start chat:
+
+```bash
+truffile chat
+```
+
+2. Connect your MCP endpoint:
+
+- local MCP example:
+  - `/mcp connect http://127.0.0.1:8000/mcp`
+- hosted MCP example (Exa):
+  - `/mcp connect https://mcp.exa.ai/mcp?exaApiKey=<EXA_API_KEY>&tools=web_search_exa,web_search_advanced_exa,get_code_context_exa,crawling_exa,company_research_exa,people_search_exa,deep_researcher_start,deep_researcher_check`
+
+3. Verify tool discovery:
+
+- `/mcp tools`
+
+4. Run a real tool-routing prompt:
+
+- `use the company research exa tool to find me information about SpaceX`
+
+This is the fastest way to validate tool schemas/descriptions and model routing behavior before deploying your foreground app package.
+
+<Warning>
+Do not commit or publish real API keys in docs, screenshots, logs, or recordings.
+</Warning>
+
+---
+
+## Step 5: Connection Lifecycle and Cleanup
+
+Kalshi foreground keeps a shared API client and closes it on shutdown:
+
+- `atexit.register(_cleanup)`
+- `_cleanup()` calls `await _api.close()`
+
+This matters in production. Explicitly closing connections before process exit prevents shutdown instability and reduces the chance of container runtime errors.
+
+---
+
+## Step 6: Deploy and Test
+
+```bash
+truffile validate ./app-store/kalshi
+truffile deploy --dry-run ./app-store/kalshi
+truffile deploy ./app-store/kalshi
+```
+
+After deploy, run a task that requires market data or order actions and verify Truffle is invoking the foreground tools.
+
+---
+
+## When to Use Foreground
+
+Use foreground apps when you need:
+
+- request/response tools invoked during a task
+- deterministic API integrations the model can call on demand
+- low-latency, operation-style behaviors (search, lookup, actions)
+
+## Note
+- Remember tool descriptions are very important, follow good practice and add tool descriptions with explination fo each parameter and example usage, this helps your Truffle in calling tools!

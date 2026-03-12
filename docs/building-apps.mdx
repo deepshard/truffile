@@ -1,0 +1,161 @@
+---
+title: What are Truffle Apps?
+---
+
+## What Are Truffle Apps?
+
+Truffle apps are containerized programs that run on your Truffle and extend what the agent on your Truffle can do.
+
+There are three app shapes you can build today:
+
+| Type | When It Runs | What It Does |
+|------|--------------|--------------|
+| **Foreground** | On demand | Exposes MCP tools (served over `streamable-http`) the agent can call during tasks |
+| **Background** | On schedule | Submits context to the proactive agent |
+| **Both** | On demand + schedule | Combines MCP tools and scheduled context submission |
+
+<CardGroup cols={2}>
+  <Card title="Kalshi Example (FG + BG)" icon="github" href="https://github.com/deepshard/truffile/tree/main/app-store/kalshi">
+    Full example app using both foreground tools and background scheduling.
+  </Card>
+  <Card title="Reddit Example (BG)" icon="github" href="https://github.com/deepshard/truffile/tree/main/app-store/reddit">
+    Background-only example that submits periodic context.
+  </Card>
+</CardGroup>
+
+---
+
+## App Config Shape (Current)
+
+The current SDK supports app-specific foreground/background process blocks under `metadata`.
+An app can have both or either!
+
+```yaml
+metadata:
+  name: Kalshi
+  bundle_id: org.deepshard.kalshi
+  description: |
+    Have Truffle trade and monitor Kalshi prediction markets for you.
+  icon_file: ./icon.png
+
+  background:
+    process:
+      cmd: ["python", "kalshi_background.py"]
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        KALSHI_API_KEY: "REPLACE_WITH_KALSHI_API_KEY"
+        KALSHI_PRIVATE_KEY: |
+          REPLACE_WITH_KALSHI_PRIVATE_KEY_PEM
+    default_schedule:
+      type: interval
+      interval:
+        duration: 30m
+        schedule:
+          daily_window: "00:00-23:59"
+
+  foreground:
+    process:
+      cmd: ["python", "kalshi_foreground.py"]
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        KALSHI_API_KEY: "REPLACE_WITH_KALSHI_API_KEY"
+        KALSHI_PRIVATE_KEY: |
+          REPLACE_WITH_KALSHI_PRIVATE_KEY_PEM
+
+steps:
+  - name: Install dependencies
+    type: bash
+    run: |
+      apk add --no-cache gcc musl-dev libffi-dev openssl-dev
+      pip install --no-cache-dir "httpx>=0.27.0" "cryptography>=42.0.0"
+  - name: Copy application files
+    type: files
+    files:
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./client.py
+        destination: ./client.py
+      - source: ./bg_worker.py
+        destination: ./bg_worker.py
+      - source: ./kalshi_foreground.py
+        destination: ./kalshi_foreground.py
+      - source: ./kalshi_background.py
+        destination: ./kalshi_background.py
+```
+
+---
+
+## Build and Deploy Flow
+
+Use this flow for all app types:
+
+1. Validate config and source files.
+2. Check deploy plan without mutating device.
+3. Deploy via builder session.
+
+```bash
+truffile validate ./my-app
+truffile deploy --dry-run ./my-app
+truffile deploy ./my-app
+```
+
+Under the hood, deploy uses a build session, uploads declared files, runs `bash` steps, and finalizes app metadata/process config.
+
+---
+
+## Kalshi Walkthrough:
+
+Kalshi is the best reference because it demonstrates both paths in one app:
+
+- `kalshi_foreground.py` exposes MCP tools such as `get_markets`, `get_market`, `create_order`, and `get_positions`.
+- `kalshi_background.py` runs on schedule and submits portfolio/market context through `ctx.bg.submit_context(...)`.
+
+This is the intended split:
+
+- **Foreground** is your callable tool surface (MCP spec).
+- **Background** is your proactive context pipeline.
+
+The quality of your background context directly affects proactive behavior. Rich, precise submissions perform better than generic text.
+
+---
+
+## Runtime Stability Pattern (Important)
+
+In Kalshi, network clients are explicitly closed on shutdown:
+
+- foreground: `atexit.register(_cleanup)` calls `KalshiClient.close()`
+- background: `atexit.register(_cleanup)` closes the worker client and event loop
+
+Do this in your own apps. Closing outbound clients/sessions before process exit prevents flaky shutdown behavior and avoids container-side runtime crashes.
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build a Foreground App" icon="bullseye" href="/sdk/focus-app">
+    MCP tool server patterns, examples, and deployment details.
+  </Card>
+  <Card title="Build a Background App" icon="clock" href="/sdk/ambient-app">
+    Scheduling, context submission, and proactivity-oriented design.
+  </Card>
+</CardGroup>
+
+---
+
+## Contribute to the Truffle App Store
+
+Contributors are welcome to submit apps to the Truffle App Store.
+
+To submit your app:
+
+1. Open a PR with your app under the `app-store/` folder.
+2. Include a screen recording of your app in action.
+
+For accepted apps, the Truffle team will deploy the app to the App Store so others can use it. Your name can be credited as the app author. In some cases, changes may be required for runtime reliability.
+
+<Frame>
+  <img src="/images/app-store.png" alt="Example app card in Truffle App Store with author attribution" />
+</Frame>

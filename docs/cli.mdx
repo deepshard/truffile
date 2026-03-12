@@ -1,0 +1,250 @@
+---
+title: Truffile CLI
+description: "Connect to your Truffle and deploy apps using the truffile CLI"
+---
+
+## Overview
+
+The truffile CLI lets you discover, connect to, and deploy apps to your Truffle devices.
+
+```bash
+truffile
+```
+
+```
+🍄‍🟫 truffile - TruffleOS SDK
+
+Usage: truffile <command> [options]
+
+Commands:
+  scan                      Scan network for Truffle devices
+  connect <device>         Connect to a Truffle device
+  disconnect <device|all>  Disconnect and clear credentials
+  deploy [path]            Deploy an app (reads type from truffile.yaml)
+  validate [path]          Validate app config and files
+  delete                   Delete installed apps from device
+  list <apps|devices>      List installed apps or devices
+  models                   List models on your Truffle
+  chat                     Chat on your Truffle (REPL)
+```
+
+---
+
+## Connecting to Your Truffle
+
+### Step 1: Scan for Devices
+
+Find Truffle devices on your local network:
+
+```bash
+truffile scan
+```
+
+```
+✓ Scanning for Truffle devices (5s)
+
+Found 6 Truffle device(s):
+
+  1. truffle-6070 (192.168.1.109)
+  2. truffle-5970 (192.168.1.104)
+  3. truffle-6272 (192.168.1.32)
+  4. truffle-7280 (192.168.1.87)
+  5. truffle-0148 (192.168.1.60)
+  6. truffle-6239 (192.168.1.129)
+
+Select device to connect (1-6) or press Enter to cancel:
+```
+
+Select a device by entering its number.
+
+### Step 2: Enter Your User ID
+
+After selecting a device, you'll be prompted for your User ID:
+
+```
+✓ Resolving truffle-6272.local
+
+  Make sure you have:
+  • Onboarded with the Truffle app
+  • Your User ID from the recovery codes
+
+? Enter your User ID:
+```
+
+<Note>
+You can find your User ID in the **Settings → About** section of your Truffle desktop client.
+</Note>
+
+### Step 3: Approve the Connection
+
+After entering your User ID, you'll see:
+
+```
+✓ Connecting to device
+
+• Requesting authorization...
+  Please approve on your Truffle device
+⠋ Waiting for approval
+```
+
+A dialog will appear on your Truffle client asking you to approve the connection:
+
+<Frame>
+  <img src="/images/approve-connect.png" alt="Approve connection dialog" />
+</Frame>
+
+Click **Approve** to allow the connection.
+
+```
+✓ Waiting for approval
+
+✓ Connected to truffle-6272
+```
+
+### Reconnecting Later
+
+Once you've connected to a device, you can reconnect directly without scanning:
+
+```bash
+truffile connect truffle-6272
+```
+
+Your credentials are saved locally, so you won't need to re-enter your User ID or approve again.
+
+---
+
+## Disconnecting
+
+To disconnect from all devices and clear your saved credentials:
+
+```bash
+truffile disconnect all
+```
+
+<Warning>
+This will require you to go through the full connection process again (User ID + approval) the next time you want to connect.
+</Warning>
+
+To disconnect from a specific device:
+
+```bash
+truffile disconnect truffle-6272
+```
+
+---
+
+## Deploying Apps
+
+Once connected, you can deploy apps to your Truffle.
+
+<Note>
+If you haven't built an app yet, check out the [Building Apps](/sdk/building-apps) guide first.
+</Note>
+
+### Basic Deploy
+
+Deploy an app from the current directory:
+
+```bash
+truffile deploy
+```
+
+Or specify a path to your app folder:
+
+```bash
+truffile deploy ./my-app
+```
+
+truffile will:
+1. Validate your `truffile.yaml` configuration
+2. Check syntax for all Python files
+3. Resolve app runtime shape (**foreground**, **background**, or both)
+4. Upload files and run installation steps
+5. Register the app with your Truffle
+
+### Interactive Mode
+
+Deploy with an interactive terminal session for debugging:
+
+```bash
+truffile deploy -i
+```
+
+This uploads your files and opens a terminal inside your app's container. You can:
+- Test your app manually
+- Install additional dependencies
+- Debug issues in real-time
+
+<Tip>
+You can even install [Claude Code](https://claude.ai/code) inside the container to help fix or extend your app!
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+</Tip>
+
+Type `exit` or press `Ctrl+D` to finish the deploy.
+
+---
+
+## Listing Apps & Devices
+
+### List Installed Apps
+
+See all apps installed on your connected Truffle:
+
+```bash
+truffile list apps
+```
+
+### List Connected Devices
+
+See all devices you have saved credentials for:
+
+```bash
+truffile list devices
+```
+
+---
+
+## Inference Commands
+
+Inference commands available in CLI:
+
+```bash
+truffile models
+truffile chat
+```
+
+For `truffile chat`, runtime behavior is controlled inside REPL using slash commands (`/help`, `/config`, `/models`, `/attach`, `/reasoning`, `/mcp`, etc.).  
+Run `truffile chat` by itself and manage behavior in-session.
+See the [Inference](/sdk/inference) page for full command details.
+
+---
+
+## Command Reference
+
+| Command | Description |
+|---------|-------------|
+| `truffile` | Show help menu |
+| `truffile -h` | Show help menu |
+| `truffile scan` | Scan network for Truffle devices |
+| `truffile connect <device>` | Connect to a specific device |
+| `truffile disconnect <device>` | Disconnect from a specific device |
+| `truffile disconnect all` | Disconnect from all devices |
+| `truffile deploy` | Deploy app from current directory |
+| `truffile deploy <path>` | Deploy app from specified path |
+| `truffile deploy -i` | Deploy with interactive terminal |
+| `truffile validate [path]` | Validate app config and sources |
+| `truffile delete` | Delete installed apps from connected device |
+| `truffile list apps` | List installed apps |
+| `truffile list devices` | List connected devices |
+| `truffile models` | List models on connected device |
+| `truffile chat` | Start chat REPL |
+
+---
+
+## Next Steps
+
+- Ready to build your own apps? Check out the [Building Apps](/sdk/building-apps) guide.
+- Want to use your Truffle for AI inference? See the [Inference](/sdk/inference) guide.
