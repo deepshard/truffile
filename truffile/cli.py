@@ -78,6 +78,7 @@ REPL_COMMANDS = [
     "/exit",
     "/quit",
 ]
+SCAFFOLD_ICON_SOURCE_REL = Path("docs") / "Truffle.png"
 
 
 class Spinner:
@@ -337,6 +338,149 @@ def cmd_disconnect(args, storage: StorageService) -> int:
     return 0
 
 
+def _safe_app_slug(app_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", app_name.lower()).strip("_")
+    if not slug:
+        return "my_app"
+    if slug[0].isdigit():
+        return f"app_{slug}"
+    return slug
+
+
+def _sample_truffile_yaml(app_name: str, slug: str) -> str:
+    quoted_name = json.dumps(app_name)
+    return (
+        "metadata:\n"
+        f"  name: {quoted_name}\n"
+        f"  bundle_id: org.truffle.{slug.replace('_', '.')}\n"
+        "  description: |\n"
+        "    Describe what this app does.\n"
+        "  icon_file: ./icon.png\n"
+        "  foreground:\n"
+        "    process:\n"
+        "      cmd:\n"
+        "        - python\n"
+        f"        - {slug}_foreground.py\n"
+        "      working_directory: /\n"
+        "      environment:\n"
+        '        PYTHONUNBUFFERED: "1"\n'
+        "  background:\n"
+        "    process:\n"
+        "      cmd:\n"
+        "        - python\n"
+        f"        - {slug}_background.py\n"
+        "      working_directory: /\n"
+        "      environment:\n"
+        '        PYTHONUNBUFFERED: "1"\n'
+        "    default_schedule:\n"
+        "      type: interval\n"
+        "      interval:\n"
+        "        duration: 30m\n"
+        "        schedule:\n"
+        '          daily_window: "00:00-23:59"\n'
+        "\n"
+        "steps:\n"
+        "  - name: Copy application files\n"
+        "    type: files\n"
+        "    files:\n"
+        f"      - source: ./{slug}_foreground.py\n"
+        f"        destination: ./{slug}_foreground.py\n"
+        f"      - source: ./{slug}_background.py\n"
+        f"        destination: ./{slug}_background.py\n"
+    )
+
+
+def _sample_foreground_py() -> str:
+    return (
+        '"""Foreground app entrypoint (MCP-facing surface)."""\n'
+        "\n"
+        "def main() -> None:\n"
+        '    print(\"TODO: implement foreground MCP tool server\")\n'
+        "\n"
+        "\n"
+        "if __name__ == \"__main__\":\n"
+        "    main()\n"
+    )
+
+
+def _sample_background_py() -> str:
+    return (
+        '"""Background app entrypoint (scheduled context emitter)."""\n'
+        "\n"
+        "def main() -> None:\n"
+        '    print(\"TODO: implement background scheduled job\")\n'
+        "\n"
+        "\n"
+        "if __name__ == \"__main__\":\n"
+        "    main()\n"
+    )
+
+
+def cmd_create(args) -> int:
+    app_name = (args.name or "").strip()
+    if not app_name:
+        try:
+            app_name = input(f"{C.CYAN}?{C.RESET} App name: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return 0
+    if not app_name:
+        error("App name is required")
+        return 1
+    if "/" in app_name or "\\" in app_name:
+        error("App name cannot contain path separators")
+        return 1
+
+    base_dir: Path
+    if args.path:
+        base_dir = Path(args.path).expanduser().resolve()
+    else:
+        cwd = Path.cwd()
+        try:
+            raw = input(f"{C.CYAN}?{C.RESET} Base path [{cwd}]: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return 0
+        base_dir = Path(raw).expanduser().resolve() if raw else cwd
+
+    app_dir = base_dir / app_name
+    if app_dir.exists():
+        error(f"Target directory already exists: {app_dir}")
+        return 1
+
+    slug = _safe_app_slug(app_name)
+    fg_file = f"{slug}_foreground.py"
+    bg_file = f"{slug}_background.py"
+    sdk_root = Path(__file__).resolve().parents[1]
+    stock_icon_path = sdk_root / SCAFFOLD_ICON_SOURCE_REL
+    if not stock_icon_path.exists() or not stock_icon_path.is_file():
+        error(f"Stock icon not found: {stock_icon_path}")
+        return 1
+    if stock_icon_path.stat().st_size == 0:
+        error(f"Stock icon is empty: {stock_icon_path}")
+        return 1
+
+    try:
+        app_dir.mkdir(parents=True, exist_ok=False)
+        (app_dir / "truffile.yaml").write_text(_sample_truffile_yaml(app_name, slug), encoding="utf-8")
+        (app_dir / fg_file).write_text(_sample_foreground_py(), encoding="utf-8")
+        (app_dir / bg_file).write_text(_sample_background_py(), encoding="utf-8")
+        (app_dir / "icon.png").write_bytes(stock_icon_path.read_bytes())
+    except Exception as exc:
+        error(f"Failed to scaffold app: {exc}")
+        return 1
+
+    success(f"Created app scaffold: {app_dir}")
+    print(f"  {C.DIM}Files:{C.RESET}")
+    print(f"  {C.DIM}{ARROW} truffile.yaml{C.RESET}")
+    print(f"  {C.DIM}{ARROW} {fg_file}{C.RESET}")
+    print(f"  {C.DIM}{ARROW} {bg_file}{C.RESET}")
+    print(f"  {C.DIM}{ARROW} icon.png{C.RESET}")
+    print()
+    print(f"  {C.DIM}Next:{C.RESET} truffile validate {app_dir}")
+    return 0
+
+
 async def cmd_deploy(args, storage: StorageService) -> int:
     app_path = args.path if args.path else "."
     app_dir = Path(app_path).resolve()
@@ -355,6 +499,19 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     
     for w in warnings:
         warn(w)
+
+    metadata = config.get("metadata", {}) if isinstance(config, dict) else {}
+    icon_file = metadata.get("icon_file") if isinstance(metadata, dict) else None
+    if not isinstance(icon_file, str) or not icon_file.strip():
+        error("Deploy requires metadata.icon_file in truffile.yaml")
+        return 1
+    deploy_icon_path = app_dir / icon_file
+    if not deploy_icon_path.exists() or not deploy_icon_path.is_file():
+        error(f"Deploy requires an icon file; not found: {icon_file}")
+        return 1
+    if deploy_icon_path.stat().st_size == 0:
+        error(f"Deploy requires a non-empty icon file: {icon_file}")
+        return 1
 
     if dry_run:
         try:
@@ -1025,7 +1182,8 @@ class ChatMCPClient:
         try:
             await group.connect_to_server(StreamableHttpParameters(url=endpoint))
         except Exception:
-            await group.__aexit__(None, None, None)
+            with contextlib.suppress(Exception):
+                await group.__aexit__(None, None, None)
             raise
         self._group = group
         self.endpoint = endpoint
@@ -1034,43 +1192,62 @@ class ChatMCPClient:
         if self._group is None:
             self.endpoint = None
             return
-        await self._group.__aexit__(None, None, None)
+        group = self._group
         self._group = None
         self.endpoint = None
+        with contextlib.suppress(Exception):
+            await group.__aexit__(None, None, None)
 
     def list_tool_names(self) -> list[str]:
         if self._group is None:
             return []
-        return sorted(self._group.tools.keys())
-
-    def build_openai_tools(self) -> list[dict[str, Any]]:
-        if self._group is None:
-            return []
-        out: list[dict[str, Any]] = []
-        for name, tool in sorted(self._group.tools.items(), key=lambda kv: kv[0]):
-            params = tool.inputSchema if isinstance(tool.inputSchema, dict) else {"type": "object", "properties": {}}
-            out.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": str(tool.description or f"MCP tool {name}"),
-                        "parameters": params,
-                    },
-                }
-            )
-        return out
+        names: list[str] = []
+        for _server_name, tool in self._group.list_tools():
+            name = getattr(tool, "name", None)
+            if isinstance(name, str):
+                names.append(name)
+        return sorted(set(names))
 
     def has_tool(self, name: str) -> bool:
         if self._group is None:
             return False
-        return name in self._group.tools
+        try:
+            tool = self._group.get_tool(name)
+            return tool is not None
+        except Exception:
+            return False
+
+    def build_openai_tools(self) -> list[dict[str, Any]]:
+        if self._group is None:
+            return []
+        tools: list[dict[str, Any]] = []
+        for _server_name, tool in self._group.list_tools():
+            name = getattr(tool, "name", None)
+            if not isinstance(name, str) or not name:
+                continue
+            description = str(getattr(tool, "description", "") or "")
+            schema = getattr(tool, "inputSchema", None)
+            if not isinstance(schema, dict):
+                schema = {"type": "object", "properties": {}}
+            if schema.get("type") != "object":
+                schema = {"type": "object", "properties": {}}
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": schema,
+                    },
+                }
+            )
+        return tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._group is None:
             return {"error": "mcp not connected"}
         try:
-            result = await self._group.call_tool(name=name, arguments=arguments)
+            result = await self._group.call_tool(name, arguments)
             content: list[dict[str, Any]] = []
             for part in result.content:
                 if hasattr(part, "model_dump"):
@@ -1809,7 +1986,7 @@ async def cmd_chat(args, storage: StorageService) -> int:
                         pending_image_desc = None
                         print(f"{C.YELLOW}history reset (and cleared pending attachment){C.RESET}")
                         continue
-                    if line == "/models":
+                    if line in {"/models", "/model"}:
                         try:
                             models = _fetch_models_payload(client, ip)
                             selected_model = _pick_model_interactive(models, settings.model)
@@ -2187,6 +2364,7 @@ def print_help():
     print(f"  {C.BLUE}scan{C.RESET}                      Scan network for Truffle devices")
     print(f"  {C.BLUE}connect{C.RESET} <device>         Connect to a Truffle device")
     print(f"  {C.BLUE}disconnect{C.RESET} <device|all>  Disconnect and clear credentials")
+    print(f"  {C.BLUE}create{C.RESET} [name]           Create a new app scaffold")
     print(f"  {C.BLUE}deploy{C.RESET} [path]            Deploy an app (reads type from truffile.yaml)")
     print(f"  {C.BLUE}validate{C.RESET} [path]          Validate app config and files")
     print(f"  {C.BLUE}delete{C.RESET}                    Delete installed apps from device")
@@ -2197,6 +2375,8 @@ def print_help():
     print(f"{C.BOLD}Examples:{C.RESET}")
     print(f"  {C.DIM}truffile scan{C.RESET}                {C.DIM}# find devices on network{C.RESET}")
     print(f"  {C.DIM}truffile connect truffle-6272{C.RESET}")
+    print(f"  {C.DIM}truffile create my-app{C.RESET}")
+    print(f"  {C.DIM}truffile create{C.RESET}              {C.DIM}# prompts for app name + path{C.RESET}")
     print(f"  {C.DIM}truffile deploy ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile deploy --dry-run ./my-app{C.RESET}")
     print(f"  {C.DIM}truffile deploy{C.RESET}              {C.DIM}# uses current directory{C.RESET}")
@@ -2230,6 +2410,11 @@ def main() -> int:
 
     p_disconnect = subparsers.add_parser("disconnect", add_help=False)
     p_disconnect.add_argument("target", nargs="?")
+
+    p_create = subparsers.add_parser("create", add_help=False)
+    p_create.add_argument("name", nargs="?")
+    p_create.add_argument("--path", "-p", help="Base directory (default: prompt, Enter uses cwd)")
+
 
     p_deploy = subparsers.add_parser("deploy", add_help=False)
     p_deploy.add_argument("path", nargs="?", default=".")
@@ -2278,6 +2463,8 @@ def main() -> int:
         return run_async(cmd_connect(args, storage))
     elif args.command == "disconnect":
         return cmd_disconnect(args, storage)
+    elif args.command == "create":
+        return cmd_create(args)
     elif args.command == "delete":
         return run_async(cmd_delete(args, storage))
     elif args.command == "deploy":
