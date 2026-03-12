@@ -50,3 +50,4 @@ include = ["truffile*", "truffle*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.pyi", "py.typed"]
+"truffile" = ["assets/*.png"]
