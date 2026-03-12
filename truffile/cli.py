@@ -860,10 +860,10 @@ async def _default_model(ip: str) -> str | None:
         models = payload.get("data", [])
         if not isinstance(models, list) or not models:
             return None
+        # sort models by name/id so default is 35b typically & list is consistent
+        models.sort(key=lambda m: str(m.get("name") or m.get("id") or m.get("uuid") or ""))
         first = models[0]
-        if not isinstance(first, dict):
-            return None
-        return str(first.get("uuid") or first.get("id") or "")
+        return str(first.get("id") or first.get("uuid") or "")
     except Exception:
         return None
 
@@ -990,17 +990,27 @@ def _fetch_models_payload(client: httpx.Client, ip: str) -> list[dict[str, Any]]
     for m in raw:
         if isinstance(m, dict):
             out.append(m)
+    try:
+        out.sort(key=lambda m: str(m.get("name") or m.get("id") or m.get("uuid") or ""))
+    except Exception:        pass
+
     return out
 
+
+DEFAULT_SYSTEM_PROMPT = """You are an assistant running on a Truffle device via the SDK's CLI.
+If the user is confused why you are not their regular assistant, explain that you are a special CLI for testing and development.
+Overall, just create an engaging and interesting experience for the user, match their vibe and tone. 
+Generally a chat / question type session unless otherwise specified. Use tools only if requested or clearly appropriate.
+"""
 
 @dataclass
 class ChatSettings:
     model: str
-    system_prompt: str | None = None
+    system_prompt: str | None = DEFAULT_SYSTEM_PROMPT
     reasoning: bool = True
     stream: bool = True
     json_mode: bool = False
-    max_tokens: int = 512
+    max_tokens: int = 2048
     temperature: float | None = None
     top_p: float | None = None
     default_tools: bool = True
@@ -1567,8 +1577,7 @@ def _run_single_chat_request(
                         content_chunk = delta.get("content")
                         if isinstance(content_chunk, str) and content_chunk:
                             content_parts.append(content_chunk)
-                            if not settings.reasoning:
-                                print(content_chunk, end="", flush=True)
+                            print(content_chunk, end="", flush=True)
 
                         for tc in delta.get("tool_calls") or []:
                             if not isinstance(tc, dict):
@@ -1680,7 +1689,12 @@ async def _run_chat_turn(
         )
         messages.append(assistant_msg)
         if isinstance(usage, dict):
-            print(f"{C.DIM}[usage] {usage}{C.RESET}")
+            image_tokens = usage.get("image_tokens") or 0
+            image_tokens_part = f", image: {image_tokens}" if image_tokens else ""
+            image_tps_part = f", image tps: {usage.get('image_tokens_per_second') or ''}" if image_tokens else ""
+            print(
+                f"{C.DIM}[usage] tokens(prompt: {usage.get('prompt_tokens') or ''}, completion: {usage.get('completion_tokens') or ''}, total: {usage.get('total_tokens') or ''}{image_tokens_part}) usage(decode tps: {usage.get('decode_tokens_per_second') or ''}, prefill tps: {usage.get('prefill_tokens_per_second') or ''}{image_tps_part}) itl: {usage.get('itl_ms') or ''}ms ttft: {usage.get('ttft_ms') or ''}ms{C.RESET}"
+            )
         if interrupted:
             return 130
 
@@ -2247,7 +2261,7 @@ def main() -> int:
     p_models = subparsers.add_parser("models", add_help=False)
     
     p_chat = subparsers.add_parser("chat", add_help=False)
-    
+    p_chat.add_argument("prompt_words", nargs="*", help="Optional initial prompt to send (for non-REPL mode)")
     args = parser.parse_args()
 
     if args.command is None:
