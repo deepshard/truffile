@@ -51,6 +51,7 @@ In practice:
 ```bash
 truffile scan
 truffile connect <device>
+truffile create [app_name]
 truffile validate [app_dir]
 truffile deploy [app_dir]
 truffile deploy --dry-run [app_dir]
@@ -59,6 +60,12 @@ truffile delete
 truffile models
 truffile chat
 ```
+
+`truffile create` scaffolds a hybrid app starter with:
+- `truffile.yaml` (foreground + background process config)
+- copy-file steps for generated `*_foreground.py` and `*_background.py`
+- `icon.png` copied from `docs/Truffle.png` (deploy requires an icon)
+
 
 In `truffile chat`, runtime controls are slash commands (not launch flags):
 
