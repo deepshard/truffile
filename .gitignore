@@ -3,6 +3,5 @@
 __pycache__/
 .DS_Store
 dist
-docs
 whatsapp/
 docs-repo/

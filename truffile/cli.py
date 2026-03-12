@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import re
+from importlib import resources as importlib_resources
 import select
 import signal
 import socket
@@ -78,7 +79,7 @@ REPL_COMMANDS = [
     "/exit",
     "/quit",
 ]
-SCAFFOLD_ICON_SOURCE_REL = Path("docs") / "Truffle.png"
+SCAFFOLD_ICON_RESOURCE_REL = Path("assets") / "Truffle.png"
 
 
 class Spinner:
@@ -416,6 +417,25 @@ def _sample_background_py() -> str:
     )
 
 
+def _load_stock_icon_bytes() -> tuple[bytes | None, str]:
+    try:
+        resource_file = importlib_resources.files("truffile").joinpath(str(SCAFFOLD_ICON_RESOURCE_REL))
+        icon_bytes = resource_file.read_bytes()
+        return icon_bytes, f"truffile/{SCAFFOLD_ICON_RESOURCE_REL.as_posix()}"
+    except Exception:
+        pass
+
+    local_package_path = Path(__file__).resolve().parent / SCAFFOLD_ICON_RESOURCE_REL
+    if local_package_path.exists() and local_package_path.is_file():
+        return local_package_path.read_bytes(), str(local_package_path)
+
+    legacy_docs_path = Path(__file__).resolve().parents[1] / "docs" / "Truffle.png"
+    if legacy_docs_path.exists() and legacy_docs_path.is_file():
+        return legacy_docs_path.read_bytes(), str(legacy_docs_path)
+
+    return None, f"truffile/{SCAFFOLD_ICON_RESOURCE_REL.as_posix()}"
+
+
 def cmd_create(args) -> int:
     app_name = (args.name or "").strip()
     if not app_name:
@@ -451,13 +471,12 @@ def cmd_create(args) -> int:
     slug = _safe_app_slug(app_name)
     fg_file = f"{slug}_foreground.py"
     bg_file = f"{slug}_background.py"
-    sdk_root = Path(__file__).resolve().parents[1]
-    stock_icon_path = sdk_root / SCAFFOLD_ICON_SOURCE_REL
-    if not stock_icon_path.exists() or not stock_icon_path.is_file():
-        error(f"Stock icon not found: {stock_icon_path}")
+    stock_icon_bytes, stock_icon_source = _load_stock_icon_bytes()
+    if stock_icon_bytes is None:
+        error(f"Stock icon not found: {stock_icon_source}")
         return 1
-    if stock_icon_path.stat().st_size == 0:
-        error(f"Stock icon is empty: {stock_icon_path}")
+    if len(stock_icon_bytes) == 0:
+        error(f"Stock icon is empty: {stock_icon_source}")
         return 1
 
     try:
@@ -465,7 +484,7 @@ def cmd_create(args) -> int:
         (app_dir / "truffile.yaml").write_text(_sample_truffile_yaml(app_name, slug), encoding="utf-8")
         (app_dir / fg_file).write_text(_sample_foreground_py(), encoding="utf-8")
         (app_dir / bg_file).write_text(_sample_background_py(), encoding="utf-8")
-        (app_dir / "icon.png").write_bytes(stock_icon_path.read_bytes())
+        (app_dir / "icon.png").write_bytes(stock_icon_bytes)
     except Exception as exc:
         error(f"Failed to scaffold app: {exc}")
         return 1
