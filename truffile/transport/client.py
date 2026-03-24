@@ -27,6 +27,8 @@ from truffle.app.app_pb2 import App
 from truffle.app.background_pb2 import BackgroundApp, BackgroundAppRuntimePolicy
 from truffile.schedule import parse_runtime_policy
 
+GRPC_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
 
 def get_client_metadata() -> ClientMetadata:
     from truffile import __version__
@@ -82,7 +84,13 @@ class TruffleClient:
         return [("session", self.token)]
 
     async def connect(self, timeout: float = 15.0):
-        self.channel = aio.insecure_channel(self.address)
+        self.channel = aio.insecure_channel(
+            self.address,
+            options=[
+                ("grpc.max_receive_message_length", GRPC_MAX_MESSAGE_BYTES),
+                ("grpc.max_send_message_length", GRPC_MAX_MESSAGE_BYTES),
+            ],
+        )
         await asyncio.wait_for(self.channel.channel_ready(), timeout=timeout)
         self.stub = TruffleOSStub(self.channel)
 
