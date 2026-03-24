@@ -1,0 +1,87 @@
+metadata:
+  name: ArXiv
+  bundle_id: org.deepshard.arxiv
+  description: |
+    Search arXiv research papers, read downloaded papers, and get background recommendations.
+  icon_file: ./icon.png
+  background:
+    process:
+      cmd:
+        - python
+        - arxiv_background.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+    default_schedule:
+      type: interval
+      interval:
+        duration: 30m
+        prod_duration: 60m
+        daily_window: "00:00-23:59"
+  foreground:
+    process:
+      cmd:
+        - python
+        - arxiv_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+
+steps:
+  - name: Install Python dependencies
+    type: bash
+    run: |
+      pip install --no-cache-dir \
+        "arxiv>=2.1.0" \
+        "httpx>=0.24.0" \
+        "python-dateutil>=2.8.2" \
+        "pypdf>=5.0.0"
+
+  - name: Copy application files
+    type: files
+    files:
+      - source: ./arxiv_common.py
+        destination: ./arxiv_common.py
+      - source: ./arxiv_tools.py
+        destination: ./arxiv_tools.py
+      - source: ./arxiv_bg_worker.py
+        destination: ./arxiv_bg_worker.py
+      - source: ./arxiv_foreground.py
+        destination: ./arxiv_foreground.py
+      - source: ./arxiv_background.py
+        destination: ./arxiv_background.py
+
+  - name: Configure research interests
+    type: text
+    ui_state_on_show: user_interaction_ready
+    ui_state_on_complete: move_to_background
+    content: |
+      Tell Truffle what research areas you care about.
+
+      The background worker will use these interests to find relevant papers and
+      submit context recommending which papers the model should summarize.
+
+      Examples:
+      - multi-agent systems, reinforcement learning, LLM safety
+      - cs.AI, cs.LG, retrieval augmented generation
+      - diffusion models, interpretability, robustness
+    fields:
+      - name: research_interests
+        label: Research Interests (comma-separated)
+        type: text
+        placeholder: multi-agent systems, reinforcement learning, LLM safety
+        env: ARXIV_RESEARCH_INTERESTS
+    validator:
+      type: bash
+      run: |
+        python ./arxiv_background.py --verify
+      timeout: 60
+      error_message: |
+        Please enter at least one research interest (comma-separated).
+
+  - name: Finalize installation
+    type: bash
+    run: |
+      mkdir -p /root/.arxiv-mcp-server/papers
+      mkdir -p /root/.arxiv-truffle
+      echo "ArXiv MCP installation complete!"
