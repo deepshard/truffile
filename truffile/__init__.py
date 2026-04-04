@@ -27,6 +27,33 @@ except ImportError:
 from .client import TruffleClient, ExecResult, UploadResult, resolve_mdns, NewSessionStatus
 from .schedule import parse_runtime_policy
 
+try:
+    from .sdk import (
+        ForegroundApp,
+        BackgroundWorkerApp,
+        tool,
+        ok,
+        err,
+        OAuth,
+        AppHarness,
+        ToolSpec,
+    )
+
+    # register app_runtime as an alias for truffile.app_runtime
+    # so old apps using "from app_runtime import ..." still work
+    # when only truffile is installed (no standalone app_runtime)
+    import truffile.app_runtime as _app_runtime
+    if "app_runtime" not in sys.modules:
+        sys.modules["app_runtime"] = _app_runtime
+        # register submodules so deep imports work too
+        for _submod in ("background", "mcp", "abrasive", "browser", "browser.web_fingerprint"):
+            _full = f"truffile.app_runtime.{_submod}"
+            _alias = f"app_runtime.{_submod}"
+            if _full in sys.modules and _alias not in sys.modules:
+                sys.modules[_alias] = sys.modules[_full]
+except ImportError:
+    pass
+
 __all__ = [
     "__version__",
     "TruffleClient",
@@ -35,4 +62,12 @@ __all__ = [
     "resolve_mdns",
     "NewSessionStatus",
     "parse_runtime_policy",
+    "ForegroundApp",
+    "BackgroundWorkerApp",
+    "tool",
+    "ok",
+    "err",
+    "OAuth",
+    "AppHarness",
+    "ToolSpec",
 ]
