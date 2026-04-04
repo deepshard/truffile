@@ -4,11 +4,6 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      include_internal:
-        description: 'include internal modules'
-        type: boolean
-        default: false
 
 jobs:
   build:
@@ -23,8 +18,7 @@ jobs:
           ssh-private-key: ${{ secrets.PYFW_DEPLOY_KEY }}
 
       - name: clone pyfw
-        run: |
-          git clone --depth 1 git@github.com:deepshard/pyfw.git _pyfw
+        run: git clone --depth 1 git@github.com:deepshard/pyfw.git _pyfw
 
       - uses: actions/setup-python@v5
         with:
@@ -34,12 +28,7 @@ jobs:
         run: pip install grpcio-tools==1.76.0 protobuf>=6.30.0 googleapis-common-protos>=1.63.2 build setuptools-scm
 
       - name: build package
-        run: |
-          ARGS="--pyfw-path ./_pyfw"
-          if [ "${{ inputs.include_internal }}" = "true" ]; then
-            ARGS="$ARGS --include-internal"
-          fi
-          python scripts/build_package.py $ARGS
+        run: python scripts/build_package.py --pyfw-path ./_pyfw
 
       - name: build wheel
         run: python -m build
