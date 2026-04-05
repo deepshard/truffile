@@ -1,0 +1,45 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: webfactory/ssh-agent@v0.9.0
+        if: runner.os != 'Windows'
+        with:
+          ssh-private-key: ${{ secrets.PYFW_DEPLOY_KEY }}
+
+      - name: clone pyfw
+        if: runner.os != 'Windows'
+        run: git clone --depth 1 git@github.com:deepshard/pyfw.git _pyfw
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: install deps
+        run: |
+          pip install grpcio-tools==1.76.0 protobuf>=6.30.0 googleapis-common-protos>=1.63.2 pytest
+          pip install -e .
+
+      - name: build package
+        if: runner.os != 'Windows'
+        run: python scripts/build_package.py --pyfw-path ./_pyfw
+
+      - name: run tests
+        run: python -m pytest tests/ -v
+
+      - name: cleanup
+        if: always() && runner.os != 'Windows'
+        run: rm -rf _pyfw
