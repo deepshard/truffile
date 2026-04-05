@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from truffile.deploy.builder import (
+from truffile.deploy.plan import (
     build_deploy_plan,
     _normalize_cmd,
     _bundle_id_from_name,

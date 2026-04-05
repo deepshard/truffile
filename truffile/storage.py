@@ -50,6 +50,7 @@ class StorageService:
             "last_used_device": self.state.last_used_device,
             "client_user_id": self.state.client_user_id,
         }
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.state_file, "w") as f:
             json.dump(state_dict, f, indent=4)
 
