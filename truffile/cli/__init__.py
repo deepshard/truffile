@@ -46,6 +46,8 @@ def main() -> int:
     dep_p = sub.add_parser("deploy", help="deploy app to device")
     dep_p.add_argument("path", nargs="?", default=".")
     dep_p.add_argument("--shell", action="store_true")
+    dep_p.add_argument("--interactive", action="store_true")
+    dep_p.add_argument("--dry-run", action="store_true")
     dep_p.add_argument("--no-finalize", action="store_true")
 
     # list
