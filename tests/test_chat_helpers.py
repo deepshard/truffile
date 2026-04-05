@@ -6,8 +6,8 @@ import unittest
 def _import_chat():
     """lazy import to handle missing deps gracefully"""
     try:
-        from truffile.cli import chat
-        return chat
+        from truffile.cli import infer
+        return infer
     except ImportError:
         return None
 
