@@ -20,6 +20,7 @@ def run_async(coro):
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="truffile", add_help=False)
+    parser.add_argument("--resume", action="store_true", help="resume a previous task")
     sub = parser.add_subparsers(dest="command")
 
     # scan
@@ -61,22 +62,34 @@ def main() -> int:
     # models
     sub.add_parser("models", help="list inference models")
 
-    # chat
-    chat_p = sub.add_parser("chat", help="interactive chat")
-    chat_p.add_argument("--model", type=str, default=None)
-    chat_p.add_argument("--system", type=str, default=None)
-    chat_p.add_argument("--no-stream", action="store_true")
-    chat_p.add_argument("--no-tools", action="store_true")
-    chat_p.add_argument("--mcp", type=str, action="append", default=None)
+    # chat (agent runtime with apps)
+    chat_p = sub.add_parser("chat", help="agent chat with apps")
+    chat_p.add_argument("prompt", nargs="?", default=None)
+    chat_p.add_argument("--resume", action="store_true", help="resume a previous task")
+
+    # infer (raw model inference)
+    infer_p = sub.add_parser("infer", help="raw model inference")
+    infer_p.add_argument("--model", type=str, default=None)
+    infer_p.add_argument("--system", type=str, default=None)
+    infer_p.add_argument("--no-stream", action="store_true")
+    infer_p.add_argument("--no-tools", action="store_true")
+    infer_p.add_argument("--mcp", type=str, action="append", default=None)
 
     # help
     sub.add_parser("help", help="show help")
 
     args = parser.parse_args()
 
-    if args.command is None or args.command == "help":
+    if args.command == "help":
         print_help()
         return 0
+
+    if args.command is None:
+        from truffile.storage import StorageService
+        storage = StorageService()
+        from .chat import cmd_chat
+        from types import SimpleNamespace
+        return run_async(cmd_chat(SimpleNamespace(resume=args.resume, prompt=None), storage))
 
     from truffile.storage import StorageService
     storage = StorageService()
@@ -111,6 +124,9 @@ def main() -> int:
     elif args.command == "chat":
         from .chat import cmd_chat
         return run_async(cmd_chat(args, storage))
+    elif args.command == "infer":
+        from .infer import cmd_infer
+        return run_async(cmd_infer(args, storage))
 
     print_help()
     return 1
