@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from pathlib import Path
 from unittest.mock import Mock
 
 import truffile
@@ -36,7 +37,7 @@ def test_connect_sets_grpc_message_size_limits(monkeypatch):
 
 
 def test_init_prepends_repo_root_for_bundled_truffle(monkeypatch):
-    repo_root = "/Users/truffle/work/truffile"
+    repo_root = str(Path(truffile.__file__).resolve().parent.parent)
     monkeypatch.setattr(sys, "path", ["/tmp/external"])
 
     truffile._ensure_bundled_truffle_on_path()
