@@ -82,12 +82,9 @@ class TestBuildDefaultTools(unittest.TestCase):
 
 
 class TestReplCommands(unittest.TestCase):
-    def setUp(self):
-        self.chat = _import_chat()
-        if self.chat is None:
-            self.skipTest("chat module not importable")
-
     def test_commands_exist(self):
-        self.assertIn("/help", self.chat.REPL_COMMANDS)
-        self.assertIn("/exit", self.chat.REPL_COMMANDS)
-        self.assertIn("/mcp", self.chat.REPL_COMMANDS)
+        from truffile.cli.commands import INFER_COMMANDS
+        names = [c.name for c in INFER_COMMANDS]
+        self.assertIn("/help", names)
+        self.assertIn("/exit", names)
+        self.assertIn("/mcp", names)

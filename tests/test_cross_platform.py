@@ -30,19 +30,16 @@ class TestStoragePaths(unittest.TestCase):
 
 
 class TestTerminalDetection(unittest.TestCase):
-    def test_mushroom_disabled_when_not_tty(self):
-        from truffile.cli.ui import MushroomPulse
-        with patch("sys.stdout") as mock_stdout:
-            mock_stdout.isatty.return_value = False
-            pulse = MushroomPulse("test")
-            self.assertFalse(pulse.enabled)
+    def test_particle_orb_creates(self):
+        from truffile.cli.ui import create_thinking_orb
+        orb = create_thinking_orb()
+        self.assertIsNotNone(orb)
 
-    def test_mushroom_enabled_when_tty(self):
-        from truffile.cli.ui import MushroomPulse
-        with patch("sys.stdout") as mock_stdout:
-            mock_stdout.isatty.return_value = True
-            pulse = MushroomPulse("test")
-            self.assertTrue(pulse.enabled)
+    def test_particle_orb_state_changes(self):
+        from truffile.cli.art import ParticleOrb
+        orb = ParticleOrb(num_particles=3)
+        orb.set_state(ParticleOrb.STATE_ACTIVE)
+        orb.set_state(ParticleOrb.STATE_DONE)
 
 
 class TestPathHandling(unittest.TestCase):

@@ -1,23 +1,10 @@
 [build-system]
-requires = [
-    "setuptools>=70",
-    "setuptools_scm>=8",
-    "wheel",
-    "grpcio-tools==1.76.0",
-    "protobuf>=6.30.0",
-    "googleapis-common-protos>=1.63.2",
-]
+requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools_scm]
-version_scheme = "guess-next-dev"
-local_scheme = "no-local-version"
-fallback_version = "0.1.dev0"
-version_file = "truffile/_version.py"
 
 [project]
 name = "truffile"
-dynamic = ["version"]
+version = "0.2.0"
 description = "truffile the TruffleOS SDK - Connect and deploy apps to Truffle devices"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,16 +21,15 @@ dependencies = [
     "websockets>=12.0",
     "zeroconf>=0.131.0",
     "mcp==1.26.0",
+    "prompt_toolkit>=3.0.43",
+    "rich>=14.3.2",
 ]
 
 [project.scripts]
 truffile = "truffile.cli:main"
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=9.0.2",
-    "grpcio-tools==1.76.0",
-]
+dev = ["pytest>=9.0.2"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -51,4 +37,4 @@ include = ["truffile*", "truffle*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.pyi", "py.typed"]
-"truffile" = ["assets/*.png"]
+"truffile" = ["assets/*.png", "assets/**/*"]

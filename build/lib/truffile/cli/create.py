@@ -158,7 +158,7 @@ def cmd_create(args) -> int:
 
     # OSC 8 clickable path (supported in iTerm2, VSCode, WezTerm, etc.)
     file_url = app_dir.as_uri()
-    link = f"\x1b]8;;{file_url}\a{app_dir}\x1b]8;;\a"
+    link = f"\x1b]8;;{file_url}\x1b\\{app_dir}\x1b]8;;\x1b\\"
     success(f"Created app scaffold: {link}")
     print(f"  {C.DIM}Files:{C.RESET}")
     print(f"  {C.DIM}{ARROW} truffile.yaml{C.RESET}")
