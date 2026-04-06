@@ -108,18 +108,20 @@ async def deploy_with_builder(
 
     spinner = spinner_cls(f"Finishing as {plan['finish_label']} app")
     spinner.start()
-
-    await client.finish_app(
-        name=plan["name"],
-        bundle_id=plan["bundle_id"],
-        description=plan["description"],
-        icon=plan["icon_path"],
-        foreground=fg_payload,
-        background=bg_payload,
-        default_schedule=plan["default_schedule"],
-    )
-
-    spinner.stop(success=True)
+    try:
+        await client.finish_app(
+            name=plan["name"],
+            bundle_id=plan["bundle_id"],
+            description=plan["description"],
+            icon=plan["icon_path"],
+            foreground=fg_payload,
+            background=bg_payload,
+            default_schedule=plan["default_schedule"],
+        )
+        spinner.stop(success=True)
+    except Exception:
+        spinner.fail(f"Finishing as {plan['finish_label']} app")
+        raise
     print()
     success(f"Deployed: {color_bold}{plan['name']}{color_reset} ({plan['finish_label']})")
     return 0
