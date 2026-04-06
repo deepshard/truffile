@@ -321,14 +321,27 @@ def render_glow_banner(*, duration: float = 1.5) -> None:
 
 
 def render_glow_demo(*, duration: float = 8.0) -> None:
+    import select
     lines = TRUFFLE_BANNER_BRAILLE
     height = len(lines)
-    start = time.monotonic()
+    label = f"{_fg(*ROYAL_BLUE)}{BOLD}Truffile{RESET} {DIM}— Truffle SDK{RESET}"
+    label_row = len(lines) // 2
 
+    # cbreak mode so any keypress is detected immediately
+    old_attrs = None
+    if sys.stdin.isatty() and termios and tty:
+        try:
+            old_attrs = termios.tcgetattr(sys.stdin.fileno())
+            tty.setcbreak(sys.stdin.fileno())
+        except Exception:
+            old_attrs = None
+
+    sys.stdout.write("\x1b[?25l")  # hide cursor
     sys.stdout.write("\n")
     for _ in range(height):
         sys.stdout.write("\n")
 
+    start = time.monotonic()
     try:
         while time.monotonic() - start < duration:
             elapsed = time.monotonic() - start
@@ -337,14 +350,30 @@ def render_glow_demo(*, duration: float = 8.0) -> None:
             sys.stdout.write(f"\x1b[{height}A")
             for i, line in enumerate(lines):
                 if i <= 1:
-                    sys.stdout.write(f"\x1b[K{_color_top_row(line, phase)}\n")
+                    row = _color_top_row(line, phase)
                 else:
-                    sys.stdout.write(f"\x1b[K{line}\n")
+                    row = line
+                if i == label_row:
+                    row += "  " + label
+                sys.stdout.write(f"\x1b[K{row}\n")
             sys.stdout.flush()
-            time.sleep(0.05)
+
+            # check for any keypress — quit on any key
+            if old_attrs is not None:
+                ready, _, _ = select.select([sys.stdin], [], [], 0.05)
+                if ready:
+                    os.read(sys.stdin.fileno(), 1024)  # drain
+                    break
+            else:
+                time.sleep(0.05)
     except KeyboardInterrupt:
         pass
+    finally:
+        if old_attrs is not None and termios:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_attrs)
+        sys.stdout.write("\x1b[?25h")  # show cursor
 
+    # clear the glow area
     sys.stdout.write(f"\x1b[{height}A")
     for _ in range(height):
         sys.stdout.write("\x1b[K\n")
