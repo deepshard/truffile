@@ -184,6 +184,36 @@ def _find_app_by_name(apps: list, name: str) -> dict | None:
     return None
 
 
+async def _refresh_app_commands(
+    client: TruffleClient,
+    app_commands: dict[str, dict],
+    prompt: "TrufflePrompt | None" = None,
+) -> list[str]:
+    """Reload installed apps from the device and update app_commands in place.
+
+    Also appends any newly-discovered slugs to the prompt's slash-command
+    completer if a prompt is given. Returns the list of slugs (for display).
+    """
+    try:
+        apps_list = await _get_apps_list(client)
+    except Exception:
+        return []
+
+    app_commands.clear()
+    slugs: list[str] = []
+    for a in apps_list:
+        slug = a["name"].lower().replace(" ", "-")
+        app_commands[f"/{slug}"] = a
+        slugs.append(slug)
+
+    if prompt is not None and slugs:
+        prompt.add_commands([
+            SlashCommand(f"/{s}", f"add {app_commands[f'/{s}']['name']} to task")
+            for s in slugs
+        ])
+    return slugs
+
+
 async def _handle_slash(
     cmd: str,
     client: TruffleClient,
@@ -304,6 +334,7 @@ async def _handle_slash(
 
                 await client.delete_app(match["uuid"])
                 success(f"deleted {match['name']}")
+                return "refresh_apps"
             except Exception as e:
                 error(f"failed: {e}")
             return None
@@ -350,6 +381,7 @@ async def _handle_slash(
             )
             if result == 0:
                 success("deploy complete")
+                return "refresh_apps"
         except Exception as e:
             error(f"deploy failed: {e}")
         return None
@@ -419,17 +451,13 @@ async def cmd_chat(args, storage: StorageService) -> int:
     state = TaskState()
     stream = None
 
+    # create prompt first so the refresh helper can populate its completer
+    prompt = TrufflePrompt("you> ", CHAT_COMMANDS)
+    prompt.task_name = state.title
+
     # fetch installed apps and register as /<appname> slash commands
     app_commands: dict[str, dict] = {}
-    app_slugs: list[str] = []
-    try:
-        apps_list = await _get_apps_list(client)
-        for a in apps_list:
-            slug = a["name"].lower().replace(" ", "-")
-            app_commands[f"/{slug}"] = a
-            app_slugs.append(slug)
-    except Exception:
-        pass
+    app_slugs = await _refresh_app_commands(client, app_commands, prompt)
 
     # welcome panel
     show_chat_welcome(device=device, apps=app_slugs or None)
@@ -447,14 +475,7 @@ async def cmd_chat(args, storage: StorageService) -> int:
             except Exception:
                 pass
             info(f"resumed \"{state.title or 'task'}\"")
-
-    prompt = TrufflePrompt("you> ", CHAT_COMMANDS)
-    prompt.task_name = state.title
-    if app_commands:
-        prompt.add_commands([
-            SlashCommand(cmd_name, f"add {a['name']} to task")
-            for cmd_name, a in app_commands.items()
-        ])
+            prompt.task_name = state.title
 
     try:
         while True:
@@ -465,48 +486,75 @@ async def cmd_chat(args, storage: StorageService) -> int:
             if not user_input.strip():
                 continue
 
-            if user_input.strip().startswith("/"):
-                action = await _handle_slash(user_input.strip(), client, state, storage, app_commands=app_commands)
-                if action == "exit":
-                    break
-                if action == "new":
-                    state = TaskState()
-                    stream = None
-                    prompt.task_name = ""
-                    info("starting new conversation")
+            stripped = user_input.strip()
+            attach_app: dict | None = None  # set when user typed /<appname> <prompt>
+
+            if stripped.startswith("/"):
+                parts = stripped.split(maxsplit=1)
+                cmd_name = parts[0].lower()
+                arg = parts[1].strip() if len(parts) > 1 else ""
+
+                # /<appname> <prompt> shortcut: attach the app and use <prompt>
+                # as the user message in the same turn.
+                if arg and app_commands and cmd_name in app_commands:
+                    attach_app = app_commands[cmd_name]
+                    stripped = arg
+                else:
+                    action = await _handle_slash(stripped, client, state, storage, app_commands=app_commands)
+                    if action == "exit":
+                        break
+                    if action == "new":
+                        state = TaskState()
+                        stream = None
+                        prompt.task_name = ""
+                        info("starting new conversation")
+                        continue
+                    if action == "refresh_apps":
+                        await _refresh_app_commands(client, app_commands, prompt)
+                        continue
+                    if action and action.startswith("switch:"):
+                        new_task_id = action.split(":", 1)[1]
+                        state = TaskState()
+                        state.task_id = new_task_id
+                        stream = client.open_existing_task_stream(new_task_id)
+                        try:
+                            async for update in stream:
+                                _print_update(update, state)
+                                if state.run_state:
+                                    break
+                        except Exception:
+                            pass
+                        prompt.task_name = state.title
+                        info(f"switched to \"{state.title or 'task'}\"")
+                        print()
                     continue
-                if action and action.startswith("switch:"):
-                    new_task_id = action.split(":", 1)[1]
-                    state = TaskState()
-                    state.task_id = new_task_id
-                    stream = client.open_existing_task_stream(new_task_id)
-                    try:
-                        async for update in stream:
-                            _print_update(update, state)
-                            if state.run_state:
-                                break
-                    except Exception:
-                        pass
-                    prompt.task_name = state.title
-                    info(f"switched to \"{state.title or 'task'}\"")
-                    print()
-                continue
 
             print()
 
             orb = create_thinking_orb()
+            attach_uuids = [attach_app["uuid"]] if attach_app else None
 
             if state.pending_node_id is not None:
-                await client.respond_to_task(state.task_id, state.pending_node_id, user_input.strip())
+                if attach_app:
+                    try:
+                        await client.set_task_apps(state.task_id, [attach_app["uuid"]])
+                        success(f"added {attach_app['name']} to task")
+                    except Exception as e:
+                        error(f"failed to add {attach_app['name']}: {e}")
+                await client.respond_to_task(state.task_id, state.pending_node_id, stripped)
                 state.pending_node_id = None
                 if stream:
                     await _stream_task(client, stream, state, orb=orb)
             elif not state.task_id:
-                stream = client.open_task_stream(user_input.strip())
+                if attach_app:
+                    success(f"added {attach_app['name']} to task")
+                stream = client.open_task_stream(stripped, app_uuids=attach_uuids)
                 await _stream_task(client, stream, state, orb=orb)
             else:
                 state = TaskState()
-                stream = client.open_task_stream(user_input.strip())
+                if attach_app:
+                    success(f"added {attach_app['name']} to task")
+                stream = client.open_task_stream(stripped, app_uuids=attach_uuids)
                 await _stream_task(client, stream, state, orb=orb)
 
             # update task name for prompt border
