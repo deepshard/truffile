@@ -1,9 +1,10 @@
 import asyncio
+import sys
 
 from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns
 
-from .ui import C, DOT, CROSS, CHECK, Spinner, error, success
+from .ui import C, DOT, CROSS, CHECK, Spinner, error, warn, success
 
 
 async def cmd_list_apps(storage: StorageService) -> int:
@@ -146,27 +147,31 @@ async def cmd_delete(args, storage: StorageService) -> int:
                 print(f"     {C.DIM}{desc}{C.RESET}")
         print()
 
-        try:
-            choice = input(f"Select apps to delete (e.g. 1,3,5 or 'all'): ").strip()
-        except (KeyboardInterrupt, EOFError):
-            print()
-            return 0
+        # Resolve selection from CLI args, piped stdin, or interactive prompt.
+        selection_args = getattr(args, "selection", []) or []
 
-        if not choice:
-            return 0
-
-        if choice.lower() == "all":
-            to_delete = list(range(len(all_apps)))
+        if selection_args:
+            raw = " ".join(selection_args)
+        elif not sys.stdin.isatty():
+            raw = sys.stdin.read().strip()
         else:
-            try:
-                to_delete = [int(x.strip()) - 1 for x in choice.split(",")]
-                for idx in to_delete:
-                    if idx < 0 or idx >= len(all_apps):
-                        error(f"Invalid selection: {idx + 1}")
-                        return 1
-            except ValueError:
-                error("Invalid input")
-                return 1
+            raw = None
+
+        if raw is not None:
+            to_delete = _parse_delete_selection(raw, len(all_apps))
+            if to_delete is None:
+                # Invalid / out-of-range — fall back to interactive when possible.
+                if sys.stdin.isatty():
+                    warn("Invalid selection, switching to interactive prompt")
+                    to_delete = _prompt_delete_interactive(len(all_apps))
+                else:
+                    error("Invalid selection")
+                    return 1
+        else:
+            to_delete = _prompt_delete_interactive(len(all_apps))
+
+        if not to_delete:
+            return 0
 
         print()
         deleted = 0
@@ -192,6 +197,42 @@ async def cmd_delete(args, storage: StorageService) -> int:
         await client.close()
 
 
+def _parse_delete_selection(raw: str, count: int) -> list[int] | None:
+    """Parse a selection string into 0-based indices.
+
+    Accepts 'all', or 1-based numbers separated by spaces and/or commas
+    (e.g. '1,3,5', '1 2', '1, 2, 3').  Returns ``None`` when input is
+    unparseable or any index is out of range.
+    """
+    raw = raw.strip()
+    if not raw:
+        return []
+    if raw.lower() == "all":
+        return list(range(count))
+
+    parts = raw.replace(",", " ").split()
+    indices: list[int] = []
+    for p in parts:
+        try:
+            idx = int(p) - 1
+        except ValueError:
+            return None
+        if idx < 0 or idx >= count:
+            return None
+        indices.append(idx)
+    return indices or None
+
+
+def _prompt_delete_interactive(count: int) -> list[int] | None:
+    """Show an interactive prompt and return parsed indices."""
+    try:
+        choice = input("Select apps to delete (e.g. 1,3,5 or 'all'): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return None
+    return _parse_delete_selection(choice, count)
+
+
 def cmd_list(args, storage: StorageService) -> int:
     what = args.what
     if what == "apps":
@@ -211,8 +252,4 @@ def cmd_list(args, storage: StorageService) -> int:
 
 
 def _run_async(coro):
-    try:
-        return asyncio.run(coro)
-    except KeyboardInterrupt:
-        print(f"\r{C.RED}{CROSS} Cancelled{C.RESET}        ")
-        return 130
+    return asyncio.run(coro)
