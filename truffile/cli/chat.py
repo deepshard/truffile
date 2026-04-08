@@ -184,6 +184,36 @@ def _find_app_by_name(apps: list, name: str) -> dict | None:
     return None
 
 
+async def _refresh_app_commands(
+    client: TruffleClient,
+    app_commands: dict[str, dict],
+    prompt: "TrufflePrompt | None" = None,
+) -> list[str]:
+    """Reload installed apps from the device and update app_commands in place.
+
+    Also appends any newly-discovered slugs to the prompt's slash-command
+    completer if a prompt is given. Returns the list of slugs (for display).
+    """
+    try:
+        apps_list = await _get_apps_list(client)
+    except Exception:
+        return []
+
+    app_commands.clear()
+    slugs: list[str] = []
+    for a in apps_list:
+        slug = a["name"].lower().replace(" ", "-")
+        app_commands[f"/{slug}"] = a
+        slugs.append(slug)
+
+    if prompt is not None and slugs:
+        prompt.add_commands([
+            SlashCommand(f"/{s}", f"add {app_commands[f'/{s}']['name']} to task")
+            for s in slugs
+        ])
+    return slugs
+
+
 async def _handle_slash(
     cmd: str,
     client: TruffleClient,
@@ -304,6 +334,7 @@ async def _handle_slash(
 
                 await client.delete_app(match["uuid"])
                 success(f"deleted {match['name']}")
+                return "refresh_apps"
             except Exception as e:
                 error(f"failed: {e}")
             return None
@@ -350,6 +381,7 @@ async def _handle_slash(
             )
             if result == 0:
                 success("deploy complete")
+                return "refresh_apps"
         except Exception as e:
             error(f"deploy failed: {e}")
         return None
@@ -419,17 +451,13 @@ async def cmd_chat(args, storage: StorageService) -> int:
     state = TaskState()
     stream = None
 
+    # create prompt first so the refresh helper can populate its completer
+    prompt = TrufflePrompt("you> ", CHAT_COMMANDS)
+    prompt.task_name = state.title
+
     # fetch installed apps and register as /<appname> slash commands
     app_commands: dict[str, dict] = {}
-    app_slugs: list[str] = []
-    try:
-        apps_list = await _get_apps_list(client)
-        for a in apps_list:
-            slug = a["name"].lower().replace(" ", "-")
-            app_commands[f"/{slug}"] = a
-            app_slugs.append(slug)
-    except Exception:
-        pass
+    app_slugs = await _refresh_app_commands(client, app_commands, prompt)
 
     # welcome panel
     show_chat_welcome(device=device, apps=app_slugs or None)
@@ -447,14 +475,7 @@ async def cmd_chat(args, storage: StorageService) -> int:
             except Exception:
                 pass
             info(f"resumed \"{state.title or 'task'}\"")
-
-    prompt = TrufflePrompt("you> ", CHAT_COMMANDS)
-    prompt.task_name = state.title
-    if app_commands:
-        prompt.add_commands([
-            SlashCommand(cmd_name, f"add {a['name']} to task")
-            for cmd_name, a in app_commands.items()
-        ])
+            prompt.task_name = state.title
 
     try:
         while True:
@@ -474,6 +495,9 @@ async def cmd_chat(args, storage: StorageService) -> int:
                     stream = None
                     prompt.task_name = ""
                     info("starting new conversation")
+                    continue
+                if action == "refresh_apps":
+                    await _refresh_app_commands(client, app_commands, prompt)
                     continue
                 if action and action.startswith("switch:"):
                     new_task_id = action.split(":", 1)[1]
