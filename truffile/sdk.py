@@ -18,10 +18,8 @@ from truffile.app_runtime import (
 
     # auth
     OAuth,
-    OAuthAuth,
     PublicAuth,
     TextConfigAuth,
-    VncAuth,
     load_required_env,
 
     # protocols
