@@ -19,6 +19,12 @@ def _check_python_syntax(file_path: Path) -> tuple[bool, str]:
 
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+_SUPPORTED_STEP_TYPES = {"bash", "files", "text"}
+_UNSUPPORTED_STEP_HINTS = {
+    "oauth": "OAuth is not supported yet — use a 'text' step with a password field to collect an access token.",
+    "vnc": "VNC is not supported yet — use a 'text' step to collect credentials instead.",
+}
+
 
 def _validate_process_cfg(
     process: Any,
@@ -149,8 +155,30 @@ def validate_app_dir(app_dir: Path) -> tuple[bool, dict[str, Any] | None, str | 
         warnings.append("No icon specified in truffile.yaml")
 
     files_to_check: list[dict[str, Any]] = []
-    for step in config.get("steps", []):
-        if isinstance(step, dict) and step.get("type") == "files":
+    raw_steps = config.get("steps", [])
+    if raw_steps and not isinstance(raw_steps, list):
+        errors.append("steps must be a list")
+        raw_steps = []
+    for idx, step in enumerate(raw_steps):
+        if not isinstance(step, dict):
+            errors.append(f"steps[{idx}] must be a mapping")
+            continue
+        step_type = step.get("type")
+        step_label = step.get("name") or f"steps[{idx}]"
+        if not isinstance(step_type, str) or not step_type.strip():
+            errors.append(f"{step_label}: missing required field 'type'")
+            continue
+        step_type = step_type.strip().lower()
+        if step_type in _UNSUPPORTED_STEP_HINTS:
+            errors.append(f"{step_label}: {_UNSUPPORTED_STEP_HINTS[step_type]}")
+            continue
+        if step_type not in _SUPPORTED_STEP_TYPES:
+            supported = ", ".join(sorted(_SUPPORTED_STEP_TYPES))
+            errors.append(
+                f"{step_label}: unknown step type '{step_type}' (supported: {supported})"
+            )
+            continue
+        if step_type == "files":
             step_files = step.get("files", [])
             if isinstance(step_files, list):
                 files_to_check.extend([f for f in step_files if isinstance(f, dict)])

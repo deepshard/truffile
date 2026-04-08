@@ -94,8 +94,14 @@ async def deploy_with_builder(
     for step in plan["ordered_steps"]:
         step_type = step.get("type", "")
         handler = STEP_HANDLERS.get(step_type)
-        if handler:
-            await handler(step, **ctx)
+        if handler is None:
+            supported = ", ".join(sorted(STEP_HANDLERS))
+            name = step.get("name") or step_type or "<unnamed>"
+            raise RuntimeError(
+                f"step '{name}': unsupported step type '{step_type}' "
+                f"(supported: {supported})"
+            )
+        await handler(step, **ctx)
 
     # inject collected env vars into process configs
     fg_payload = plan["fg_payload"]
