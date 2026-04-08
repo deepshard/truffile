@@ -79,30 +79,18 @@ class ChatMCPClient:
     def list_tool_names(self) -> list[str]:
         if self._group is None:
             return []
-        names: list[str] = []
-        for _server_name, tool in self._group.list_tools():
-            name = getattr(tool, "name", None)
-            if isinstance(name, str):
-                names.append(name)
-        return sorted(set(names))
+        return sorted(self._group.tools.keys())
 
     def has_tool(self, name: str) -> bool:
         if self._group is None:
             return False
-        try:
-            tool = self._group.get_tool(name)
-            return tool is not None
-        except Exception:
-            return False
+        return name in self._group.tools
 
     def build_openai_tools(self) -> list[dict[str, Any]]:
         if self._group is None:
             return []
         tools: list[dict[str, Any]] = []
-        for _server_name, tool in self._group.list_tools():
-            name = getattr(tool, "name", None)
-            if not isinstance(name, str) or not name:
-                continue
+        for name, tool in self._group.tools.items():
             description = str(getattr(tool, "description", "") or "")
             schema = getattr(tool, "inputSchema", None)
             if not isinstance(schema, dict):
@@ -129,7 +117,7 @@ class ChatMCPClient:
             content: list[dict[str, Any]] = []
             for part in result.content:
                 if hasattr(part, "model_dump"):
-                    content.append(part.model_dump())  # type: ignore[call-arg]
+                    content.append(part.model_dump())
                 elif isinstance(part, dict):
                     content.append(part)
                 else:

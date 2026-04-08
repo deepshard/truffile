@@ -24,8 +24,28 @@ try:
 except ImportError:
     __version__ = "0.1.dev0"
 
-from .client import TruffleClient, ExecResult, UploadResult, resolve_mdns, NewSessionStatus
-from .schedule import parse_runtime_policy
+# Lazy imports — the .client chain (httpx → rich → attr) is heavy.
+# Deferring it keeps CLI startup fast and avoids ugly tracebacks if the
+# user hits Ctrl-C before main() even starts.
+_LAZY_ATTRS: dict[str, str] = {
+    "TruffleClient": ".client",
+    "ExecResult": ".client",
+    "UploadResult": ".client",
+    "resolve_mdns": ".client",
+    "NewSessionStatus": ".client",
+    "parse_runtime_policy": ".schedule",
+}
+
+
+def __getattr__(name: str):
+    mod_path = _LAZY_ATTRS.get(name)
+    if mod_path is not None:
+        import importlib
+        mod = importlib.import_module(mod_path, __name__)
+        val = getattr(mod, name)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 try:
     from .sdk import (

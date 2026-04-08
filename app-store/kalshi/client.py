@@ -1,67 +1,64 @@
-#!/usr/bin/env python3
-"""Async Kalshi API client using API key + RSA-PSS authentication."""
+"""Async Kalshi API client with injectable auth and HTTP transport."""
 
 from __future__ import annotations
 
-import base64
-import time
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+
+from truffile.app_runtime import ApiKeyProvider, HttpTransport
+
+
+class _HttpxTransport:
+    def __init__(self, *, timeout: float = 30.0) -> None:
+        self._client = httpx.AsyncClient(timeout=timeout)
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        content: str | None = None,
+    ) -> httpx.Response:
+        return await self._client.request(
+            method=method.upper(),
+            url=url,
+            params=params,
+            json=json,
+            headers=headers,
+            content=content,
+        )
+
+    async def close(self) -> None:
+        await self._client.aclose()
 
 
 class KalshiClient:
-    """Minimal async client for Kalshi REST endpoints used by the MCP tools."""
-
     def __init__(
         self,
-        api_key: str,
-        private_key_pem: str,
+        *,
         base_url: str,
-        timeout: float = 30.0,
+        auth: ApiKeyProvider,
+        http: HttpTransport | None = None,
     ) -> None:
-        self._api_key = api_key
         self._base_url = base_url.rstrip("/")
-        self._private_key = serialization.load_pem_private_key(
-            private_key_pem.encode("utf-8"),
-            password=None,
-        )
-        self._http = httpx.AsyncClient(timeout=timeout)
-
-    def _build_auth_headers(self, method: str, path: str) -> Dict[str, str]:
-        timestamp = str(int(time.time() * 1000))
-        message = f"{timestamp}{method.upper()}{path}".encode("utf-8")
-
-        signature = self._private_key.sign(
-            message,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=hashes.SHA256().digest_size,
-            ),
-            hashes.SHA256(),
-        )
-        signature_b64 = base64.b64encode(signature).decode("utf-8")
-
-        return {
-            "KALSHI-ACCESS-KEY": self._api_key,
-            "KALSHI-ACCESS-SIGNATURE": signature_b64,
-            "KALSHI-ACCESS-TIMESTAMP": timestamp,
-        }
+        self._auth = auth
+        self._http = http or _HttpxTransport()
 
     async def _request(
         self,
         method: str,
         path: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        json_body: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
-        parsed = urlparse(url)
-        headers = self._build_auth_headers(method, parsed.path)
+        headers = self._auth.get_auth_headers(method, urlparse(url).path)
         clean_params = (
             {k: v for k, v in params.items() if v is not None}
             if params is not None
@@ -72,10 +69,9 @@ class KalshiClient:
             if json_body is not None
             else None
         )
-
         response = await self._http.request(
-            method=method.upper(),
-            url=url,
+            method.upper(),
+            url,
             params=clean_params,
             json=clean_json,
             headers=headers,
@@ -85,20 +81,20 @@ class KalshiClient:
 
     async def close(self) -> None:
         try:
-            await self._http.aclose()
+            await self._http.close()
         except Exception:
             pass
 
     async def get_markets(
         self,
         *,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-        event_ticker: Optional[str] = None,
-        series_ticker: Optional[str] = None,
-        status: Optional[str] = None,
-        tickers: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+        cursor: str | None = None,
+        event_ticker: str | None = None,
+        series_ticker: str | None = None,
+        status: str | None = None,
+        tickers: str | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             "/markets",
@@ -112,15 +108,15 @@ class KalshiClient:
             },
         )
 
-    async def get_market(self, ticker: str) -> Dict[str, Any]:
+    async def get_market(self, ticker: str) -> dict[str, Any]:
         return await self._request("GET", f"/markets/{ticker}")
 
     async def get_market_orderbook(
         self,
         ticker: str,
         *,
-        depth: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        depth: int | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             f"/markets/{ticker}/orderbook",
@@ -130,12 +126,12 @@ class KalshiClient:
     async def get_trades(
         self,
         *,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-        ticker: Optional[str] = None,
-        min_ts: Optional[int] = None,
-        max_ts: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+        cursor: str | None = None,
+        ticker: str | None = None,
+        min_ts: int | None = None,
+        max_ts: int | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             "/markets/trades",
@@ -151,12 +147,12 @@ class KalshiClient:
     async def get_events(
         self,
         *,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-        with_nested_markets: Optional[bool] = None,
-        status: Optional[str] = None,
-        series_ticker: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+        cursor: str | None = None,
+        with_nested_markets: bool | None = None,
+        status: str | None = None,
+        series_ticker: str | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             "/events",
@@ -173,26 +169,26 @@ class KalshiClient:
         self,
         event_ticker: str,
         *,
-        with_nested_markets: Optional[bool] = None,
-    ) -> Dict[str, Any]:
+        with_nested_markets: bool | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             f"/events/{event_ticker}",
             params={"with_nested_markets": with_nested_markets},
         )
 
-    async def get_balance(self) -> Dict[str, Any]:
+    async def get_balance(self) -> dict[str, Any]:
         return await self._request("GET", "/portfolio/balance")
 
     async def get_positions(
         self,
         *,
-        cursor: Optional[str] = None,
-        limit: Optional[int] = None,
-        count_filter: Optional[str] = None,
-        ticker: Optional[str] = None,
-        event_ticker: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        cursor: str | None = None,
+        limit: int | None = None,
+        count_filter: str | None = None,
+        ticker: str | None = None,
+        event_ticker: str | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             "/portfolio/positions",
@@ -208,14 +204,14 @@ class KalshiClient:
     async def get_orders(
         self,
         *,
-        ticker: Optional[str] = None,
-        event_ticker: Optional[str] = None,
-        min_ts: Optional[int] = None,
-        max_ts: Optional[int] = None,
-        status: Optional[str] = None,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        ticker: str | None = None,
+        event_ticker: str | None = None,
+        min_ts: int | None = None,
+        max_ts: int | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             "/portfolio/orders",
@@ -230,13 +226,13 @@ class KalshiClient:
             },
         )
 
-    async def create_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_order(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._request("POST", "/portfolio/orders", json_body=payload)
 
-    async def cancel_order(self, order_id: str) -> Dict[str, Any]:
+    async def cancel_order(self, order_id: str) -> dict[str, Any]:
         return await self._request("DELETE", f"/portfolio/orders/{order_id}")
 
-    async def batch_cancel_orders(self, order_ids: list[str]) -> Dict[str, Any]:
+    async def batch_cancel_orders(self, order_ids: list[str]) -> dict[str, Any]:
         return await self._request(
             "DELETE",
             "/portfolio/orders/batched",
@@ -246,13 +242,13 @@ class KalshiClient:
     async def get_fills(
         self,
         *,
-        ticker: Optional[str] = None,
-        order_id: Optional[str] = None,
-        min_ts: Optional[int] = None,
-        max_ts: Optional[int] = None,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        ticker: str | None = None,
+        order_id: str | None = None,
+        min_ts: int | None = None,
+        max_ts: int | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             "/portfolio/fills",
@@ -269,13 +265,13 @@ class KalshiClient:
     async def get_settlements(
         self,
         *,
-        limit: Optional[int] = None,
-        cursor: Optional[str] = None,
-        ticker: Optional[str] = None,
-        event_ticker: Optional[str] = None,
-        min_ts: Optional[int] = None,
-        max_ts: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+        cursor: str | None = None,
+        ticker: str | None = None,
+        event_ticker: str | None = None,
+        min_ts: int | None = None,
+        max_ts: int | None = None,
+    ) -> dict[str, Any]:
         return await self._request(
             "GET",
             "/portfolio/settlements",
