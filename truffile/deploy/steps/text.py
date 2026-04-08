@@ -8,13 +8,19 @@ from truffile.transport.client import TruffleClient
 
 
 def _build_env_prefix(env: dict[str, str]) -> str:
+    """Build a shell prefix that exports collected env vars for the validator.
+
+    Uses ``export KEY='value'; ...`` rather than the inline ``KEY='value' cmd``
+    form so the vars are visible to *every* command in a multi-line validator
+    script, not just the first one.
+    """
     if not env:
         return ""
     parts = []
     for key, val in env.items():
         escaped = val.replace("'", "'\\''")
-        parts.append(f"{key}='{escaped}'")
-    return " ".join(parts) + " "
+        parts.append(f"export {key}='{escaped}'")
+    return "; ".join(parts) + "; "
 
 
 async def handle_text(
