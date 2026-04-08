@@ -1,20 +1,10 @@
-"""Configuration for the Kalshi Truffle app."""
+"""Configuration helpers for the Kalshi Truffle app."""
 
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 
-KALSHI_API_KEY: str = os.getenv("KALSHI_API_KEY", "")
-KALSHI_PRIVATE_KEY: str = os.getenv("KALSHI_PRIVATE_KEY", "")
-KALSHI_BASE_URL: str = os.getenv(
-    "KALSHI_BASE_PATH",
-    "https://api.elections.kalshi.com/trade-api/v2",
-)
-
-DEFAULT_WATCHED_TICKERS: list[str] = []
-
-KALSHI_CATEGORIES_RAW: str = os.getenv("KALSHI_CATEGORIES", "")
-KALSHI_FEED_URL: str = os.getenv("KALSHI_FEED_URL", "").strip()
 
 CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "politics": [
@@ -60,6 +50,8 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     ],
 }
 
+DEFAULT_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
+
 
 def parse_categories(raw: str) -> set[str]:
     categories: set[str] = {"trending"}
@@ -72,12 +64,28 @@ def parse_categories(raw: str) -> set[str]:
     return categories
 
 
-KALSHI_CATEGORIES: set[str] = parse_categories(KALSHI_CATEGORIES_RAW)
-
-
-def normalize_private_key(raw: str) -> str:
-    """Normalize a pasted PEM key from env text fields."""
+def normalize_private_key(raw: str | None) -> str:
     key = (raw or "").strip()
     if "\\n" in key:
         key = key.replace("\\n", "\n")
     return key
+
+
+@dataclass(frozen=True, slots=True)
+class KalshiConfig:
+    api_key: str = ""
+    private_key_pem: str = ""
+    base_url: str = DEFAULT_BASE_URL
+    categories: set[str] = field(default_factory=lambda: {"trending"})
+    feed_url: str = ""
+    watched_tickers: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_env(cls) -> KalshiConfig:
+        return cls(
+            api_key=os.getenv("KALSHI_API_KEY", "").strip(),
+            private_key_pem=normalize_private_key(os.getenv("KALSHI_PRIVATE_KEY", "")),
+            base_url=os.getenv("KALSHI_BASE_PATH", DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL,
+            categories=parse_categories(os.getenv("KALSHI_CATEGORIES", "")),
+            feed_url=os.getenv("KALSHI_FEED_URL", "").strip(),
+        )

@@ -1,34 +1,89 @@
 metadata:
   name: Reddit
   bundle_id: org.deepshard.reddit
-  description: |
-    Have your Truffle¹ browse Reddit and post relevant content to your feed.
+  description: "Have your Truffle\xB9 browse Reddit and post relevant content to your\
+    \ feed.\n"
+  icon_file: ./icon.png
   background:
     process:
       cmd:
-        - python
-        - /opt/reddit.py
+      - python
+      - reddit_background.py
       working_directory: /
       environment:
-        PYTHONUNBUFFERED: "1"
-        # Comma-separated subreddit list. Use "none" to disable and rely on USER_FEED_URL.
-        SUBREDDITS: "news,worldnews,technology"
-        # Optional personal Reddit JSON feed URL. Use "none" when not used.
-        USER_FEED_URL: "none"
+        PYTHONUNBUFFERED: '1'
     default_schedule:
       type: interval
       interval:
         duration: 60m
         schedule:
-          daily_window: "00:00-23:59"
-  icon_file: ./icon.png  
+          daily_window: 00:00-23:59
 steps:
-  - name: Install dependencies
+- name: Install dependencies
+  type: bash
+  run: "pip install --no-cache-dir --force-reinstall requests feedparser trafilatura==2.0.0\
+    \ tld==0.13.1 \n"
+- name: Copy application files
+  type: files
+  files:
+  - source: ./reddit.py
+    destination: ./reddit.py
+  - source: ./reddit_common.py
+    destination: ./reddit_common.py
+  - source: ./reddit_bg_worker.py
+    destination: ./reddit_bg_worker.py
+  - source: ./reddit_background.py
+    destination: ./reddit_background.py
+- name: Configure Reddit
+  type: text
+  ui_state_on_show: user_interaction_ready
+  ui_state_on_complete: move_to_background
+  content: 'Please provide either a comma separated list of subreddits to follow,
+    or leave blank to follow r/all.
+
+    Example: news, worldnews, technology, science, funny, pics, videos, gaming
+
+    Alternatively, [copy the URL of your personal frontpage RSS feed (JSON) from here](https://old.reddit.com/prefs/feeds/)
+
+    If a personal feed URL is provided, that will be used instead of the subreddit
+    list if the URL is valid.
+
+    '
+  fields:
+  - name: subreddits
+    label: Comma Separated Subreddits
+    type: text
+    placeholder: news, worldnews, technology, LosAngeles
+    default: all
+    env_default_if_empty: none
+    env: SUBREDDITS
+  - name: user_feed_url
+    label: Optional - Personal Frontpage RSS Feed URL (JSON)
+    type: text
+    placeholder: 'Optional: leave blank to use subreddits (or paste https://old.reddit.com/.json?feed=...&user=...)'
+    default: ''
+    env_default_if_empty: none
+    env: USER_FEED_URL
+  - name: reddit_mode
+    label: Processing Mode
+    type: text
+    placeholder: compact or full
+    default: compact
+    env: REDDIT_MODE
+  - name: reddit_posts_per_run
+    label: Posts per run (compact can handle more)
+    type: text
+    placeholder: '8'
+    default: '8'
+    env: REDDIT_POSTS_PER_RUN
+  validator:
     type: bash
-    run: |
-      pip install --no-cache-dir --force-reinstall requests feedparser trafilatura==2.0.0 tld==0.13.1 
-  - name: Copy application files
-    type: files
-    files:
-      - source: ./reddit.py
-        destination: ./opt/reddit.py
+    run: 'python ./reddit_background.py --verify
+
+      '
+    timeout: 60
+    error_message: 'Was unable to scrape Reddit with the provided configuration.
+
+      Please ensure the subreddit names are valid or the feed URL is correct.
+
+      '

@@ -3,9 +3,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from .ui import C, MUSHROOM
-from .art import render_glow_demo
-from .welcome import show_help_welcome
+from .guard import CLIGuard
 
 
 def run_async(coro):
@@ -21,6 +19,13 @@ def run_async(coro):
 
 
 def main() -> int:
+    guard = CLIGuard()
+    with guard:
+        return _main()
+    return guard.code
+
+
+def _main() -> int:
     parser = argparse.ArgumentParser(prog="truffile", add_help=False)
     parser.add_argument("--resume", action="store_true", help="resume a previous task")
     sub = parser.add_subparsers(dest="command")
@@ -60,7 +65,7 @@ def main() -> int:
 
     # delete
     del_p = sub.add_parser("delete", help="delete app from device")
-    del_p.add_argument("app", nargs="?")
+    del_p.add_argument("selection", nargs="*", help="'all', or app numbers (e.g. 1 2 3)")
 
     # models
     sub.add_parser("models", help="list inference models")
@@ -87,10 +92,12 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "help":
+        from .welcome import show_help_welcome
         show_help_welcome()
         return 0
 
     if args.command == "glow":
+        from .art import render_glow_demo
         render_glow_demo(duration=999999.0)
         return 0
 
@@ -138,5 +145,6 @@ def main() -> int:
         from .infer import cmd_infer
         return run_async(cmd_infer(args, storage))
 
+    from .welcome import show_help_welcome
     show_help_welcome()
     return 1
