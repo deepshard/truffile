@@ -8,16 +8,7 @@ from typing import Any
 import httpx
 
 from client import KalshiClient
-from config import (
-    CATEGORY_KEYWORDS,
-    DEFAULT_WATCHED_TICKERS,
-    KALSHI_API_KEY,
-    KALSHI_BASE_URL,
-    KALSHI_CATEGORIES,
-    KALSHI_FEED_URL,
-    KALSHI_PRIVATE_KEY,
-    normalize_private_key,
-)
+from config import CATEGORY_KEYWORDS, KalshiConfig
 
 logger = logging.getLogger("kalshi.bg_worker")
 
@@ -25,7 +16,7 @@ PRICE_CHANGE_THRESHOLD = 10
 FEED_ITEMS_PER_CYCLE = 3
 
 
-@dataclass
+@dataclass(slots=True)
 class BackgroundDigest:
     generated_at: str
     portfolio_summary: str = ""
@@ -37,30 +28,21 @@ class BackgroundDigest:
 
 
 class KalshiBackgroundWorker:
-    def __init__(self) -> None:
-        if not KALSHI_API_KEY or not KALSHI_PRIVATE_KEY:
-            raise ValueError("Missing KALSHI_API_KEY or KALSHI_PRIVATE_KEY")
-
-        self.client = KalshiClient(
-            api_key=KALSHI_API_KEY,
-            private_key_pem=normalize_private_key(KALSHI_PRIVATE_KEY),
-            base_url=KALSHI_BASE_URL,
-        )
+    def __init__(self, *, client: KalshiClient, config: KalshiConfig) -> None:
+        self.client = client
+        self.config = config
 
         self._last_prices: dict[str, int] = {}
         self._last_order_ids: set[str] = set()
         self._settled_tickers: set[str] = set()
-        self._watched_tickers: set[str] = set(DEFAULT_WATCHED_TICKERS)
+        self._watched_tickers: set[str] = {ticker.strip().upper() for ticker in config.watched_tickers if ticker.strip()}
         self._is_seeded = False
-        self._categories: set[str] = KALSHI_CATEGORIES
+        self._categories: set[str] = set(config.categories)
         self._seen_feed_events: set[str] = set()
-        self._feed_url_tickers: list[str] = self._parse_feed_url(KALSHI_FEED_URL)
+        self._feed_url_tickers: list[str] = self._parse_feed_url(config.feed_url)
 
     async def close(self) -> None:
-        try:
-            await self.client.close()
-        except Exception:
-            pass
+        await self.client.close()
 
     async def verify(self) -> tuple[bool, str]:
         try:
@@ -184,7 +166,6 @@ class KalshiBackgroundWorker:
             data = await self.client.get_settlements(limit=20)
             for settlement in data.get("settlements", []):
                 ticker = (settlement.get("ticker") or "").strip().upper()
-                # Prefer active position settlements, but allow all as fallback context.
                 if active_tickers and ticker and ticker not in active_tickers:
                     continue
                 key = f"{ticker}:{settlement.get('settled_time', settlement.get('settled_at', ''))}"
@@ -241,7 +222,9 @@ class KalshiBackgroundWorker:
         items: list[dict[str, Any]] = []
         try:
             data = await self.client.get_events(
-                status="open", with_nested_markets=True, limit=30,
+                status="open",
+                with_nested_markets=True,
+                limit=30,
             )
             events = data.get("events", [])
 
@@ -259,22 +242,24 @@ class KalshiBackgroundWorker:
                 score = total_volume + (1_000_000 if matched else 0)
                 tags = sorted(matched | {"trending"})
 
-                candidates.append({
-                    "event_ticker": event_ticker,
-                    "title": title,
-                    "categories": tags,
-                    "total_volume": total_volume,
-                    "market_count": len(markets),
-                    "top_markets": self._format_top_markets(markets),
-                    "_score": score,
-                })
+                candidates.append(
+                    {
+                        "event_ticker": event_ticker,
+                        "title": title,
+                        "categories": tags,
+                        "total_volume": total_volume,
+                        "market_count": len(markets),
+                        "top_markets": self._format_top_markets(markets),
+                        "_score": score,
+                    }
+                )
 
-            candidates.sort(key=lambda e: e["_score"], reverse=True)
+            candidates.sort(key=lambda event: event["_score"], reverse=True)
 
-            for c in candidates[:FEED_ITEMS_PER_CYCLE]:
-                del c["_score"]
-                self._seen_feed_events.add(c["event_ticker"])
-                items.append(c)
+            for candidate in candidates[:FEED_ITEMS_PER_CYCLE]:
+                del candidate["_score"]
+                self._seen_feed_events.add(candidate["event_ticker"])
+                items.append(candidate)
         except httpx.HTTPStatusError as error:
             if error.response.status_code in {401, 403}:
                 raise
@@ -291,14 +276,16 @@ class KalshiBackgroundWorker:
                 if event:
                     markets = data.get("markets") or []
                     self._seen_feed_events.add(ticker)
-                    items.append({
-                        "event_ticker": ticker,
-                        "title": event.get("title", ticker),
-                        "categories": ["followed"],
-                        "total_volume": sum(int(m.get("volume") or 0) for m in markets),
-                        "market_count": len(markets),
-                        "top_markets": self._format_top_markets(markets),
-                    })
+                    items.append(
+                        {
+                            "event_ticker": ticker,
+                            "title": event.get("title", ticker),
+                            "categories": ["followed"],
+                            "total_volume": sum(int(m.get("volume") or 0) for m in markets),
+                            "market_count": len(markets),
+                            "top_markets": self._format_top_markets(markets),
+                        }
+                    )
             except httpx.HTTPStatusError as error:
                 if error.response.status_code in {401, 403}:
                     raise
@@ -327,26 +314,29 @@ class KalshiBackgroundWorker:
     @staticmethod
     def _format_top_markets(markets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         sorted_markets = sorted(
-            markets, key=lambda m: int(m.get("volume") or 0), reverse=True,
+            markets,
+            key=lambda market: int(market.get("volume") or 0),
+            reverse=True,
         )
         return [
             {
-                "ticker": m.get("ticker", ""),
-                "title": m.get("title", ""),
-                "yes_bid": m.get("yes_bid"),
-                "volume": m.get("volume", 0),
+                "ticker": market.get("ticker", ""),
+                "title": market.get("title", ""),
+                "yes_bid": market.get("yes_bid"),
+                "volume": market.get("volume", 0),
             }
-            for m in sorted_markets[:3]
+            for market in sorted_markets[:3]
         ]
 
     @staticmethod
     def _parse_feed_url(url: str) -> list[str]:
         if not url:
             return []
+
         from urllib.parse import urlparse
 
         path = urlparse(url).path.strip("/")
-        parts = [p for p in path.split("/") if p]
+        parts = [part for part in path.split("/") if part]
         if parts:
             return [parts[-1].upper()]
         return []

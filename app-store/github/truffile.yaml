@@ -1,0 +1,74 @@
+metadata:
+  name: GitHub
+  bundle_id: org.deepshard.github
+  description: |
+    Connect Truffle to GitHub using a personal access token.
+  icon_file: ./icon.png
+  background:
+    process:
+      cmd:
+        - python
+        - github_background.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        GITHUB_API_BASE: https://api.github.com
+    default_schedule:
+      type: interval
+      interval:
+        duration: 30m
+        daily_window: "00:00-23:59"
+  foreground:
+    process:
+      cmd:
+        - python
+        - github_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        GITHUB_MCP_BASE: https://api.githubcopilot.com/mcp/
+        GITHUB_MCP_TOOLSETS: all
+
+steps:
+  - name: Copy app files
+    type: files
+    files:
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./auth.py
+        destination: ./auth.py
+      - source: ./bg_worker.py
+        destination: ./bg_worker.py
+      - source: ./github_foreground.py
+        destination: ./github_foreground.py
+      - source: ./github_background.py
+        destination: ./github_background.py
+
+  - name: Configure GitHub access token
+    type: text
+    content: |
+      Enter a GitHub personal access token so Truffle can talk to GitHub on your behalf.
+
+      To create one:
+      1. Go to https://github.com/settings/tokens
+      2. Click **Generate new token** (classic or fine-grained)
+      3. Select the scopes you want to grant. Recommended:
+         `repo`, `read:org`, `read:user`, `user:email`, `gist`,
+         `notifications`, `workflow`, `read:project`
+      4. Copy the token and paste it below
+
+      The token is stored only on your Truffle device.
+    fields:
+      - name: github_access_token
+        label: GitHub Access Token
+        type: password
+        placeholder: ghp_...
+        env: GITHUB_ACCESS_TOKEN
+    validator:
+      type: bash
+      run: |
+        python ./github_foreground.py --verify
+        python ./github_background.py --verify
+      timeout: 90
+      error_message: |
+        Could not verify GITHUB_ACCESS_TOKEN. Check the token is valid and has the required scopes.
