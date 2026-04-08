@@ -486,51 +486,75 @@ async def cmd_chat(args, storage: StorageService) -> int:
             if not user_input.strip():
                 continue
 
-            if user_input.strip().startswith("/"):
-                action = await _handle_slash(user_input.strip(), client, state, storage, app_commands=app_commands)
-                if action == "exit":
-                    break
-                if action == "new":
-                    state = TaskState()
-                    stream = None
-                    prompt.task_name = ""
-                    info("starting new conversation")
+            stripped = user_input.strip()
+            attach_app: dict | None = None  # set when user typed /<appname> <prompt>
+
+            if stripped.startswith("/"):
+                parts = stripped.split(maxsplit=1)
+                cmd_name = parts[0].lower()
+                arg = parts[1].strip() if len(parts) > 1 else ""
+
+                # /<appname> <prompt> shortcut: attach the app and use <prompt>
+                # as the user message in the same turn.
+                if arg and app_commands and cmd_name in app_commands:
+                    attach_app = app_commands[cmd_name]
+                    stripped = arg
+                else:
+                    action = await _handle_slash(stripped, client, state, storage, app_commands=app_commands)
+                    if action == "exit":
+                        break
+                    if action == "new":
+                        state = TaskState()
+                        stream = None
+                        prompt.task_name = ""
+                        info("starting new conversation")
+                        continue
+                    if action == "refresh_apps":
+                        await _refresh_app_commands(client, app_commands, prompt)
+                        continue
+                    if action and action.startswith("switch:"):
+                        new_task_id = action.split(":", 1)[1]
+                        state = TaskState()
+                        state.task_id = new_task_id
+                        stream = client.open_existing_task_stream(new_task_id)
+                        try:
+                            async for update in stream:
+                                _print_update(update, state)
+                                if state.run_state:
+                                    break
+                        except Exception:
+                            pass
+                        prompt.task_name = state.title
+                        info(f"switched to \"{state.title or 'task'}\"")
+                        print()
                     continue
-                if action == "refresh_apps":
-                    await _refresh_app_commands(client, app_commands, prompt)
-                    continue
-                if action and action.startswith("switch:"):
-                    new_task_id = action.split(":", 1)[1]
-                    state = TaskState()
-                    state.task_id = new_task_id
-                    stream = client.open_existing_task_stream(new_task_id)
-                    try:
-                        async for update in stream:
-                            _print_update(update, state)
-                            if state.run_state:
-                                break
-                    except Exception:
-                        pass
-                    prompt.task_name = state.title
-                    info(f"switched to \"{state.title or 'task'}\"")
-                    print()
-                continue
 
             print()
 
             orb = create_thinking_orb()
+            attach_uuids = [attach_app["uuid"]] if attach_app else None
 
             if state.pending_node_id is not None:
-                await client.respond_to_task(state.task_id, state.pending_node_id, user_input.strip())
+                if attach_app:
+                    try:
+                        await client.set_task_apps(state.task_id, [attach_app["uuid"]])
+                        success(f"added {attach_app['name']} to task")
+                    except Exception as e:
+                        error(f"failed to add {attach_app['name']}: {e}")
+                await client.respond_to_task(state.task_id, state.pending_node_id, stripped)
                 state.pending_node_id = None
                 if stream:
                     await _stream_task(client, stream, state, orb=orb)
             elif not state.task_id:
-                stream = client.open_task_stream(user_input.strip())
+                if attach_app:
+                    success(f"added {attach_app['name']} to task")
+                stream = client.open_task_stream(stripped, app_uuids=attach_uuids)
                 await _stream_task(client, stream, state, orb=orb)
             else:
                 state = TaskState()
-                stream = client.open_task_stream(user_input.strip())
+                if attach_app:
+                    success(f"added {attach_app['name']} to task")
+                stream = client.open_task_stream(stripped, app_uuids=attach_uuids)
                 await _stream_task(client, stream, state, orb=orb)
 
             # update task name for prompt border

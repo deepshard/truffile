@@ -67,8 +67,7 @@ steps:
     validator:
       type: bash
       run: |
-        python ./github_foreground.py --verify
-        python ./github_background.py --verify
+        python ./github_foreground.py --verify && python ./github_background.py --verify
       timeout: 90
       error_message: |
         Could not verify GITHUB_ACCESS_TOKEN. Check the token is valid and has the required scopes.
