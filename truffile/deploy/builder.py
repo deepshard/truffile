@@ -55,14 +55,22 @@ async def deploy_with_builder(
 
     spinner = spinner_cls(f"Connecting to {device}")
     spinner.start()
-    await client.connect()
-    spinner.stop(success=True)
+    try:
+        await client.connect()
+        spinner.stop(success=True)
+    except Exception:
+        spinner.fail(f"Connecting to {device}")
+        raise
 
     spinner = spinner_cls("Starting build session")
     spinner.start()
-    await client.start_build()
-    await _wait_for_build_session_ready(client)
-    spinner.stop(success=True)
+    try:
+        await client.start_build()
+        await _wait_for_build_session_ready(client)
+        spinner.stop(success=True)
+    except Exception:
+        spinner.fail("Starting build session")
+        raise
     print(f"  {color_dim}Session: {client.app_uuid}{color_reset}")
 
     collected_env: dict[str, str] = {}
