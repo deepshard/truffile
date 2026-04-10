@@ -6,6 +6,8 @@ import httpx
 from truffile.storage import StorageService
 from truffile.client import resolve_mdns
 
+from .connect import _resolve_connected_device
+from .in_container import in_container_http_headers
 from .ui import C, CHECK, MUSHROOM, WARN, Spinner, error, warn
 
 try:
@@ -18,25 +20,17 @@ except Exception:
 
 async def cmd_models(storage: StorageService) -> int:
     """List models on your Truffle."""
-    device = storage.state.last_used_device
-    if not device:
-        error("No device connected")
-        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+    device, ip = await _resolve_connected_device(storage)
+    if not device or not ip:
         return 1
 
     spinner = Spinner(f"Connecting to {device}")
     spinner.start()
 
     try:
-        ip = await resolve_mdns(f"{device}.local")
-    except RuntimeError:
-        spinner.fail(f"Could not resolve {device}.local")
-        return 1
-
-    try:
         url = f"http://{ip}/if2/v1/models"
         with httpx.Client(timeout=15.0) as client:
-            resp = client.get(url)
+            resp = client.get(url, headers=in_container_http_headers())
             resp.raise_for_status()
             payload = resp.json()
         spinner.stop(success=True)
@@ -78,7 +72,7 @@ async def cmd_models(storage: StorageService) -> int:
 async def _default_model(ip: str) -> str | None:
     try:
         with httpx.Client(timeout=10.0) as client:
-            resp = client.get(f"http://{ip}/if2/v1/models")
+            resp = client.get(f"http://{ip}/if2/v1/models", headers=in_container_http_headers())
             resp.raise_for_status()
             payload = resp.json()
         models = payload.get("data", [])
@@ -204,7 +198,7 @@ def _pick_model_interactive(models: list[dict[str, Any]], current_model: str) ->
 
 
 def _fetch_models_payload(client: httpx.Client, ip: str) -> list[dict[str, Any]]:
-    resp = client.get(f"http://{ip}/if2/v1/models", timeout=15.0)
+    resp = client.get(f"http://{ip}/if2/v1/models", headers=in_container_http_headers(), timeout=15.0)
     resp.raise_for_status()
     payload = resp.json()
     raw = payload.get("data", [])

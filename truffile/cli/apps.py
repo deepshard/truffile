@@ -2,16 +2,15 @@ import asyncio
 import sys
 
 from truffile.storage import StorageService
-from truffile.client import TruffleClient, resolve_mdns
+from truffile.client import TruffleClient
 
+from .connect import _resolve_connected_device
 from .ui import C, DOT, CROSS, CHECK, Spinner, error, warn, success
 
 
 async def cmd_list_apps(storage: StorageService) -> int:
-    device = storage.state.last_used_device
-    if not device:
-        error("No device connected")
-        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+    device, ip = await _resolve_connected_device(storage)
+    if not device or not ip:
         return 1
 
     token = storage.get_token(device)
@@ -23,14 +22,8 @@ async def cmd_list_apps(storage: StorageService) -> int:
     spinner = Spinner(f"Connecting to {device}")
     spinner.start()
 
-    try:
-        ip = await resolve_mdns(f"{device}.local")
-    except RuntimeError as e:
-        spinner.fail(str(e))
-        return 1
-
     address = f"{ip}:80"
-    client = TruffleClient(address, token=token)
+    client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
 
     try:
         await client.connect()
@@ -92,10 +85,8 @@ async def cmd_list_apps(storage: StorageService) -> int:
         await client.close()
 
 async def cmd_delete(args, storage: StorageService) -> int:
-    device = storage.state.last_used_device
-    if not device:
-        error("No device connected")
-        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+    device, ip = await _resolve_connected_device(storage)
+    if not device or not ip:
         return 1
 
     token = storage.get_token(device)
@@ -107,14 +98,8 @@ async def cmd_delete(args, storage: StorageService) -> int:
     spinner = Spinner(f"Connecting to {device}")
     spinner.start()
 
-    try:
-        ip = await resolve_mdns(f"{device}.local")
-    except RuntimeError as e:
-        spinner.fail(str(e))
-        return 1
-
     address = f"{ip}:80"
-    client = TruffleClient(address, token=token)
+    client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
 
     try:
         await client.connect()
