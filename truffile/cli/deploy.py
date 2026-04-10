@@ -5,10 +5,11 @@ import sys
 from pathlib import Path
 
 from truffile.storage import StorageService
-from truffile.client import TruffleClient, resolve_mdns
+from truffile.client import TruffleClient
 from truffile.schema import validate_app_dir
 from truffile.deploy import build_deploy_plan, deploy_with_builder
 
+from .connect import _resolve_connected_device
 from .ui import C, ARROW, CROSS, DOT, Spinner, ScrollingLog, error, warn, info, success
 
 
@@ -93,10 +94,8 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         success("Dry run complete (no device changes made)")
         return 0
 
-    device = storage.state.last_used_device
-    if not device:
-        error("No device connected")
-        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+    device, ip = await _resolve_connected_device(storage)
+    if not device or not ip:
         return 1
 
     token = storage.get_token(device)
@@ -105,18 +104,8 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return 1
 
-    spinner = Spinner(f"Resolving {device}")
-    spinner.start()
-    try:
-        ip = await resolve_mdns(f"{device}.local")
-        spinner.stop(success=True)
-    except RuntimeError:
-        spinner.fail(f"Could not resolve {device}.local")
-        print(f"  {C.DIM}Try: ping {device}.local{C.RESET}")
-        return 1
-
     address = f"{ip}:80"
-    client = TruffleClient(address, token=token)
+    client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
     deploy_task = None
 
     loop = asyncio.get_event_loop()

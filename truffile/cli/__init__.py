@@ -25,6 +25,83 @@ def main() -> int:
     return guard.code
 
 
+_DEVICE_REQUIRING_COMMANDS = {
+    None,  # default → chat
+    "chat",
+    "infer",
+    "deploy",
+    "delete",
+    "models",
+}
+
+
+def _command_needs_device(args) -> bool:
+    cmd = getattr(args, "command", None)
+    if cmd in _DEVICE_REQUIRING_COMMANDS:
+        return True
+    if cmd == "list":
+        return getattr(args, "what", "") == "apps"
+    return False
+
+
+def _normalize_device_name(raw: str) -> str:
+    s = raw.strip()
+    if not s:
+        return s
+    if s.lower().startswith("truffle-"):
+        return s.lower()
+    # accept bare number ("1234"), strip non-digits if present
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if digits:
+        return f"truffle-{digits}"
+    return s
+
+
+def _run_onboarding(storage) -> int:
+    """Interactively collect a device number and user id, then run cmd_connect.
+
+    Returns 0 on success, non-zero on failure. On success, the storage object
+    is updated in-place with the new device + last_used_device + client_user_id.
+    """
+    from .ui import C, MUSHROOM
+    from .connect import cmd_connect
+    from types import SimpleNamespace
+
+    print()
+    print(f"  {MUSHROOM} {C.BOLD}Welcome to truffile!{C.RESET}")
+    print(f"  {C.DIM}Let's get you connected to your Truffle.{C.RESET}")
+    print()
+
+    try:
+        raw_device = input(f"{C.CYAN}?{C.RESET} Truffle number (e.g. 1234 or truffle-1234): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return 130
+    device_name = _normalize_device_name(raw_device)
+    if not device_name:
+        print(f"  {C.RED}A truffle number is required.{C.RESET}")
+        return 1
+
+    stored_uid = (storage.state.client_user_id or "").strip()
+    default_hint = f" [{stored_uid}]" if stored_uid else ""
+    try:
+        raw_uid = input(f"{C.CYAN}?{C.RESET} User ID{default_hint}: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return 130
+    user_id = raw_uid or stored_uid
+    if not user_id:
+        print(f"  {C.RED}A user id is required.{C.RESET}")
+        return 1
+
+    print()
+    print(f"  {C.DIM}Running:{C.RESET} {C.CYAN}truffile connect {device_name} --user-id {user_id}{C.RESET}")
+    print()
+
+    connect_args = SimpleNamespace(device=device_name, user_id=user_id)
+    return run_async(cmd_connect(connect_args, storage))
+
+
 def _main() -> int:
     parser = argparse.ArgumentParser(prog="truffile", add_help=False)
     parser.add_argument("--resume", action="store_true", help="resume a previous task")
@@ -37,6 +114,7 @@ def _main() -> int:
     # connect
     conn_p = sub.add_parser("connect", help="connect to a truffle")
     conn_p.add_argument("device", help="device name (e.g. truffle-1234)")
+    conn_p.add_argument("--user-id", type=str, default=None, dest="user_id", help="user id from recovery codes (skips interactive prompt)")
 
     # disconnect
     disc_p = sub.add_parser("disconnect", help="disconnect from device(s)")
@@ -72,16 +150,58 @@ def _main() -> int:
 
     # chat (agent runtime with apps)
     chat_p = sub.add_parser("chat", help="agent chat with apps")
-    chat_p.add_argument("prompt", nargs="?", default=None)
-    chat_p.add_argument("--resume", action="store_true", help="resume a previous task")
+    chat_p.add_argument("prompt_words", nargs="*", help="prompt text (joined). if omitted, drops into REPL")
+    chat_p.add_argument("--resume", action="store_true", help="resume a previous task (interactive picker)")
+    # one-shot prompt sources
+    chat_p.add_argument("--prompt-file", type=str, default=None, help="read prompt from file")
+    chat_p.add_argument("--stdin", action="store_true", help="force read prompt from stdin")
+    # task targeting
+    chat_p.add_argument("--task-id", type=str, default=None, dest="task_id", help="resume a specific task by id")
+    chat_p.add_argument("--resume-last", action="store_true", dest="resume_last", help="resume the most recent task")
+    # app attachment
+    chat_p.add_argument("--app", action="append", default=None, help="attach app by name, slug, or uuid (repeatable)")
+    # discovery
+    chat_p.add_argument("--list-apps", action="store_true", dest="list_apps", help="list installed apps and exit")
+    chat_p.add_argument("--list-tasks", nargs="?", const=15, type=int, default=None, dest="list_tasks", help="list recent tasks and exit (optional N, default 15)")
+    # output
+    chat_p.add_argument("--json", action="store_true", help="emit structured json result")
+    chat_p.add_argument("--show-thinking", action="store_true", dest="show_thinking", help="include thinking summaries on stderr")
+    chat_p.add_argument("--quiet", "-q", action="store_true", help="suppress decoration on stderr")
+    chat_p.add_argument("--timeout", type=float, default=None, help="max seconds to wait for task to settle")
 
     # infer (raw model inference)
     infer_p = sub.add_parser("infer", help="raw model inference")
-    infer_p.add_argument("--model", type=str, default=None)
-    infer_p.add_argument("--system", type=str, default=None)
-    infer_p.add_argument("--no-stream", action="store_true")
-    infer_p.add_argument("--no-tools", action="store_true")
-    infer_p.add_argument("--mcp", type=str, action="append", default=None)
+    infer_p.add_argument("prompt_words", nargs="*", help="prompt text (joined). if omitted, drops into REPL")
+    # conversation
+    infer_p.add_argument("--system", type=str, default=None, help="system prompt")
+    infer_p.add_argument("--prompt-file", type=str, default=None, help="read prompt from file")
+    infer_p.add_argument("--stdin", action="store_true", help="force read prompt from stdin")
+    # model
+    infer_p.add_argument("--model", type=str, default=None, help="override default model")
+    infer_p.add_argument("--list-models", action="store_true", help="list available models and exit")
+    # sampling
+    infer_p.add_argument("--temperature", type=float, default=None)
+    infer_p.add_argument("--top-p", type=float, default=None, dest="top_p")
+    infer_p.add_argument("--max-tokens", type=int, default=None, dest="max_tokens")
+    infer_p.add_argument("--reasoning", choices=["on", "off"], default=None)
+    infer_p.add_argument("--no-default-tools", action="store_true", help="disable web_search/web_fetch")
+    infer_p.add_argument("--no-tools", action="store_true", help=argparse.SUPPRESS)  # deprecated alias
+    infer_p.add_argument("--max-rounds", type=int, default=None, dest="max_rounds", help="max tool-use rounds")
+    # output
+    infer_p.add_argument("--json", action="store_true", help="emit structured json result")
+    infer_p.add_argument("--show-reasoning", action="store_true", help="include reasoning in plain output")
+    infer_p.add_argument("--stream", dest="force_stream", action="store_true", help="force streaming output")
+    infer_p.add_argument("--no-stream", action="store_true", help="disable streaming output")
+    infer_p.add_argument("--quiet", "-q", action="store_true", help="suppress decoration on stderr")
+    # images
+    infer_p.add_argument("--image", action="append", default=None, help="attach image (path or URL, repeatable)")
+    # mcp
+    infer_p.add_argument("--mcp", type=str, action="append", default=None, help="connect to MCP server (repeatable)")
+    infer_p.add_argument("--list-tools", action="store_true", help="list available tools and exit")
+    infer_p.add_argument("--call", type=str, default=None, help="call a tool by name and exit")
+    infer_p.add_argument("--tool-args", type=str, default=None, dest="tool_args", help="JSON args for --call")
+    # misc
+    infer_p.add_argument("--timeout", type=float, default=None, help="per-request timeout in seconds")
 
     # help
     sub.add_parser("help", help="show help")
@@ -101,15 +221,38 @@ def _main() -> int:
         render_glow_demo(duration=999999.0)
         return 0
 
+    from truffile.storage import StorageService, StoredDevice
+    storage = StorageService()
+
+    # in-container short-circuit: if we're running inside a Truffle app
+    # container (APP_ID + APP_SESSION_TOKEN + GRPC_ADDRESS all set in env),
+    # inject a synthetic device into in-memory storage pointing at the host
+    # firmware. From here on, every device-requiring command resolves to it
+    # without ever touching mDNS, persistence, or the onboarding prompt.
+    from .in_container import probe_in_container_device
+    _ic_info = probe_in_container_device()
+    if _ic_info is not None:
+        if not any(d.name == _ic_info.device_name for d in storage.state.devices):
+            storage.state.devices.append(
+                StoredDevice(name=_ic_info.device_name, token=_ic_info.session_token)
+            )
+        storage.state.last_used_device = _ic_info.device_name
+        storage._in_container_info = _ic_info  # type: ignore[attr-defined]
+
+    # first-run onboarding: if a device-requiring command was issued and there
+    # is no connected device, walk the user through `truffile connect` first.
+    if _command_needs_device(args) and not storage.state.last_used_device:
+        rc = _run_onboarding(storage)
+        if rc != 0:
+            return rc
+
     if args.command is None:
-        from truffile.storage import StorageService
-        storage = StorageService()
         from .chat import cmd_chat
         from types import SimpleNamespace
-        return run_async(cmd_chat(SimpleNamespace(resume=args.resume, prompt=None), storage))
-
-    from truffile.storage import StorageService
-    storage = StorageService()
+        return run_async(cmd_chat(
+            SimpleNamespace(resume=args.resume, prompt_words=[]),
+            storage,
+        ))
 
     if args.command == "scan":
         from .connect import cmd_scan

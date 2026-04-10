@@ -93,3 +93,18 @@ class StorageService:
 
     def list_devices(self) -> list[str]:
         return [d.name for d in self.state.devices]
+
+    def app_id_for_device(self, name: str) -> str | None:
+        """Return the in-container APP_ID for `name`, else None.
+
+        Set by `truffile.cli.in_container` injection at startup. On a normal
+        LAN dev machine `_in_container_info` is never set and this always
+        returns None — TruffleClient receives `app_id=None` and behaves
+        identically to today.
+        """
+        info = getattr(self, "_in_container_info", None)
+        if info is None:
+            return None
+        if getattr(info, "device_name", None) != name:
+            return None
+        return getattr(info, "app_id", None) or None
