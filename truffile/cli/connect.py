@@ -3,10 +3,23 @@ import asyncio
 from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
 
+from .in_container import probe_in_container_device
 from .ui import C, DOT, Spinner, error, success, info
 
 
 async def cmd_connect(args, storage: StorageService) -> int:
+    # In-container short-circuit: the runtime already gave us a session
+    # token + gRPC address, so there is nothing to pair.
+    ic_info = probe_in_container_device()
+    if ic_info is not None:
+        success(f"Already connected to {C.BOLD}{ic_info.device_name}{C.RESET} via in-container session")
+        print(f"  {C.DIM}address:  {ic_info.grpc_address}{C.RESET}")
+        if ic_info.firmware_version:
+            print(f"  {C.DIM}firmware: {ic_info.firmware_version}{C.RESET}")
+        if ic_info.probe_failed:
+            print(f"  {C.DIM}note: firmware probe was incomplete; commands may surface real errors.{C.RESET}")
+        return 0
+
     device_name = args.device
 
     spinner = Spinner(f"Resolving {device_name}.local")
@@ -50,20 +63,31 @@ async def cmd_connect(args, storage: StorageService) -> int:
         finally:
             await client.close()
 
-    print()
-    print(f"  {C.DIM}Make sure you have:{C.RESET}")
-    print(f"  {C.DIM}{DOT} Onboarded with the Truffle app{C.RESET}")
-    print(f"  {C.DIM}{DOT} Your User ID from the recovery codes{C.RESET}")
-    print()
+    user_id = (getattr(args, "user_id", None) or "").strip()
+    stored_uid = (storage.state.client_user_id or "").strip()
 
-    try:
-        user_id = input(f"{C.CYAN}?{C.RESET} Enter your User ID: ").strip()
-    except (KeyboardInterrupt, EOFError):
+    if not user_id:
         print()
-        raise KeyboardInterrupt()
+        print(f"  {C.DIM}Make sure you have:{C.RESET}")
+        print(f"  {C.DIM}{DOT} Onboarded with the Truffle app{C.RESET}")
+        print(f"  {C.DIM}{DOT} Your User ID from the recovery codes{C.RESET}")
+        print()
+        try:
+            default_hint = f" [{stored_uid}]" if stored_uid else ""
+            entered = input(f"{C.CYAN}?{C.RESET} Enter your User ID{default_hint}: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            raise KeyboardInterrupt()
+        user_id = entered or stored_uid
+
     if not user_id:
         error("User ID is required")
         return 1
+
+    # persist for future runs and onboarding default
+    if user_id != stored_uid:
+        storage.state.client_user_id = user_id
+        storage.save()
 
     spinner = Spinner("Connecting to device")
     spinner.start()
@@ -111,6 +135,13 @@ async def cmd_connect(args, storage: StorageService) -> int:
 
 
 def cmd_disconnect(args, storage: StorageService) -> int:
+    # In-container: the session token is provided by the runtime, not by us.
+    # We can't revoke it from here, so disconnect is a no-op.
+    if probe_in_container_device() is not None:
+        info("disconnect is a no-op inside a Truffle app container")
+        print(f"  {C.DIM}the session token comes from the runtime and lives for the container lifetime.{C.RESET}")
+        return 0
+
     target = getattr(args, "device", "all")
     if target == "all":
         storage.clear_all()
@@ -124,6 +155,38 @@ def cmd_disconnect(args, storage: StorageService) -> int:
 
 
 async def cmd_scan(args, storage: StorageService) -> int:
+    # In-container short-circuit: the host firmware is the only "device" we
+    # can possibly reach from inside a CNI-isolated app container, and we
+    # already know how to reach it. Skip mDNS entirely.
+    ic_info = probe_in_container_device()
+    if ic_info is not None:
+        print(f"{C.DIM}[in-container mode] skipping mDNS scan{C.RESET}")
+        print()
+        print(f"{C.BOLD}DEVICES{C.RESET}")
+        print(f"{C.DIM}-------{C.RESET}")
+        marker = "(this device)"
+        print(f"  {C.GREEN}*{C.RESET} {C.BOLD}{ic_info.device_name}{C.RESET}    {C.DIM}{marker}{C.RESET}")
+        if ic_info.serial:
+            print(f"      {C.DIM}serial:{C.RESET}    {ic_info.serial}")
+        if ic_info.ip_address:
+            print(f"      {C.DIM}ip:{C.RESET}        {ic_info.ip_address}")
+        if ic_info.mac_address:
+            print(f"      {C.DIM}mac:{C.RESET}       {ic_info.mac_address}")
+        if ic_info.firmware_version:
+            print(f"      {C.DIM}firmware:{C.RESET}  {ic_info.firmware_version}")
+        if ic_info.timezone:
+            print(f"      {C.DIM}timezone:{C.RESET}  {ic_info.timezone}")
+        print(f"      {C.DIM}via:{C.RESET}       in-container short-circuit ({ic_info.grpc_address})")
+        print()
+        print(f"{C.DIM}auth:       APP_SESSION_TOKEN (installing-user session){C.RESET}")
+        print(f"{C.DIM}transport:  native gRPC -> envoy :80 -> firmware UDS @tfw-core{C.RESET}")
+        print(f"{C.DIM}discovery:  none (already connected){C.RESET}")
+        if ic_info.probe_failed:
+            print()
+            print(f"  {C.DIM}note: firmware probe was incomplete; some fields may be missing.{C.RESET}")
+        print()
+        return 0
+
     try:
         from zeroconf import ServiceBrowser, ServiceListener, Zeroconf, IPVersion
     except ImportError:
@@ -233,6 +296,12 @@ async def cmd_scan(args, storage: StorageService) -> int:
 
 
 async def _resolve_connected_device(storage: StorageService) -> tuple[str, str] | tuple[None, None]:
+    # In-container short-circuit: skip mDNS, return the env-provided host
+    # for the synthetic device that the CLI startup injected into storage.
+    ic_info = getattr(storage, "_in_container_info", None)
+    if ic_info is not None:
+        return ic_info.device_name, ic_info.host
+
     device = storage.state.last_used_device
     if not device:
         error("No device connected")

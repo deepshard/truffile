@@ -447,10 +447,12 @@ def _run_single_chat_request(
     payload: dict[str, Any],
     settings: ChatSettings,
     stream: bool,
+    quiet: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, bool]:
-    orb = create_thinking_orb()
-    orb.start(ParticleOrb.STATE_ACTIVE)
-    orb_stopped = False
+    orb = None if quiet else create_thinking_orb()
+    if orb is not None:
+        orb.start(ParticleOrb.STATE_ACTIVE)
+    orb_stopped = quiet
     if stream:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
@@ -496,11 +498,11 @@ def _run_single_chat_request(
                         reasoning_chunk = delta.get("reasoning")
                         if isinstance(reasoning_chunk, str) and reasoning_chunk:
                             # stop orb before first visible output
-                            if not orb_stopped:
+                            if not orb_stopped and orb is not None:
                                 orb.stop()
                                 orb_stopped = True
                             reasoning_parts.append(reasoning_chunk)
-                            if settings.reasoning:
+                            if settings.reasoning and not quiet:
                                 if not reasoning_stream_started:
                                     print(f"{C.GRAY}thinking:{C.RESET}")
                                     reasoning_stream_started = True
@@ -509,11 +511,12 @@ def _run_single_chat_request(
                         content_chunk = delta.get("content")
                         if isinstance(content_chunk, str) and content_chunk:
                             # stop orb before first visible output
-                            if not orb_stopped:
+                            if not orb_stopped and orb is not None:
                                 orb.stop()
                                 orb_stopped = True
                             content_parts.append(content_chunk)
-                            print(content_chunk, end="", flush=True)
+                            if not quiet:
+                                print(content_chunk, end="", flush=True)
 
                         for tc in delta.get("tool_calls") or []:
                             if not isinstance(tc, dict):
@@ -542,7 +545,7 @@ def _run_single_chat_request(
         except KeyboardInterrupt:
             interrupted = True
         finally:
-            if not orb_stopped:
+            if not orb_stopped and orb is not None:
                 orb.stop()
                 orb_stopped = True
 
@@ -554,11 +557,11 @@ def _run_single_chat_request(
             msg["tool_calls"] = [tool_calls_by_index[i] for i in sorted(tool_calls_by_index)]
         full_content = "".join(content_parts).strip()
         # content was already streamed to stdout chunk by chunk
-        if reasoning_stream_started or content_parts:
+        if not quiet and (reasoning_stream_started or content_parts):
             print()
 
         # markdown re-render: clear raw streamed content, replace with rich formatted
-        if full_content and has_markdown(full_content):
+        if not quiet and full_content and has_markdown(full_content):
             try:
                 width = shutil.get_terminal_size().columns
                 # only clear the content lines (not reasoning which was above)
@@ -566,7 +569,7 @@ def _run_single_chat_request(
                 render_markdown(full_content, lines_to_clear)
             except Exception:
                 pass
-        if interrupted:
+        if interrupted and not quiet:
             print(f"{C.YELLOW}response interrupted{C.RESET}")
         return msg, usage, interrupted
 
@@ -575,10 +578,10 @@ def _run_single_chat_request(
         resp.raise_for_status()
         body = resp.json()
     finally:
-        if not orb_stopped:
+        if not orb_stopped and orb is not None:
             orb.stop()
             orb_stopped = True
-    if settings.json_mode:
+    if settings.json_mode and not quiet:
         print(json.dumps(body, indent=2))
 
     choices = body.get("choices", [])
@@ -592,11 +595,12 @@ def _run_single_chat_request(
     if isinstance(msg.get("tool_calls"), list):
         out["tool_calls"] = msg.get("tool_calls")
 
-    _print_reasoning_and_response(
-        str(out.get("reasoning_content") or ""),
-        str(out.get("content") or ""),
-        bool(settings.reasoning),
-    )
+    if not quiet:
+        _print_reasoning_and_response(
+            str(out.get("reasoning_content") or ""),
+            str(out.get("content") or ""),
+            bool(settings.reasoning),
+        )
     return out, body.get("usage") if isinstance(body.get("usage"), dict) else None, False
 
 
@@ -610,6 +614,7 @@ async def _run_chat_turn(
     mcp_client: ChatMCPClient,
     messages: list[dict[str, Any]],
     user_message: dict[str, Any],
+    quiet: bool = False,
 ) -> int:
     messages.append(user_message)
 
@@ -630,10 +635,10 @@ async def _run_chat_turn(
             tools=tools or None,
         )
         assistant_msg, usage, interrupted = _run_single_chat_request(
-            client=client, url=url, headers=headers, payload=payload, settings=settings, stream=stream
+            client=client, url=url, headers=headers, payload=payload, settings=settings, stream=stream, quiet=quiet
         )
         messages.append(assistant_msg)
-        if isinstance(usage, dict):
+        if isinstance(usage, dict) and not quiet:
             _print_usage(usage)
         if interrupted:
             return 130
@@ -655,13 +660,22 @@ async def _run_chat_turn(
             except json.JSONDecodeError:
                 parsed_args = {"_raw": raw_args}
             if name in {"web_search", "web_fetch"}:
-                print(f"{C.CYAN}{HAMMER} tool{C.RESET} {name}")
+                if not quiet:
+                    print(f"{C.CYAN}{HAMMER} tool{C.RESET} {name}")
+                else:
+                    sys.stderr.write(f"{HAMMER} tool {name}\n")
                 tool_result = _execute_default_tool(name, parsed_args)
             elif mcp_client.has_tool(name):
-                print(f"{C.CYAN}{HAMMER} mcp{C.RESET} {name}")
+                if not quiet:
+                    print(f"{C.CYAN}{HAMMER} mcp{C.RESET} {name}")
+                else:
+                    sys.stderr.write(f"{HAMMER} mcp {name}\n")
                 tool_result = await mcp_client.call_tool(name, parsed_args)
             else:
-                print(f"{C.YELLOW}{WARN} unknown tool{C.RESET} {name}")
+                if not quiet:
+                    print(f"{C.YELLOW}{WARN} unknown tool{C.RESET} {name}")
+                else:
+                    sys.stderr.write(f"{WARN} unknown tool {name}\n")
                 tool_result = {"error": f"unknown tool '{name}'"}
             messages.append(
                 {
@@ -671,34 +685,334 @@ async def _run_chat_turn(
                 }
             )
 
-    warn("Reached max tool rounds without a final assistant response")
+    if quiet:
+        sys.stderr.write("Reached max tool rounds without a final assistant response\n")
+    else:
+        warn("Reached max tool rounds without a final assistant response")
     return 1
 
 
-async def cmd_infer(args, storage: StorageService) -> int:
+def _is_oneshot_invocation(args) -> bool:
+    if getattr(args, "list_models", False):
+        return True
+    if getattr(args, "list_tools", False):
+        return True
+    if getattr(args, "call", None):
+        return True
+    if getattr(args, "prompt_file", None):
+        return True
+    if getattr(args, "stdin", False):
+        return True
     prompt_words = getattr(args, "prompt_words", None)
-    prompt = " ".join(prompt_words).strip() if prompt_words else ""
+    if prompt_words:
+        return True
+    # piped stdin auto-detects to one-shot
+    if not sys.stdin.isatty():
+        return True
+    return False
+
+
+def _eprint_factory(quiet: bool) -> Callable[[str], None]:
+    if quiet:
+        return lambda _msg: None
+    def _eprint(msg: str) -> None:
+        sys.stderr.write(msg + "\n")
+        sys.stderr.flush()
+    return _eprint
+
+
+def _read_prompt_from_args(args) -> str:
+    parts: list[str] = []
+    prompt_words = getattr(args, "prompt_words", None) or []
+    if prompt_words:
+        parts.append(" ".join(prompt_words).strip())
+    prompt_file = getattr(args, "prompt_file", None)
+    if prompt_file:
+        path = Path(prompt_file).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"--prompt-file not found: {path}")
+        parts.append(path.read_text(encoding="utf-8").strip())
+    use_stdin = bool(getattr(args, "stdin", False)) or (
+        not sys.stdin.isatty() and not prompt_words and not prompt_file
+    )
+    if use_stdin:
+        try:
+            data = sys.stdin.read()
+        except Exception:
+            data = ""
+        if data:
+            parts.append(data.strip())
+    return "\n\n".join(p for p in parts if p)
+
+
+def _apply_settings_overrides(args, settings: ChatSettings) -> None:
+    if getattr(args, "system", None) is not None:
+        settings.system_prompt = args.system
+    if getattr(args, "temperature", None) is not None:
+        settings.temperature = float(args.temperature)
+    if getattr(args, "top_p", None) is not None:
+        settings.top_p = float(args.top_p)
+    if getattr(args, "max_tokens", None) is not None:
+        settings.max_tokens = max(1, int(args.max_tokens))
+    if getattr(args, "max_rounds", None) is not None:
+        settings.max_tool_rounds = max(1, int(args.max_rounds))
+    if getattr(args, "reasoning", None) is not None:
+        settings.reasoning = args.reasoning == "on"
+    if getattr(args, "no_default_tools", False) or getattr(args, "no_tools", False):
+        settings.default_tools = False
+    if getattr(args, "json", False):
+        settings.json_mode = True
+    if getattr(args, "force_stream", False):
+        settings.stream = True
+    if getattr(args, "no_stream", False):
+        settings.stream = False
+
+
+def _resolve_oneshot_images(args, eprint: Callable[[str], None]) -> list[str]:
+    raw_images = getattr(args, "image", None) or []
+    out: list[str] = []
+    for src in raw_images:
+        image_bytes, mime, desc = _resolve_image_bytes_and_mime(src)
+        out.append(_to_data_url(image_bytes, mime))
+        eprint(f"{CHECK} attached image: {desc}")
+    return out
+
+
+def _make_user_message_multi(text: str, image_data_urls: list[str]) -> dict[str, Any]:
+    if not image_data_urls:
+        return {"role": "user", "content": text}
+    parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    for url in image_data_urls:
+        parts.append({"type": "image_url", "image_url": {"url": url}})
+    return {"role": "user", "content": parts}
+
+
+async def _connect_oneshot_mcp(args, eprint: Callable[[str], None]) -> ChatMCPClient:
+    """Connect to all --mcp endpoints. Caller must close()."""
+    mcp_client = ChatMCPClient()
+    endpoints = getattr(args, "mcp", None) or []
+    for endpoint in endpoints:
+        endpoint = endpoint.strip()
+        if not endpoint.startswith(("http://", "https://")):
+            raise RuntimeError(f"--mcp endpoint must start with http:// or https://: {endpoint}")
+        eprint(f"connecting to mcp: {endpoint}")
+        await mcp_client.connect_streamable_http(endpoint)
+        eprint(f"{CHECK} mcp connected: {endpoint} ({len(mcp_client.list_tool_names())} tools)")
+    return mcp_client
+
+
+async def _run_oneshot(args, storage: StorageService) -> int:
+    quiet = bool(getattr(args, "quiet", False))
+    eprint = _eprint_factory(quiet)
+    json_out = bool(getattr(args, "json", False))
+
+    # device + IP
+    device, ip = await _resolve_connected_device(storage)
+    if not device or not ip:
+        return 1
+
+    # --list-models: short circuit, no model resolution
+    if getattr(args, "list_models", False):
+        with httpx.Client(timeout=getattr(args, "timeout", None) or 30.0) as http:
+            try:
+                models = _fetch_models_payload(http, ip)
+            except Exception as exc:
+                eprint(f"failed to list models: {exc}")
+                return 1
+        if json_out:
+            print(json.dumps({"models": models}, indent=2))
+        else:
+            for m in models:
+                name = m.get("name") or m.get("id") or "<unnamed>"
+                print(name)
+        return 0
+
+    # resolve model
+    requested_model = getattr(args, "model", None)
+    if requested_model:
+        model = requested_model
+    else:
+        eprint(f"resolving default model on {device}")
+        model = await _default_model(ip)
+        if not model:
+            eprint("failed to resolve default model from IF2")
+            return 1
+
+    settings = ChatSettings(model=model)
+    # in one-shot mode, default to non-streaming for clean stdout capture.
+    settings.stream = False
+    _apply_settings_overrides(args, settings)
+
+    timeout = getattr(args, "timeout", None)
+    http_timeout: Any = timeout if timeout else None
+
+    url = f"http://{ip}/if2/v1/chat/completions"
+    from .in_container import in_container_http_headers
+    headers = {"Content-Type": "application/json", **in_container_http_headers()}
+
+    mcp_client: ChatMCPClient | None = None
+    try:
+        try:
+            mcp_client = await _connect_oneshot_mcp(args, eprint)
+        except Exception as exc:
+            eprint(f"mcp connect failed: {exc}")
+            return 1
+
+        # --list-tools: print built-ins + any MCP tools, exit
+        if getattr(args, "list_tools", False):
+            built_ins = ["web_search", "web_fetch"] if settings.default_tools else []
+            mcp_tools = mcp_client.list_tool_names()
+            if json_out:
+                print(json.dumps({"built_in": built_ins, "mcp": mcp_tools}, indent=2))
+            else:
+                for name in built_ins:
+                    print(f"built-in:{name}")
+                for name in mcp_tools:
+                    print(f"mcp:{name}")
+            return 0
+
+        # --call <tool>: one-off invocation
+        call_tool = getattr(args, "call", None)
+        if call_tool:
+            raw_args = getattr(args, "tool_args", None) or "{}"
+            try:
+                parsed_args = json.loads(raw_args)
+            except json.JSONDecodeError as exc:
+                eprint(f"--tool-args is not valid JSON: {exc}")
+                return 1
+            if not isinstance(parsed_args, dict):
+                eprint("--tool-args must be a JSON object")
+                return 1
+            if call_tool in {"web_search", "web_fetch"} and settings.default_tools:
+                result = _execute_default_tool(call_tool, parsed_args)
+            elif mcp_client.has_tool(call_tool):
+                result = await mcp_client.call_tool(call_tool, parsed_args)
+            else:
+                eprint(f"unknown tool: {call_tool} (use --list-tools to see available)")
+                return 1
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 0 if not (isinstance(result, dict) and (result.get("error") or result.get("is_error"))) else 1
+
+        # prompt path
+        try:
+            prompt = _read_prompt_from_args(args)
+        except FileNotFoundError as exc:
+            eprint(str(exc))
+            return 1
+        if not prompt:
+            eprint("no prompt provided (positional, --prompt-file, or stdin required)")
+            return 1
+
+        try:
+            image_urls = _resolve_oneshot_images(args, eprint)
+        except FileNotFoundError as exc:
+            eprint(str(exc))
+            return 1
+        except Exception as exc:
+            eprint(f"failed to attach image: {exc}")
+            return 1
+
+        messages: list[dict[str, Any]] = []
+        if settings.system_prompt:
+            messages.append({"role": "system", "content": settings.system_prompt})
+
+        # we always run quiet inside the helpers and format ourselves below
+        with httpx.Client(timeout=http_timeout) as http:
+            user_message = _make_user_message_multi(prompt, image_urls)
+            rc = await _run_chat_turn(
+                client=http,
+                url=url,
+                headers=headers,
+                model=settings.model,
+                settings=settings,
+                mcp_client=mcp_client,
+                messages=messages,
+                user_message=user_message,
+                quiet=True,
+            )
+        if rc == 130:
+            eprint("interrupted")
+            return 130
+        if rc != 0:
+            return rc
+
+        # find the final assistant message
+        final_assistant: dict[str, Any] | None = None
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                final_assistant = msg
+                break
+
+        content = str((final_assistant or {}).get("content") or "")
+        reasoning = str((final_assistant or {}).get("reasoning_content") or "")
+        tool_calls = (final_assistant or {}).get("tool_calls") or []
+
+        if json_out:
+            payload = {
+                "model": settings.model,
+                "device": device,
+                "content": content,
+                "reasoning": reasoning or None,
+                "tool_calls": tool_calls or None,
+                "messages": messages,
+            }
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            if getattr(args, "show_reasoning", False) and reasoning:
+                sys.stderr.write("--- reasoning ---\n")
+                sys.stderr.write(reasoning + "\n")
+                sys.stderr.write("--- end reasoning ---\n")
+            print(content)
+        return 0
+    finally:
+        if mcp_client is not None:
+            with contextlib.suppress(Exception):
+                await mcp_client.disconnect()
+
+
+async def cmd_infer(args, storage: StorageService) -> int:
+    if _is_oneshot_invocation(args):
+        return await _run_oneshot(args, storage)
 
     device, ip = await _resolve_connected_device(storage)
     if not device or not ip:
         return 1
 
-    spinner = Spinner("Resolving default model")
-    spinner.start()
-    model = await _default_model(ip)
-    if not model:
-        spinner.fail("Failed to resolve default model from IF2")
-        return 1
-    spinner.stop(success=True)
+    requested_model = getattr(args, "model", None)
+    if requested_model:
+        model = requested_model
+    else:
+        spinner = Spinner("Resolving default model")
+        spinner.start()
+        model = await _default_model(ip)
+        if not model:
+            spinner.fail("Failed to resolve default model from IF2")
+            return 1
+        spinner.stop(success=True)
 
     settings = ChatSettings(model=model)
+    # apply CLI overrides so the REPL inherits user-provided defaults
+    _apply_settings_overrides(args, settings)
     mcp_client = ChatMCPClient()
     messages: list[dict[str, Any]] = []
+    if settings.system_prompt:
+        messages.append({"role": "system", "content": settings.system_prompt})
     pending_image_data_url: str | None = None
     pending_image_desc: str | None = None
+    # preload first --image as the pending attachment for the next user turn
+    raw_images = getattr(args, "image", None) or []
+    if raw_images:
+        try:
+            image_bytes, mime, desc = _resolve_image_bytes_and_mime(raw_images[0])
+            pending_image_data_url = _to_data_url(image_bytes, mime)
+            pending_image_desc = desc
+        except Exception as exc:
+            error(f"failed to attach image: {exc}")
+            return 1
 
     url = f"http://{ip}/if2/v1/chat/completions"
-    headers = {"Content-Type": "application/json"}
+    from .in_container import in_container_http_headers
+    headers = {"Content-Type": "application/json", **in_container_http_headers()}
 
     try:
         spinner = Spinner(f"Connecting to {device}")
@@ -706,32 +1020,26 @@ async def cmd_infer(args, storage: StorageService) -> int:
         with httpx.Client(timeout=None) as client:
             spinner.stop(success=True)
 
+            # auto-connect any --mcp endpoints
+            for endpoint in (getattr(args, "mcp", None) or []):
+                endpoint = endpoint.strip()
+                if not endpoint.startswith(("http://", "https://")):
+                    error(f"--mcp endpoint must start with http:// or https://: {endpoint}")
+                    return 1
+                try:
+                    await mcp_client.connect_streamable_http(endpoint)
+                    print(f"{C.GREEN}{CHECK}{C.RESET} mcp connected: {endpoint} ({len(mcp_client.list_tool_names())} tools)")
+                except Exception as exc:
+                    error(f"mcp connect failed: {exc}")
+                    return 1
+
             # REPL mode
             show_infer_welcome(model=settings.model, device=device)
+            if pending_image_desc:
+                print(f"{C.MAGENTA}[attach]{C.RESET} pending image: {pending_image_desc}")
 
             prompt_ui = TrufflePrompt("> ", INFER_COMMANDS)
             try:
-                if prompt:
-                    print(f"{C.CYAN}> {prompt}{C.RESET}")
-                    rc = await _run_chat_turn(
-                        client=client,
-                        url=url,
-                        headers=headers,
-                        model=settings.model,
-                        settings=settings,
-                        mcp_client=mcp_client,
-                        messages=messages,
-                        user_message=_make_user_message(prompt, pending_image_data_url),
-                    )
-                    if rc != 0:
-                        if rc == 130:
-                            return 0
-                        else:
-                            return rc
-                    else:
-                        pending_image_data_url = None
-                        pending_image_desc = None
-
                 while True:
                     raw = await prompt_ui.get_input()
                     if raw is None:

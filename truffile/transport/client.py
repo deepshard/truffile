@@ -73,9 +73,10 @@ class UploadResult:
 
 
 class TruffleClient:
-    def __init__(self, address: str, token: str):
+    def __init__(self, address: str, token: str, app_id: str | None = None):
         self.address = address
         self.token = token
+        self.app_id = (app_id or "").strip() or None
         self.channel: aio.Channel | None = None
         self.stub: TruffleOSStub | None = None
         self.app_uuid: str | None = None
@@ -90,7 +91,22 @@ class TruffleClient:
 
     @property
     def _metadata(self) -> list:
-        return [("session", self.token)]
+        md: list = [("session", self.token)]
+        if self.app_id:
+            md.append(("app-id", self.app_id))
+        return md
+
+    def _http_headers(self) -> dict[str, str]:
+        """Defensive headers for raw httpx calls.
+
+        Only emitted when running in-container (i.e. when an app_id is set).
+        On a normal LAN dev connection app_id is None and this returns {},
+        so the existing /containers/* and /upload behaviour is byte-identical
+        to today.
+        """
+        if not self.app_id:
+            return {}
+        return {"session": self.token, "app-id": self.app_id}
 
     async def connect(self, timeout: float = 15.0):
         self.channel = aio.insecure_channel(
@@ -187,7 +203,7 @@ class TruffleClient:
         process_pb.cwd = cwd
 
     async def _sse_events(self, client: httpx.AsyncClient, url: str, body: dict) -> AsyncIterator[tuple[str, str]]:
-        async with client.stream("POST", url, json=body, timeout=None) as r:
+        async with client.stream("POST", url, json=body, headers=self._http_headers(), timeout=None) as r:
             r.raise_for_status()
             event = "message"
             data_parts = []
@@ -275,7 +291,7 @@ class TruffleClient:
                 try:
                     with path.open("rb") as fh:
                         files = {"file": (path.name, fh)}
-                        r = await client.post(url, params={"path": dest}, files=files)
+                        r = await client.post(url, params={"path": dest}, files=files, headers=self._http_headers())
                     r.raise_for_status()
                     data = r.json()
                     return UploadResult(
