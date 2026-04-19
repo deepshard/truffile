@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import time
+from typing import Callable
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -18,6 +19,7 @@ TRUFFILE_STYLE = Style.from_dict({
     "continuation": "#666666",
     "bottom-toolbar": "noreverse #555555",
     "bottom-toolbar.text": "noreverse #555555",
+    "bottom-toolbar.attachment": "noreverse #d19a66 bold",
     # dropdown
     "completion-menu.completion": "bg:#2a2a2a #56b6c2",
     "completion-menu.completion.current": "bg:#3a3a4a #56b6c2 bold",
@@ -111,17 +113,51 @@ class TrufflePrompt:
         self._prompt_text = prompt_text
         self._ctrlc_time: float | None = None
         self.task_name: str = ""
+        self._attachments: list[str] = []
+        self._live_text_transformer: Callable[[str], str | None] | None = None
+        self._applying_live_transform = False
+        self._session.default_buffer.on_text_changed += self._handle_text_changed
 
     def add_commands(self, commands: list[SlashCommand]) -> None:
         self._completer.add_commands(commands)
+
+    def set_attachments(self, attachments: list[str]) -> None:
+        self._attachments = list(attachments)
+
+    def set_live_text_transformer(self, transformer: Callable[[str], str | None] | None) -> None:
+        self._live_text_transformer = transformer
+
+    @property
+    def prompt_text(self) -> str:
+        return self._prompt_text
+
+    def _handle_text_changed(self, buffer) -> None:
+        if self._applying_live_transform or self._live_text_transformer is None:
+            return
+        replacement = self._live_text_transformer(buffer.text)
+        if replacement is None or replacement == buffer.text:
+            return
+        self._applying_live_transform = True
+        try:
+            buffer.text = replacement
+            buffer.cursor_position = len(replacement)
+        finally:
+            self._applying_live_transform = False
 
     @staticmethod
     def _continuation(width: int, line_number: int, wrap_count: int) -> str:
         return "." * (width - 1) + " "
 
     def _bottom_toolbar(self) -> FormattedText:
-        line = _hr(self.task_name)
-        return FormattedText([("", line)])
+        parts: list[tuple[str, str]] = []
+        if self._attachments:
+            for idx, label in enumerate(self._attachments):
+                if idx:
+                    parts.append(("", " "))
+                parts.append(("class:bottom-toolbar.attachment", label))
+            parts.append(("", "\n"))
+        parts.append(("", _hr(self.task_name)))
+        return FormattedText(parts)
 
     async def get_input(self) -> str | None:
         """Returns user text, empty string on single Ctrl+C, None on exit."""
