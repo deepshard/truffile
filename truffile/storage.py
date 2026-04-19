@@ -11,10 +11,20 @@ class StoredDevice:
 
 
 @dataclass
+class StoredObsidianBridge:
+    vault_path: str
+    token: str
+    advertise_host: str
+    port: int = 27125
+    bind_host: str = "0.0.0.0"
+
+
+@dataclass
 class StoredState:
     devices: list[StoredDevice] = field(default_factory=list)
     last_used_device: str | None = None
     client_user_id: str | None = None
+    obsidian_bridge: StoredObsidianBridge | None = None
 
 
 def get_storage_dir() -> Path:
@@ -36,10 +46,18 @@ class StorageService:
             with open(self.state_file, "r") as f:
                 data = json.load(f)
             devices = [StoredDevice(**d) for d in data.get("devices", [])]
+            bridge_data = data.get("obsidian_bridge")
+            obsidian_bridge = None
+            if isinstance(bridge_data, dict):
+                try:
+                    obsidian_bridge = StoredObsidianBridge(**bridge_data)
+                except TypeError:
+                    obsidian_bridge = None
             return StoredState(
                 devices=devices,
                 last_used_device=data.get("last_used_device"),
                 client_user_id=data.get("client_user_id"),
+                obsidian_bridge=obsidian_bridge,
             )
         except (json.JSONDecodeError, KeyError):
             return StoredState()
@@ -49,6 +67,17 @@ class StorageService:
             "devices": [{"name": d.name, "token": d.token} for d in self.state.devices],
             "last_used_device": self.state.last_used_device,
             "client_user_id": self.state.client_user_id,
+            "obsidian_bridge": (
+                {
+                    "vault_path": self.state.obsidian_bridge.vault_path,
+                    "token": self.state.obsidian_bridge.token,
+                    "advertise_host": self.state.obsidian_bridge.advertise_host,
+                    "port": self.state.obsidian_bridge.port,
+                    "bind_host": self.state.obsidian_bridge.bind_host,
+                }
+                if self.state.obsidian_bridge is not None
+                else None
+            ),
         }
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.state_file, "w") as f:
@@ -93,6 +122,17 @@ class StorageService:
 
     def list_devices(self) -> list[str]:
         return [d.name for d in self.state.devices]
+
+    def get_obsidian_bridge(self) -> StoredObsidianBridge | None:
+        return self.state.obsidian_bridge
+
+    def set_obsidian_bridge(self, bridge: StoredObsidianBridge) -> None:
+        self.state.obsidian_bridge = bridge
+        self.save()
+
+    def clear_obsidian_bridge(self) -> None:
+        self.state.obsidian_bridge = None
+        self.save()
 
     def app_id_for_device(self, name: str) -> str | None:
         """Return the in-container APP_ID for `name`, else None.

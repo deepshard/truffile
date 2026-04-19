@@ -4,6 +4,7 @@ import contextlib
 import json
 import mimetypes
 import re
+import shlex
 import shutil
 import signal
 import sys
@@ -12,6 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import unquote, urlparse
 
 import httpx
 
@@ -162,6 +164,14 @@ def _resolve_image_path(raw_path: str) -> Path:
     return path
 
 
+def _normalize_image_source(raw_source: str) -> str:
+    source = raw_source.strip()
+    if source.startswith("file://"):
+        parsed = urlparse(source)
+        return str(Path(unquote(parsed.path)).expanduser())
+    return source
+
+
 def _guess_mime_type(path: Path) -> str:
     mime, _ = mimetypes.guess_type(str(path))
     return mime or "image/jpeg"
@@ -191,20 +201,21 @@ def _normalize_image_for_server(image_bytes: bytes, mime: str) -> tuple[bytes, s
 
 
 def _resolve_image_bytes_and_mime(image_path_or_url: str) -> tuple[bytes, str, str]:
-    if image_path_or_url.startswith("http://") or image_path_or_url.startswith("https://"):
+    normalized_source = _normalize_image_source(image_path_or_url)
+    if normalized_source.startswith("http://") or normalized_source.startswith("https://"):
         with httpx.Client(timeout=60.0) as client:
-            resp = client.get(image_path_or_url)
+            resp = client.get(normalized_source)
             resp.raise_for_status()
             content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             mime = content_type if content_type.startswith("image/") else "image/jpeg"
             size_kib = len(resp.content) / 1024.0
             image_bytes, mime, transcoded = _normalize_image_for_server(resp.content, mime)
-            desc = f"url={image_path_or_url} size={size_kib:.1f} KiB mime={mime}"
+            desc = f"url={normalized_source} size={size_kib:.1f} KiB mime={mime}"
             if transcoded:
                 desc += " (transcoded)"
             return image_bytes, mime, desc
 
-    path = _resolve_image_path(image_path_or_url)
+    path = _resolve_image_path(normalized_source)
     size_kib = path.stat().st_size / 1024.0
     mime = _guess_mime_type(path)
     image_bytes, mime, transcoded = _normalize_image_for_server(path.read_bytes(), mime)
@@ -436,7 +447,8 @@ def _print_infer_help() -> None:
     for sc in INFER_COMMANDS:
         display = f"{sc.name} {sc.arg_hint}" if sc.arg_hint else sc.name
         print(f"  {C.CYAN}{display}{C.RESET} — {sc.description}")
-    print(f"\n{C.DIM}alt+enter for newline · tab to complete commands · ctrl+d to exit{C.RESET}\n")
+    print(f"\n{C.DIM}tip: drag an image path into the prompt to attach it, or use /attach <path-or-url>{C.RESET}")
+    print(f"{C.DIM}alt+enter for newline · tab to complete commands · ctrl+d to exit{C.RESET}\n")
 
 
 def _run_single_chat_request(
@@ -771,10 +783,13 @@ def _apply_settings_overrides(args, settings: ChatSettings) -> None:
 def _resolve_oneshot_images(args, eprint: Callable[[str], None]) -> list[str]:
     raw_images = getattr(args, "image", None) or []
     out: list[str] = []
+    descs: list[str] = []
     for src in raw_images:
         image_bytes, mime, desc = _resolve_image_bytes_and_mime(src)
         out.append(_to_data_url(image_bytes, mime))
-        eprint(f"{CHECK} attached image: {desc}")
+        descs.append(desc)
+    for label in _attachment_labels(descs):
+        eprint(f"{CHECK} attached image: {label}")
     return out
 
 
@@ -785,6 +800,72 @@ def _make_user_message_multi(text: str, image_data_urls: list[str]) -> dict[str,
     for url in image_data_urls:
         parts.append({"type": "image_url", "image_url": {"url": url}})
     return {"role": "user", "content": parts}
+
+
+def _attachment_labels(descs: list[str]) -> list[str]:
+    labels: list[str] = []
+    for idx, desc in enumerate(descs, start=1):
+        suffix = ""
+        if desc.startswith("path="):
+            path_text = desc[len("path="):]
+            if " size=" in path_text:
+                path_text = path_text.split(" size=", 1)[0]
+            suffix = f" {Path(path_text).name}"
+        elif desc.startswith("url="):
+            suffix = " url"
+        labels.append(f"[Image #{idx}]{suffix}")
+    return labels
+
+
+def _attachment_summary(descs: list[str]) -> str:
+    return " ".join(_attachment_labels(descs))
+
+
+def _attachment_buffer_prefix(descs: list[str]) -> str:
+    if not descs:
+        return ""
+    tokens = " ".join(f"[Image #{idx}]" for idx in range(1, len(descs) + 1))
+    return tokens + " "
+
+
+def _looks_like_local_image_source(raw_source: str) -> bool:
+    normalized_source = _normalize_image_source(raw_source)
+    if normalized_source.startswith(("http://", "https://")):
+        return False
+    path = Path(normalized_source).expanduser()
+    if not path.is_file():
+        return False
+    mime = _guess_mime_type(path)
+    return mime.startswith("image/")
+
+
+def _consume_inline_dragged_image_sources(raw_text: str) -> tuple[list[str], str]:
+    stripped = raw_text.strip()
+    if not stripped:
+        return [], ""
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError:
+        return [], stripped
+    if not tokens:
+        return [], stripped
+    normalized: list[str] = []
+    consumed = 0
+    for token in tokens:
+        if not _looks_like_local_image_source(token):
+            break
+        normalized.append(_normalize_image_source(token))
+        consumed += 1
+    if not normalized:
+        return [], stripped
+    return normalized, " ".join(tokens[consumed:]).strip()
+
+
+_ATTACHMENT_TOKEN_PREFIX = re.compile(r"^(?:\s*\[Image #\d+\]\s*)+")
+
+
+def _strip_attachment_tokens(raw_text: str) -> str:
+    return _ATTACHMENT_TOKEN_PREFIX.sub("", raw_text).strip()
 
 
 async def _connect_oneshot_mcp(args, eprint: Callable[[str], None]) -> ChatMCPClient:
@@ -997,15 +1078,16 @@ async def cmd_infer(args, storage: StorageService) -> int:
     messages: list[dict[str, Any]] = []
     if settings.system_prompt:
         messages.append({"role": "system", "content": settings.system_prompt})
-    pending_image_data_url: str | None = None
-    pending_image_desc: str | None = None
-    # preload first --image as the pending attachment for the next user turn
+    pending_image_data_urls: list[str] = []
+    pending_image_descs: list[str] = []
+    # preload any --image flags as pending attachments for the next user turn
     raw_images = getattr(args, "image", None) or []
     if raw_images:
         try:
-            image_bytes, mime, desc = _resolve_image_bytes_and_mime(raw_images[0])
-            pending_image_data_url = _to_data_url(image_bytes, mime)
-            pending_image_desc = desc
+            for src in raw_images:
+                image_bytes, mime, desc = _resolve_image_bytes_and_mime(src)
+                pending_image_data_urls.append(_to_data_url(image_bytes, mime))
+                pending_image_descs.append(desc)
         except Exception as exc:
             error(f"failed to attach image: {exc}")
             return 1
@@ -1035,17 +1117,31 @@ async def cmd_infer(args, storage: StorageService) -> int:
 
             # REPL mode
             show_infer_welcome(model=settings.model, device=device)
-            if pending_image_desc:
-                print(f"{C.MAGENTA}[attach]{C.RESET} pending image: {pending_image_desc}")
+            if pending_image_descs:
+                print(f"{C.MAGENTA}[attach]{C.RESET} pending: {_attachment_summary(pending_image_descs)}")
 
             prompt_ui = TrufflePrompt("> ", INFER_COMMANDS)
+            prompt_ui.set_attachments(_attachment_labels(pending_image_descs))
+            def _live_attach_dragged_images(buffer_text: str) -> str | None:
+                dragged_sources, remaining_text = _consume_inline_dragged_image_sources(buffer_text)
+                if not dragged_sources:
+                    return None
+                for src in dragged_sources:
+                    image_bytes, mime, desc = _resolve_image_bytes_and_mime(src)
+                    pending_image_data_urls.append(_to_data_url(image_bytes, mime))
+                    pending_image_descs.append(desc)
+                prompt_ui.set_attachments(_attachment_labels(pending_image_descs))
+                prefix = _attachment_buffer_prefix(pending_image_descs)
+                return prefix + remaining_text if remaining_text else prefix
+
+            prompt_ui.set_live_text_transformer(_live_attach_dragged_images)
             try:
                 while True:
                     raw = await prompt_ui.get_input()
                     if raw is None:
                         print(f"\n{MUSHROOM} goodbye!")
                         return 0
-                    line = raw.strip()
+                    line = _strip_attachment_tokens(raw)
                     if not line:
                         continue
                     if line in {"/", "/help"}:
@@ -1061,8 +1157,9 @@ async def cmd_infer(args, storage: StorageService) -> int:
                         messages = []
                         if settings.system_prompt:
                             messages.append({"role": "system", "content": settings.system_prompt})
-                        pending_image_data_url = None
-                        pending_image_desc = None
+                        pending_image_data_urls = []
+                        pending_image_descs = []
+                        prompt_ui.set_attachments([])
                         print(f"{C.YELLOW}history reset (and cleared pending attachment){C.RESET}")
                         continue
                     if line in {"/models", "/model"}:
@@ -1251,9 +1348,10 @@ async def cmd_infer(args, storage: StorageService) -> int:
                         src = parts[1].strip()
                         try:
                             image_bytes, mime, desc = _resolve_image_bytes_and_mime(src)
-                            pending_image_data_url = _to_data_url(image_bytes, mime)
-                            pending_image_desc = desc
-                            print(f"{C.GREEN}{CHECK}{C.RESET} attachment ready: {desc}")
+                            pending_image_data_urls.append(_to_data_url(image_bytes, mime))
+                            pending_image_descs.append(desc)
+                            prompt_ui.set_attachments(_attachment_labels(pending_image_descs))
+                            print(f"{C.GREEN}{CHECK}{C.RESET} attachment ready: {_attachment_labels(pending_image_descs)[-1]}")
                         except FileNotFoundError as exc:
                             error(str(exc))
                         except httpx.HTTPError as exc:
@@ -1271,8 +1369,8 @@ async def cmd_infer(args, storage: StorageService) -> int:
                         warn(f"unknown command: {line}. type /help")
                         continue
 
-                    if pending_image_data_url is not None:
-                        print(f"{C.MAGENTA}[attach]{C.RESET} sending with image: {pending_image_desc}")
+                    if pending_image_data_urls:
+                        print(f"{C.MAGENTA}[attach]{C.RESET} sending {_attachment_summary(pending_image_descs)}")
                     rc = await _run_chat_turn(
                         client=client,
                         url=url,
@@ -1281,14 +1379,15 @@ async def cmd_infer(args, storage: StorageService) -> int:
                         settings=settings,
                         mcp_client=mcp_client,
                         messages=messages,
-                        user_message=_make_user_message(line, pending_image_data_url),
+                        user_message=_make_user_message_multi(line, pending_image_data_urls),
                     )
                     if rc != 0:
                         if rc == 130:
                             return 0
                         return rc
-                    pending_image_data_url = None
-                    pending_image_desc = None
+                    pending_image_data_urls = []
+                    pending_image_descs = []
+                    prompt_ui.set_attachments([])
             finally:
                 await mcp_client.disconnect()
         return 0
@@ -1298,5 +1397,3 @@ async def cmd_infer(args, storage: StorageService) -> int:
         except Exception:
             error(f"Chat request failed: {e}")
         return 1
-
-

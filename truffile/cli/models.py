@@ -78,12 +78,37 @@ async def _default_model(ip: str) -> str | None:
         models = payload.get("data", [])
         if not isinstance(models, list) or not models:
             return None
-        # sort models by name/id so default is 35b typically & list is consistent
-        models.sort(key=lambda m: str(m.get("name") or m.get("id") or m.get("uuid") or ""))
-        first = models[0]
-        return str(first.get("id") or first.get("uuid") or "")
+        default = _pick_default_model(models)
+        if default is None:
+            return None
+        return str(default.get("id") or default.get("uuid") or "")
     except Exception:
         return None
+
+
+def _pick_default_model(models: list[dict[str, Any]]) -> dict[str, Any] | None:
+    usable = [m for m in models if isinstance(m, dict)]
+    if not usable:
+        return None
+
+    def _normalized_text(model: dict[str, Any]) -> str:
+        raw = " ".join(
+            str(model.get(key) or "")
+            for key in ("name", "id", "uuid")
+        ).lower()
+        return "".join(ch for ch in raw if ch.isalnum())
+
+    preferred_matches = [
+        model
+        for model in usable
+        if "qwen" in _normalized_text(model) and "35b" in _normalized_text(model)
+    ]
+    if preferred_matches:
+        preferred_matches.sort(key=lambda m: str(m.get("name") or m.get("id") or m.get("uuid") or ""))
+        return preferred_matches[0]
+
+    usable.sort(key=lambda m: str(m.get("name") or m.get("id") or m.get("uuid") or ""))
+    return usable[0]
 
 
 def _model_display_name(model: dict[str, Any]) -> str:

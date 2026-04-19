@@ -94,6 +94,14 @@ class TestDoubleCtrlC(unittest.TestCase):
         result = prompt._handle_ctrlc()
         self.assertEqual(result, "")
 
+    def test_prompt_toolbar_shows_pending_attachments(self):
+        prompt = TrufflePrompt("> ", [])
+        prompt.set_attachments(["[Image #1] photo.png", "[Image #2] clipboard"])
+        toolbar = prompt._bottom_toolbar()
+        rendered = "".join(fragment[1] for fragment in toolbar)
+        self.assertIn("[Image #1] photo.png", rendered)
+        self.assertIn("[Image #2] clipboard", rendered)
+
 
 class TestHasMarkdown(unittest.TestCase):
     def test_code_block(self):

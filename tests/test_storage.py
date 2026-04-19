@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from truffile.storage import StorageService, StoredState
+from truffile.storage import StorageService, StoredObsidianBridge, StoredState
 
 
 class TestStorageRoundTrip(unittest.TestCase):
@@ -76,6 +76,25 @@ class TestStorageRoundTrip(unittest.TestCase):
             s.state_file.write_text("not json {{{")
             state = s._load_state()
             self.assertIsNotNone(state)
+
+    def test_obsidian_bridge_persists_to_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s = self._make_storage(tmp)
+            bridge = StoredObsidianBridge(
+                vault_path="/tmp/vault",
+                token="secret-token",
+                advertise_host="192.168.1.10",
+                port=27125,
+                bind_host="0.0.0.0",
+            )
+            s.set_obsidian_bridge(bridge)
+
+            state = s._load_state()
+            self.assertIsNotNone(state.obsidian_bridge)
+            assert state.obsidian_bridge is not None
+            self.assertEqual(state.obsidian_bridge.vault_path, "/tmp/vault")
+            self.assertEqual(state.obsidian_bridge.token, "secret-token")
+            self.assertEqual(state.obsidian_bridge.advertise_host, "192.168.1.10")
 
 
 class TestStorageFilePermissions(unittest.TestCase):
