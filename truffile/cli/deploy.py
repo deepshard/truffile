@@ -15,6 +15,11 @@ from .ui import C, ARROW, CROSS, DOT, Spinner, ScrollingLog, error, warn, info, 
 
 async def cmd_deploy(args, storage: StorageService) -> int:
     app_path = args.path if args.path else "."
+    if app_path == "obsidian":
+        from .obsidian import cmd_obsidian_deploy
+
+        return await cmd_obsidian_deploy(args, storage)
+
     app_dir = Path(app_path).resolve()
     interactive = args.interactive
     dry_run = bool(getattr(args, "dry_run", False))

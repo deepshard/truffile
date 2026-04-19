@@ -37,6 +37,10 @@ _DEVICE_REQUIRING_COMMANDS = {
 
 def _command_needs_device(args) -> bool:
     cmd = getattr(args, "command", None)
+    if cmd == "deploy":
+        return not bool(getattr(args, "dry_run", False))
+    if cmd == "obsidian":
+        return getattr(args, "obsidian_command", None) == "deploy" and not bool(getattr(args, "dry_run", False))
     if cmd in _DEVICE_REQUIRING_COMMANDS:
         return True
     if cmd == "list":
@@ -136,6 +140,13 @@ def _main() -> int:
     dep_p.add_argument("--interactive", action="store_true")
     dep_p.add_argument("--dry-run", action="store_true")
     dep_p.add_argument("--no-finalize", action="store_true")
+    dep_p.add_argument("--vault", type=str, default=None, help=argparse.SUPPRESS)
+    dep_p.add_argument("--pick-vault", action="store_true", dest="pick_vault", help=argparse.SUPPRESS)
+    dep_p.add_argument("--advertise-host", type=str, default=None, dest="advertise_host", help=argparse.SUPPRESS)
+    dep_p.add_argument("--bind-host", type=str, default=None, dest="bind_host", help=argparse.SUPPRESS)
+    dep_p.add_argument("--port", type=int, default=None, help=argparse.SUPPRESS)
+    dep_p.add_argument("--token", type=str, default=None, help=argparse.SUPPRESS)
+    dep_p.add_argument("--obsidian-reconfigure", action="store_true", dest="obsidian_reconfigure", help=argparse.SUPPRESS)
 
     # list
     list_p = sub.add_parser("list", help="list apps or devices")
@@ -206,6 +217,33 @@ def _main() -> int:
     # help
     sub.add_parser("help", help="show help")
 
+    # obsidian bridge + bundled app
+    obs_p = sub.add_parser("obsidian", help="manage the local Obsidian bridge and app")
+    obs_sub = obs_p.add_subparsers(dest="obsidian_command")
+
+    obs_attach = obs_sub.add_parser("attach", help="save a local Obsidian vault bridge config")
+    obs_attach.add_argument("--vault", required=False, help="path to a local Obsidian vault")
+    obs_attach.add_argument("--pick-vault", action="store_true", dest="pick_vault", help="choose the vault from a native folder picker")
+    obs_attach.add_argument("--port", type=int, default=27125, help="bridge port")
+    obs_attach.add_argument("--bind-host", type=str, default="0.0.0.0", dest="bind_host", help="host interface for the bridge server")
+    obs_attach.add_argument("--advertise-host", type=str, default=None, dest="advertise_host", help="host/IP the Truffle device should use")
+    obs_attach.add_argument("--token", type=str, default=None, help="explicit bearer token for the bridge")
+
+    obs_sub.add_parser("status", help="show saved Obsidian bridge configuration")
+    obs_sub.add_parser("restart", help="restart the background Obsidian bridge")
+    obs_logs = obs_sub.add_parser("logs", help="show recent Obsidian bridge logs")
+    obs_logs.add_argument("--lines", type=int, default=40, help="number of log lines to print")
+    obs_sub.add_parser("serve", help="run the local Obsidian bridge server")
+    obs_test = obs_sub.add_parser("test", help="probe the Obsidian bridge locally and from the device")
+    obs_test.add_argument("--local-only", action="store_true", dest="local_only", help="only test the bridge from this computer")
+
+    obs_deploy = obs_sub.add_parser("deploy", help="deploy the bundled Obsidian app")
+    obs_deploy.add_argument("--path", type=str, default=None, help="override the Obsidian app directory")
+    obs_deploy.add_argument("--shell", action="store_true")
+    obs_deploy.add_argument("--interactive", action="store_true")
+    obs_deploy.add_argument("--dry-run", action="store_true")
+    obs_deploy.add_argument("--no-finalize", action="store_true")
+
     # easter egg
     sub.add_parser("glow")
 
@@ -272,6 +310,32 @@ def _main() -> int:
     elif args.command == "deploy":
         from .deploy import cmd_deploy
         return run_async(cmd_deploy(args, storage))
+    elif args.command == "obsidian":
+        from .obsidian import (
+            cmd_obsidian_attach,
+            cmd_obsidian_deploy,
+            cmd_obsidian_logs,
+            cmd_obsidian_restart,
+            cmd_obsidian_serve,
+            cmd_obsidian_status,
+            cmd_obsidian_test,
+        )
+
+        if args.obsidian_command == "attach":
+            return cmd_obsidian_attach(args, storage)
+        elif args.obsidian_command == "status":
+            return cmd_obsidian_status(args, storage)
+        elif args.obsidian_command == "restart":
+            return cmd_obsidian_restart(args, storage)
+        elif args.obsidian_command == "logs":
+            return cmd_obsidian_logs(args, storage)
+        elif args.obsidian_command == "serve":
+            return cmd_obsidian_serve(args, storage)
+        elif args.obsidian_command == "test":
+            return run_async(cmd_obsidian_test(args, storage))
+        elif args.obsidian_command == "deploy":
+            return run_async(cmd_obsidian_deploy(args, storage))
+        parser.error("obsidian requires a subcommand")
     elif args.command == "list":
         from .apps import cmd_list
         return cmd_list(args, storage)
