@@ -1,0 +1,60 @@
+metadata:
+  name: ElevenLabs
+  bundle_id: org.deepshard.elevenlabs
+  description: |
+    Generate speech, sound effects, and music with ElevenLabs, with optional playback through the local Truffile audio bridge.
+  icon_file: ./icon.png
+  foreground:
+    process:
+      cmd:
+        - python
+        - elevenlabs_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        ELEVENLABS_OUTPUT_DIR: /tmp/elevenlabs-output
+
+steps:
+  - name: Copy app files
+    type: files
+    files:
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./client.py
+        destination: ./client.py
+      - source: ./audio_bridge_client.py
+        destination: ./audio_bridge_client.py
+      - source: ./credential_store.py
+        destination: ./credential_store.py
+      - source: ./elevenlabs_foreground.py
+        destination: ./elevenlabs_foreground.py
+
+  - name: Configure ElevenLabs API key
+    type: text
+    ui_state_on_show: user_interaction_ready
+    ui_state_on_complete: move_to_background
+    content: |
+      Enter your ElevenLabs API key.
+
+      To get a key:
+      1. Go to https://elevenlabs.io/app/developers/api-keys
+      2. Create or copy an API key
+      3. Paste it below
+
+      Generation tools spend ElevenLabs credits. Eleven Music may require a paid ElevenLabs plan.
+
+      For local playback through your computer speakers, deploy this app with:
+      truffile audio deploy --path apps/elevenlabs
+    fields:
+      - name: elevenlabs_api_key
+        label: ElevenLabs API Key
+        type: password
+        placeholder: sk_...
+        env: ELEVENLABS_API_KEY
+    validator:
+      type: bash
+      run: |
+        python ./elevenlabs_foreground.py --verify
+      timeout: 90
+      error_message: |
+        Could not verify ELEVENLABS_API_KEY. Confirm the key is valid and active.
