@@ -1,0 +1,10 @@
+Check my WHOOP connection status.
+If auth fails, explain exactly what failed and what needs to be reauthorized.
+---
+Pull my latest WHOOP summary and give me recovery, sleep quality, day strain, and recent workouts.
+---
+Show my last 7 recovery records and summarize the trend in recovery score, HRV, and resting heart rate.
+---
+Show my last 7 cycles and tell me whether day strain is rising, falling, or flat.
+---
+Pull my WHOOP sleep records from the last week and tell me which night had the best and worst sleep performance.
