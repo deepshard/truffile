@@ -244,6 +244,38 @@ def _main() -> int:
     obs_deploy.add_argument("--dry-run", action="store_true")
     obs_deploy.add_argument("--no-finalize", action="store_true")
 
+    # local audio bridge + app deployment helper
+    audio_p = sub.add_parser("audio", help="manage the local audio bridge")
+    audio_sub = audio_p.add_subparsers(dest="audio_command")
+
+    audio_attach = audio_sub.add_parser("attach", help="save local audio bridge config")
+    audio_attach.add_argument("--cache", type=str, default=None, help="directory for received audio files")
+    audio_attach.add_argument("--port", type=int, default=27126, help="bridge port")
+    audio_attach.add_argument("--bind-host", type=str, default="0.0.0.0", dest="bind_host", help="host interface for the bridge server")
+    audio_attach.add_argument("--advertise-host", type=str, default=None, dest="advertise_host", help="host/IP the Truffle device should use")
+    audio_attach.add_argument("--token", type=str, default=None, help="explicit bearer token for the bridge")
+
+    audio_sub.add_parser("status", help="show saved local audio bridge configuration")
+    audio_sub.add_parser("restart", help="restart the background audio bridge")
+    audio_logs = audio_sub.add_parser("logs", help="show recent audio bridge logs")
+    audio_logs.add_argument("--lines", type=int, default=40, help="number of log lines to print")
+    audio_sub.add_parser("serve", help="run the local audio bridge server")
+    audio_test = audio_sub.add_parser("test", help="probe the audio bridge locally and from the device")
+    audio_test.add_argument("--local-only", action="store_true", dest="local_only", help="only test the bridge from this computer")
+
+    audio_deploy = audio_sub.add_parser("deploy", help="deploy an app with local audio bridge env vars")
+    audio_deploy.add_argument("--path", type=str, default=".", help="app directory to deploy")
+    audio_deploy.add_argument("--cache", type=str, default=None, help="directory for received audio files")
+    audio_deploy.add_argument("--port", type=int, default=None, help="bridge port")
+    audio_deploy.add_argument("--bind-host", type=str, default=None, dest="bind_host", help="host interface for the bridge server")
+    audio_deploy.add_argument("--advertise-host", type=str, default=None, dest="advertise_host", help="host/IP the Truffle device should use")
+    audio_deploy.add_argument("--token", type=str, default=None, help="explicit bearer token for the bridge")
+    audio_deploy.add_argument("--audio-reconfigure", action="store_true", dest="audio_reconfigure", help="replace saved bridge config")
+    audio_deploy.add_argument("--shell", action="store_true")
+    audio_deploy.add_argument("--interactive", action="store_true")
+    audio_deploy.add_argument("--dry-run", action="store_true")
+    audio_deploy.add_argument("--no-finalize", action="store_true")
+
     # easter egg
     sub.add_parser("glow")
 
@@ -336,6 +368,32 @@ def _main() -> int:
         elif args.obsidian_command == "deploy":
             return run_async(cmd_obsidian_deploy(args, storage))
         parser.error("obsidian requires a subcommand")
+    elif args.command == "audio":
+        from .audio import (
+            cmd_audio_attach,
+            cmd_audio_deploy,
+            cmd_audio_logs,
+            cmd_audio_restart,
+            cmd_audio_serve,
+            cmd_audio_status,
+            cmd_audio_test,
+        )
+
+        if args.audio_command == "attach":
+            return cmd_audio_attach(args, storage)
+        elif args.audio_command == "status":
+            return cmd_audio_status(args, storage)
+        elif args.audio_command == "restart":
+            return cmd_audio_restart(args, storage)
+        elif args.audio_command == "logs":
+            return cmd_audio_logs(args, storage)
+        elif args.audio_command == "serve":
+            return cmd_audio_serve(args, storage)
+        elif args.audio_command == "test":
+            return run_async(cmd_audio_test(args, storage))
+        elif args.audio_command == "deploy":
+            return run_async(cmd_audio_deploy(args, storage))
+        parser.error("audio requires a subcommand")
     elif args.command == "list":
         from .apps import cmd_list
         return cmd_list(args, storage)

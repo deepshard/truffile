@@ -20,11 +20,21 @@ class StoredObsidianBridge:
 
 
 @dataclass
+class StoredAudioBridge:
+    cache_path: str
+    token: str
+    advertise_host: str
+    port: int = 27126
+    bind_host: str = "0.0.0.0"
+
+
+@dataclass
 class StoredState:
     devices: list[StoredDevice] = field(default_factory=list)
     last_used_device: str | None = None
     client_user_id: str | None = None
     obsidian_bridge: StoredObsidianBridge | None = None
+    audio_bridge: StoredAudioBridge | None = None
 
 
 def get_storage_dir() -> Path:
@@ -53,11 +63,19 @@ class StorageService:
                     obsidian_bridge = StoredObsidianBridge(**bridge_data)
                 except TypeError:
                     obsidian_bridge = None
+            audio_bridge_data = data.get("audio_bridge")
+            audio_bridge = None
+            if isinstance(audio_bridge_data, dict):
+                try:
+                    audio_bridge = StoredAudioBridge(**audio_bridge_data)
+                except TypeError:
+                    audio_bridge = None
             return StoredState(
                 devices=devices,
                 last_used_device=data.get("last_used_device"),
                 client_user_id=data.get("client_user_id"),
                 obsidian_bridge=obsidian_bridge,
+                audio_bridge=audio_bridge,
             )
         except (json.JSONDecodeError, KeyError):
             return StoredState()
@@ -76,6 +94,17 @@ class StorageService:
                     "bind_host": self.state.obsidian_bridge.bind_host,
                 }
                 if self.state.obsidian_bridge is not None
+                else None
+            ),
+            "audio_bridge": (
+                {
+                    "cache_path": self.state.audio_bridge.cache_path,
+                    "token": self.state.audio_bridge.token,
+                    "advertise_host": self.state.audio_bridge.advertise_host,
+                    "port": self.state.audio_bridge.port,
+                    "bind_host": self.state.audio_bridge.bind_host,
+                }
+                if self.state.audio_bridge is not None
                 else None
             ),
         }
@@ -132,6 +161,17 @@ class StorageService:
 
     def clear_obsidian_bridge(self) -> None:
         self.state.obsidian_bridge = None
+        self.save()
+
+    def get_audio_bridge(self) -> StoredAudioBridge | None:
+        return self.state.audio_bridge
+
+    def set_audio_bridge(self, bridge: StoredAudioBridge) -> None:
+        self.state.audio_bridge = bridge
+        self.save()
+
+    def clear_audio_bridge(self) -> None:
+        self.state.audio_bridge = None
         self.save()
 
     def app_id_for_device(self, name: str) -> str | None:

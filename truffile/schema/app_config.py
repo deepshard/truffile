@@ -19,9 +19,8 @@ def _check_python_syntax(file_path: Path) -> tuple[bool, str]:
 
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-_SUPPORTED_STEP_TYPES = {"bash", "files", "text"}
+_SUPPORTED_STEP_TYPES = {"bash", "files", "oauth", "text"}
 _UNSUPPORTED_STEP_HINTS = {
-    "oauth": "OAuth is not supported yet — use a 'text' step with a password field to collect an access token.",
     "vnc": "VNC is not supported yet — use a 'text' step to collect credentials instead.",
 }
 
@@ -182,6 +181,40 @@ def validate_app_dir(app_dir: Path) -> tuple[bool, dict[str, Any] | None, str | 
             step_files = step.get("files", [])
             if isinstance(step_files, list):
                 files_to_check.extend([f for f in step_files if isinstance(f, dict)])
+        elif step_type == "oauth":
+            provider = step.get("provider")
+            if not isinstance(provider, str) or not provider.strip():
+                errors.append(f"{step_label}: oauth.provider must be a non-empty string")
+            redirect_uri = step.get("redirect_uri")
+            if redirect_uri is not None and not isinstance(redirect_uri, str):
+                errors.append(f"{step_label}: oauth.redirect_uri must be a string")
+            scopes = step.get("scopes")
+            if scopes is not None and (
+                not isinstance(scopes, list)
+                or not all(isinstance(scope, str) and scope for scope in scopes)
+            ):
+                errors.append(f"{step_label}: oauth.scopes must be list[str]")
+            for field_name in (
+                "auth_endpoint",
+                "token_endpoint",
+                "resource_metadata_endpoint",
+                "authorization_server_metadata_endpoint",
+                "registration_endpoint",
+                "oauth_resource",
+                "client_name",
+                "client_uri",
+                "client_id_env",
+                "client_secret_env",
+                "token_output_file",
+                "token_file_env_name",
+                "app_var_key",
+            ):
+                value = step.get(field_name)
+                if value is not None and not isinstance(value, str):
+                    errors.append(f"{step_label}: oauth.{field_name} must be a string")
+            dynamic_client_registration = step.get("dynamic_client_registration")
+            if dynamic_client_registration is not None and not isinstance(dynamic_client_registration, bool):
+                errors.append(f"{step_label}: oauth.dynamic_client_registration must be bool")
 
     top_files = config.get("files", [])
     if isinstance(top_files, list):
