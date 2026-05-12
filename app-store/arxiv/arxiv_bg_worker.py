@@ -8,7 +8,7 @@ from typing import Any
 
 import arxiv
 
-from arxiv_common import get_bg_state_path, parse_research_interests
+from arxiv_common import get_bg_state_path, is_background_enabled, parse_research_interests
 
 logger = logging.getLogger("arxiv.bg_worker")
 logger.setLevel(logging.INFO)
@@ -47,6 +47,10 @@ class ArxivBackgroundWorker:
         return True, f"ArXiv background configured with {len(interests)} interest(s)."
 
     def run_cycle(self) -> BgRunResult:
+        if not is_background_enabled():
+            logger.info("Background disabled. Skipping cycle.")
+            return BgRunResult(content=None)
+
         interests = self.interests
         if not interests:
             return BgRunResult(error="no_interests")
