@@ -5,12 +5,14 @@ from typing import Any
 from truffile.app_runtime import ForegroundApp, ToolSpec, phosphor_icon_url
 
 import arxiv_tools
+from arxiv_common import is_background_enabled, set_background_enabled
 
 
 class ArxivForegroundApp(ForegroundApp):
     def __init__(self) -> None:
         super().__init__("arxiv", logger_name="arxiv.foreground")
         self._register_tools()
+        self._register_settings_tools()
         self._register_prompts()
 
     def _register_tools(self) -> None:
@@ -80,6 +82,37 @@ class ArxivForegroundApp(ForegroundApp):
         )
         async def read_paper_tool(paper_id: str) -> dict[str, Any]:
             return await arxiv_tools.read_paper(paper_id=paper_id)
+
+    def _register_settings_tools(self) -> None:
+        @self.tool(
+            ToolSpec(
+                name="toggle_background",
+                description=(
+                    "Enable or disable background paper recommendations. "
+                    "When disabled, the background worker skips its search cycle."
+                ),
+                icon=phosphor_icon_url("toggle-right"),
+            )
+        )
+        async def toggle_background_tool(
+            enabled: bool,
+        ) -> dict[str, Any]:
+            set_background_enabled(enabled)
+            state = "enabled" if enabled else "disabled"
+            return {"status": "success", "background_enabled": enabled, "message": f"Background recommendations {state}."}
+
+        @self.tool(
+            ToolSpec(
+                name="background_status",
+                description="Check whether background paper recommendations are currently enabled or disabled.",
+                icon=phosphor_icon_url("info"),
+                readonly=True,
+            )
+        )
+        async def background_status_tool() -> dict[str, Any]:
+            enabled = is_background_enabled()
+            state = "enabled" if enabled else "disabled"
+            return {"status": "success", "background_enabled": enabled, "message": f"Background recommendations are {state}."}
 
     def _register_prompts(self) -> None:
         @self.prompt(

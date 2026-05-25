@@ -83,4 +83,5 @@ steps:
     run: |
       mkdir -p /root/.arxiv-mcp-server/papers
       mkdir -p /root/.arxiv-truffle
+      python -c 'from arxiv_common import set_background_enabled; import os; enabled = os.getenv("ARXIV_BACKGROUND_ENABLED", "true").lower() in ("true", "1", "yes"); set_background_enabled(enabled)'
       echo "ArXiv MCP installation complete!"
