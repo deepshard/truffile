@@ -3,11 +3,16 @@
 ## Foreground Only (MCP tools for agent)
 
 ```python
-from truffile import ForegroundApp, ToolSpec, ok, err
+from truffile.app_runtime import ForegroundApp, ToolSpec, err, ok
 
 app = ForegroundApp("my-app")
 
-@app.tool(ToolSpec(name="search", description="Search items.", icon="magnifying-glass", readonly=True))
+@app.tool(ToolSpec(
+    name="search",
+    description="Search items.",
+    icon="magnifying-glass",
+    annotations={"readOnlyHint": True, "destructiveHint": False},
+))
 async def search(query: str, limit: int = 10) -> dict:
     try:
         items = await client.search(query, limit=limit)
@@ -22,7 +27,7 @@ if __name__ == "__main__":
 ## Background Only (scheduled context submissions)
 
 ```python
-from truffile import BackgroundWorkerApp
+from truffile.app_runtime import BackgroundWorkerApp
 
 class MyApp(BackgroundWorkerApp[MyWorker, MyResult]):
     def __init__(self):

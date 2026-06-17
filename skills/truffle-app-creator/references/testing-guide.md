@@ -5,7 +5,7 @@
 Every app needs tests that run without network, auth, or a device.
 
 ```python
-from truffile import FakeHttpTransport, FakeHttpResponse, FakeApiKeyProvider, AppHarness
+from truffile.app_runtime import FakeApiKeyProvider, FakeHttpResponse, FakeHttpTransport, AppHarness
 
 class TestMyClient(unittest.IsolatedAsyncioTestCase):
     async def test_search_returns_results(self):

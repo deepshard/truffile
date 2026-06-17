@@ -1,17 +1,31 @@
 metadata:
-  name: WHOOP
+  name: Whoop
   bundle_id: org.truffle.whoop.bridge
   description: |
-    Read your WHOOP profile, recovery, sleep, cycle, and workout data
-    through a Truffle-managed WHOOP bridge.
-    During install, connect a WHOOP developer app and authorize access
-    to your WHOOP account.
+    Read your WHOOP profile, recovery, sleep, cycle, and workout data. During install, authorize access to your
+    WHOOP account through OAuth.
   icon_file: ./icon.png
+  background:
+    process:
+      cmd:
+        - python
+        - whoop_background.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        WHOOP_BG_LOOKBACK_DAYS: "14"
+        WHOOP_BG_OVERLAP_HOURS: "2"
+        WHOOP_BG_SCAN_LIMIT: "25"
+    default_schedule:
+      type: interval
+      interval:
+        duration: 12h
+        daily_window: 00:00-23:59
   foreground:
     process:
       cmd:
         - python
-        - whoop_foreground.py
+        - foreground.py
       working_directory: /
       environment:
         PYTHONUNBUFFERED: "1"
@@ -19,11 +33,13 @@ metadata:
 steps:
   - name: Install Python dependencies
     type: bash
+    update_policy: run_on_update
     run: |
       pip install --no-cache-dir "httpx>=0.27.0"
 
   - name: Copy application files
     type: files
+    update_policy: run_on_update
     files:
       - source: ./config.py
         destination: ./config.py
@@ -31,61 +47,45 @@ steps:
         destination: ./whoop_auth.py
       - source: ./whoop_client.py
         destination: ./whoop_client.py
-      - source: ./whoop_foreground.py
-        destination: ./whoop_foreground.py
+      - source: ./tools.py
+        destination: ./tools.py
+      - source: ./foreground.py
+        destination: ./foreground.py
+      - source: ./whoop_background.py
+        destination: ./whoop_background.py
+      - source: ./bg_worker.py
+        destination: ./bg_worker.py
 
-  - name: Configure WHOOP OAuth tokens
-    type: text
+  - name: WHOOP OAuth Sign-In
+    type: oauth
+    update_policy: run_on_update
+    update_check: python ./foreground.py --verify
+    provider: Whoop
+    description: Sign in to WHOOP to connect your profile, body measurements, cycles, recovery, sleep, and workouts.
+    client_id: fa532359-6265-491d-b7e2-4941e1416a9c
+    client_secret: eb4d639d2ea00a1c69a52793d17bd94ed2f8073517161e929451d0427d08d9c0
+    client_secret_env: null
+    redirect_uri: https://truffle.net/api/oauth/callback
+    auth_endpoint: https://api.prod.whoop.com/oauth/oauth2/auth
+    token_endpoint: https://api.prod.whoop.com/oauth/oauth2/token
+    scopes:
+      - offline
+      - read:profile
+      - read:body_measurement
+      - read:cycles
+      - read:recovery
+      - read:sleep
+      - read:workout
+    prompt: null
+    access_type: null
+    include_granted_scopes: false
     ui_state_on_show: user_interaction_ready
     ui_state_on_complete: move_to_background
-    content: |
-      Run `python app-store/whoop/scripts/bootstrap_whoop_oauth.py` locally before deploy.
-      Paste each generated value below.
+    token_output_file: /root/.whoop-truffle/oauth.json
+    token_file_env_name: WHOOP_TOKEN_STORE_PATH
+    app_var_key: oauth_state
 
-      This manual token bootstrap is temporary for the app-store PR.
-      For public release, Truffle should provide the official WHOOP developer app
-      and callback URL.
-
-      The OAuth request includes the `offline` scope so WHOOP returns a refresh token.
-      It may not appear as a dashboard checkbox.
-    fields:
-      - name: client_id
-        label: WHOOP Client ID
-        type: text
-        env: WHOOP_CLIENT_ID
-      - name: client_secret
-        label: WHOOP Client Secret
-        type: password
-        env: WHOOP_CLIENT_SECRET
-      - name: redirect_uri
-        label: WHOOP Redirect URI
-        type: text
-        default: http://127.0.0.1:8765/callback
-        env: WHOOP_REDIRECT_URI
-      - name: access_token
-        label: WHOOP Access Token
-        type: password
-        env: WHOOP_ACCESS_TOKEN
-      - name: refresh_token
-        label: WHOOP Refresh Token
-        type: password
-        env: WHOOP_REFRESH_TOKEN
-      - name: access_token_expires_at
-        label: WHOOP Access Token Expires At
-        type: text
-        env: WHOOP_ACCESS_TOKEN_EXPIRES_AT
-      - name: token_scope
-        label: WHOOP Token Scope
-        type: text
-        default: offline read:profile read:body_measurement read:cycles read:recovery read:sleep read:workout
-        env: WHOOP_TOKEN_SCOPE
-      - name: token_type
-        label: WHOOP Token Type
-        type: text
-        default: bearer
-        env: WHOOP_TOKEN_TYPE
-    validator:
-      type: bash
-      run: python ./whoop_foreground.py --verify
-      timeout: 120
-      error_message: Could not verify WHOOP OAuth credentials.
+  - name: Verify WHOOP OAuth
+    type: bash
+    update_policy: run_on_update
+    run: python ./foreground.py --verify

@@ -1,14 +1,16 @@
+truffile_version: 2
 metadata:
   name: Exa
   bundle_id: org.deepshard.exa
   description: |
-    Search and research the web using Exa MCP tools.
+    Search the web, crawl pages, find code context, research companies or people,
+    and run deeper source-backed research with Exa.
   icon_file: ./icon.png
   foreground:
     process:
       cmd:
         - python
-        - exa_foreground.py
+        - foreground.py
       working_directory: /
       environment:
         PYTHONUNBUFFERED: "1"
@@ -16,6 +18,7 @@ metadata:
 steps:
   - name: Copy application files
     type: files
+    update_policy: run_on_update
     files:
       - source: ./exa_client.py
         destination: ./exa_client.py
@@ -23,11 +26,17 @@ steps:
         destination: ./exa_common.py
       - source: ./exa_verify.py
         destination: ./exa_verify.py
+      - source: ./foreground.py
+        destination: ./foreground.py
+      - source: ./tools.py
+        destination: ./tools.py
       - source: ./exa_foreground.py
         destination: ./exa_foreground.py
 
   - name: Configure Exa API key
     type: text
+    update_policy: run_on_update
+    update_check: python ./foreground.py --verify
     ui_state_on_show: user_interaction_ready
     ui_state_on_complete: move_to_background
     content: |
@@ -43,10 +52,8 @@ steps:
       - web_search_advanced_exa
       - get_code_context_exa
       - crawling_exa
-      - company_research_exa
-      - people_search_exa
-      - deep_researcher_start
-      - deep_researcher_check
+      - company_research_exa and people_search_exa for specialized lookup
+      - deep_researcher_start and deep_researcher_check for async reports
     fields:
       - name: exa_api_key
         label: Exa API Key
@@ -56,7 +63,7 @@ steps:
     validator:
       type: bash
       run: |
-        python ./exa_foreground.py --verify
+        python ./foreground.py --verify
       timeout: 90
       error_message: |
         Could not verify EXA_API_KEY. Please confirm the key is valid and has access.

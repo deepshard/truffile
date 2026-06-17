@@ -23,6 +23,7 @@ from truffle.os.client_session_pb2 import (
 )
 from truffle.os.client_metadata_pb2 import ClientMetadata
 from truffle.os.app_queries_pb2 import GetAllAppsRequest, GetAllAppsResponse, DeleteAppRequest, DeleteAppResponse
+from truffle.os.installer_pb2 import AppInstallResponse
 from truffle.app.app_pb2 import App
 from truffle.app.background_pb2 import BackgroundApp, BackgroundAppRuntimePolicy
 from truffle.os.task_actions_pb2 import (
@@ -159,6 +160,11 @@ class TruffleClient:
         req.app_uuid = app_uuid
         resp: DeleteAppResponse = await self.stub.Apps_DeleteApp(req, metadata=self._metadata)
         return resp
+
+    def install_app_stream(self, request_iterator) -> AsyncIterator[AppInstallResponse]:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        return self.stub.Apps_InstallApp(request_iterator, metadata=self._metadata)
 
     async def start_build(self) -> StartBuildSessionResponse:
         if not self.stub:

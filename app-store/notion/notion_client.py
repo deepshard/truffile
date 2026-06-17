@@ -1,332 +1,250 @@
 from __future__ import annotations
 
-import atexit
+from dataclasses import replace
+import inspect
 import json
-import os
-from pathlib import Path
-import socket
-import subprocess
-import tempfile
-import time
 from typing import Any
-from urllib import error as urlerror
-from urllib import request as urlrequest
 
-from truffile.app_runtime.errors import AppAuthError, AppRuntimeFailure
+from remote_mcp_compat import load_remote_mcp
 
-from config import (
-    DEFAULT_NOTION_VERSION,
-    LOCAL_MCP_HOST,
-    LOCAL_MCP_PATH,
-    LOCAL_STARTUP_TIMEOUT_SECONDS,
-)
+_remote_mcp = load_remote_mcp()
+RemoteMcpClient = _remote_mcp.RemoteMcpClient
+RemoteMcpOAuth = _remote_mcp.RemoteMcpOAuth
+RemoteMcpTool = _remote_mcp.RemoteMcpTool
 
-NOTION_API_BASE = "https://api.notion.com/v1"
+USER_INFO_RESOURCE_URI = "truffle://user-info"
 
 
-def verify_notion_workspace(token: str) -> tuple[bool, str]:
-    request = urlrequest.Request(
-        f"{NOTION_API_BASE}/users/me",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Notion-Version": DEFAULT_NOTION_VERSION,
-            "Accept": "application/json",
-        },
-        method="GET",
-    )
-    try:
-        with urlrequest.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8", errors="replace"))
-    except urlerror.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        if exc.code in {401, 403}:
-            raise AppAuthError(f"Notion access token unauthorized: HTTP {exc.code} {raw[:300]}") from exc
-        raise AppRuntimeFailure(f"Notion workspace check failed: HTTP {exc.code} {raw[:300]}") from exc
-    except Exception as exc:
-        raise AppRuntimeFailure(f"Notion workspace check failed: {exc}") from exc
-
-    if not isinstance(payload, dict):
-        raise AppRuntimeFailure("Notion users/me returned a non-object payload")
-
-    bot_info = payload.get("bot")
-    owner_info = bot_info.get("owner") if isinstance(bot_info, dict) else None
-    workspace_name = ""
-    workspace_label = ""
-
-    if isinstance(bot_info, dict):
-        workspace_name = str(bot_info.get("workspace_name", "") or "").strip()
-    if isinstance(owner_info, dict):
-        user = owner_info.get("user")
-        workspace_label = str(owner_info.get("workspace_name", "") or "").strip()
-        if isinstance(user, dict):
-            display_name = str(user.get("name", "") or "").strip()
-            if display_name:
-                return True, f"workspace={workspace_name or workspace_label or 'unknown'} owner={display_name}"
-
-    if workspace_name or workspace_label:
-        return True, f"workspace={workspace_name or workspace_label}"
-    return True, "workspace=connected"
-
-
-def _parse_jsonrpc_payload(raw: str) -> dict[str, Any] | None:
-    text = (raw or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-    except Exception:
-        pass
-    candidate: dict[str, Any] | None = None
-    for line in text.splitlines():
-        if not line.startswith("data:"):
-            continue
-        payload = line[len("data:") :].strip()
-        if not payload:
-            continue
-        try:
-            parsed = json.loads(payload)
-        except Exception:
-            continue
-        if isinstance(parsed, dict):
-            candidate = parsed
-    return candidate
-
-
-def _post_jsonrpc(
-    remote_url: str,
-    payload: dict[str, Any],
-    *,
-    session_id: str | None = None,
-    timeout: int = 30,
-) -> tuple[int, dict[str, str], dict[str, Any] | None, str]:
-    body = json.dumps(payload).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
+def _user_info_resource_entry() -> dict[str, str]:
+    return {
+        "uri": USER_INFO_RESOURCE_URI,
+        "name": "user_info",
+        "title": "User Info",
+        "description": "Profile of the authed Notion workspace.",
+        "mimeType": "text/markdown",
     }
-    if session_id:
-        headers["mcp-session-id"] = session_id
-
-    request = urlrequest.Request(remote_url, data=body, headers=headers, method="POST")
-    try:
-        with urlrequest.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-            parsed = _parse_jsonrpc_payload(raw)
-            response_headers = {key.lower(): value for key, value in response.headers.items()}
-            return response.status, response_headers, parsed, raw
-    except urlerror.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        response_headers = {key.lower(): value for key, value in exc.headers.items()} if exc.headers else {}
-        parsed = _parse_jsonrpc_payload(raw)
-        return exc.code, response_headers, parsed, raw
 
 
-class NotionMcpClient:
-    def __init__(self, *, remote_url: str, post_jsonrpc: Any = _post_jsonrpc) -> None:
-        self.remote_url = remote_url
-        self._post_jsonrpc = post_jsonrpc
-        self._session_id: str | None = None
-        self._initialized = False
+def _with_user_info_resource(result: Any) -> dict[str, Any]:
+    payload = dict(result) if isinstance(result, dict) else {"resources": []}
+    resources = list(payload.get("resources") or [])
+    if not any(isinstance(resource, dict) and resource.get("uri") == USER_INFO_RESOURCE_URI for resource in resources):
+        resources.append(_user_info_resource_entry())
+    payload["resources"] = resources
+    return payload
 
-    def verify(self) -> tuple[bool, str]:
-        tools = self.list_tools()
-        return True, f"Notion MCP verified. tools={len(tools)}"
 
-    def list_tools(self) -> list[dict[str, Any]]:
-        self._initialize()
-        status, _, parsed, raw = self._send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-        if status in {401, 403}:
-            raise AppAuthError("Notion tools/list unauthorized")
-        if status >= 400:
-            raise AppRuntimeFailure(f"Notion tools/list failed with HTTP {status}: {raw[:300]}")
-        if parsed and parsed.get("error"):
-            raise AppRuntimeFailure(f"Notion tools/list returned error: {parsed['error']}")
-        tools = ((parsed or {}).get("result") or {}).get("tools") or []
-        if not isinstance(tools, list):
-            raise AppRuntimeFailure("Notion tools/list returned an invalid tools payload")
-        return [tool for tool in tools if isinstance(tool, dict)]
-
-    def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        self._initialize()
-        status, _, parsed, raw = self._send(
+def _read_user_info_result(text: str) -> dict[str, Any]:
+    return {
+        "contents": [
             {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {"name": name, "arguments": arguments},
+                "uri": USER_INFO_RESOURCE_URI,
+                "mimeType": "text/markdown",
+                "text": text.strip(),
             }
-        )
-        if status in {401, 403}:
-            raise AppAuthError(f"Notion tool '{name}' unauthorized")
-        if status >= 400:
-            raise AppRuntimeFailure(f"Notion tool '{name}' failed with HTTP {status}: {raw[:300]}")
-        if parsed and parsed.get("error"):
-            message = parsed["error"]
-            message_text = message.get("message") if isinstance(message, dict) else str(message)
-            if "unauthorized" in str(message_text).lower():
-                raise AppAuthError(str(message_text))
-            raise AppRuntimeFailure(f"Notion tool '{name}' returned error: {message_text}")
-        if not parsed or "result" not in parsed:
-            raise AppRuntimeFailure(f"Notion tool '{name}' returned no result")
-        return parsed["result"]
-
-    def _initialize(self) -> None:
-        if self._initialized:
-            return
-        status, _, parsed, raw = self._send(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "truffle-app-store", "version": "1.0.0"},
-                },
-            }
-        )
-        if status in {401, 403}:
-            raise AppAuthError("Notion initialize unauthorized")
-        if status >= 400:
-            raise AppRuntimeFailure(f"Notion initialize failed with HTTP {status}: {raw[:300]}")
-        if parsed and parsed.get("error"):
-            raise AppRuntimeFailure(f"Notion initialize returned error: {parsed['error']}")
-        self._initialized = True
-
-    def _send(self, payload: dict[str, Any]) -> tuple[int, dict[str, str], dict[str, Any] | None, str]:
-        status, headers, parsed, raw = self._post_jsonrpc(
-            self.remote_url,
-            payload,
-            session_id=self._session_id,
-        )
-        session_id = headers.get("mcp-session-id")
-        if session_id:
-            self._session_id = session_id
-        return status, headers, parsed, raw
-
-    def close(self) -> None:
-        self._initialized = False
+        ]
+    }
 
 
-class ManagedNotionMcpProcessClient(NotionMcpClient):
+def _content_text(result: Any) -> str:
+    if isinstance(result, dict):
+        content = result.get("content")
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = str(item.get("text") or "").strip()
+                    if text:
+                        parts.append(text)
+            return "\n".join(parts)
+    return ""
+
+
+def _structured(result: Any) -> Any:
+    if isinstance(result, dict) and "structuredContent" in result:
+        return result["structuredContent"]
+    if isinstance(result, dict):
+        for key in ("text", "message"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip() and value.strip()[0] in "{[":
+                try:
+                    return json.loads(value)
+                except Exception:
+                    pass
+    text = _content_text(result)
+    if text and text[0] in "{[":
+        try:
+            return json.loads(text)
+        except Exception:
+            return {}
+    return result
+
+
+def _collect_dicts(value: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        out.append(value)
+        for child in value.values():
+            out.extend(_collect_dicts(child))
+    elif isinstance(value, list):
+        for item in value:
+            out.extend(_collect_dicts(item))
+    return out
+
+
+def _first_str(item: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _is_expired_session_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "session" in text and (
+        "invalid or expired" in text
+        or "expired session" in text
+        or "invalid session" in text
+        or ("session token" in text and ("invalid" in text or "expired" in text))
+    )
+
+
+class NotionMcpClient(RemoteMcpClient):
     def __init__(
         self,
         *,
-        notion_token: str,
-        server_bin: str,
-        process_launcher: Any = subprocess.Popen,
-        startup_timeout_seconds: float = LOCAL_STARTUP_TIMEOUT_SECONDS,
+        remote_url: str,
+        auth: RemoteMcpOAuth,
+        default_headers: dict[str, str] | None = None,
+        post_jsonrpc: Any = None,
     ) -> None:
-        self.notion_token = notion_token
-        self.server_bin = server_bin
-        self._process_launcher = process_launcher
-        self._startup_timeout_seconds = startup_timeout_seconds
-        self._process: subprocess.Popen[bytes] | None = None
-        self._stdout_log = tempfile.NamedTemporaryFile(prefix="notion-mcp-stdout-", suffix=".log", delete=False)
-        self._stderr_log = tempfile.NamedTemporaryFile(prefix="notion-mcp-stderr-", suffix=".log", delete=False)
-        self._local_port = self._reserve_port()
-        remote_url = f"http://{LOCAL_MCP_HOST}:{self._local_port}{LOCAL_MCP_PATH}"
-        super().__init__(remote_url=remote_url)
-        atexit.register(self.close)
+        kwargs: dict[str, Any] = {
+            "remote_url": remote_url,
+            "auth": auth,
+            "default_headers": default_headers,
+            "app_name": "Notion",
+            "post_jsonrpc": post_jsonrpc,
+        }
+        if "protocol_version" in inspect.signature(RemoteMcpClient.__init__).parameters:
+            kwargs["protocol_version"] = "2025-06-18"
+        super().__init__(**kwargs)
+        self._notion_auth = auth
+
+    def _reset_remote_session(self) -> None:
+        self._initialized = False
+        self._session_id = None
 
     @staticmethod
-    def _reserve_port() -> int:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    def _public_tool_name(name: str) -> str:
+        return str(name or "").replace("-", "_")
+
+    def _normalize_notion_tools(self, tools: list[RemoteMcpTool]) -> list[RemoteMcpTool]:
+        normalized: list[RemoteMcpTool] = []
+        self._tool_name_map = {}
+        for tool in tools:
+            public_name = self._public_tool_name(getattr(tool, "public_name", ""))
+            remote_name = str(getattr(tool, "remote_name", public_name) or public_name)
+            if public_name != getattr(tool, "public_name", ""):
+                tool = replace(tool, public_name=public_name)
+            normalized.append(tool)
+            self._tool_name_map[public_name] = remote_name
+            self._tool_name_map[remote_name] = remote_name
+        return normalized
+
+    def list_tools(self) -> list[RemoteMcpTool]:
         try:
-            sock.bind((LOCAL_MCP_HOST, 0))
-            return int(sock.getsockname()[1])
-        finally:
-            sock.close()
+            return self._normalize_notion_tools(super().list_tools())
+        except Exception as exc:
+            if not _is_expired_session_error(exc):
+                raise
+            self._reset_remote_session()
+            return self._normalize_notion_tools(super().list_tools())
 
-    def _ensure_started(self) -> None:
-        if self._process is not None and self._process.poll() is None:
-            return
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return super().call_tool(name, arguments)
+        except Exception as exc:
+            if not _is_expired_session_error(exc):
+                raise
+            self._reset_remote_session()
+            return super().call_tool(name, arguments)
 
-        env = dict(os.environ)
-        env["NOTION_TOKEN"] = self.notion_token
-        cmd = [
-            self.server_bin,
-            "--transport",
-            "http",
-            "--port",
-            str(self._local_port),
-            "--disable-auth",
-        ]
-        self._process = self._process_launcher(
-            cmd,
-            env=env,
-            stdout=self._stdout_log,
-            stderr=self._stderr_log,
-        )
-        self._wait_until_ready()
+    def list_resources(self) -> Any:
+        try:
+            return _with_user_info_resource(super().list_resources())
+        except Exception as exc:
+            if not _is_expired_session_error(exc):
+                return _with_user_info_resource({"resources": []})
+            self._reset_remote_session()
+            return _with_user_info_resource(super().list_resources())
 
-    def _wait_until_ready(self) -> None:
-        deadline = time.monotonic() + self._startup_timeout_seconds
-        last_error = ""
-        while time.monotonic() < deadline:
-            if self._process is not None and self._process.poll() is not None:
-                raise AppRuntimeFailure(self._startup_failure_message())
+    def read_resource(self, uri: str) -> Any:
+        if uri == USER_INFO_RESOURCE_URI:
+            return _read_user_info_result(self.user_info_markdown())
+        try:
+            return super().read_resource(uri)
+        except Exception as exc:
+            if not _is_expired_session_error(exc):
+                raise
+            self._reset_remote_session()
+            return super().read_resource(uri)
+
+    def user_info_markdown(self) -> str:
+        lines = ["# Notion"]
+        workspace = ""
+        payload_getter = getattr(self._notion_auth, "get_oauth_payload", None)
+        if callable(payload_getter):
             try:
-                self._initialize()
-                return
-            except Exception as exc:
-                last_error = str(exc)
-                time.sleep(0.25)
-        raise AppRuntimeFailure(self._startup_failure_message(last_error=last_error))
-
-    def _startup_failure_message(self, *, last_error: str = "") -> str:
-        stderr_text = self._read_log(self._stderr_log.name)
-        stdout_text = self._read_log(self._stdout_log.name)
-        parts = ["Timed out starting notion-mcp-server"]
-        if last_error:
-            parts.append(f"last_error={last_error}")
-        if stderr_text:
-            parts.append(f"stderr={stderr_text[:400]}")
-        if stdout_text:
-            parts.append(f"stdout={stdout_text[:400]}")
-        return " | ".join(parts)
-
-    @staticmethod
-    def _read_log(path: str) -> str:
-        candidate = Path(path)
-        if not candidate.exists():
-            return ""
+                payload = payload_getter()
+            except Exception:
+                payload = {}
+            if isinstance(payload, dict):
+                for key in ("workspace_name", "workspace", "workspace_id", "bot_id"):
+                    value = payload.get(key)
+                    if isinstance(value, dict):
+                        workspace = _first_str(value, ("name", "display_name", "id"))
+                    elif value is not None and str(value).strip():
+                        workspace = str(value).strip()
+                    if workspace:
+                        break
         try:
-            return candidate.read_text(encoding="utf-8", errors="replace").strip()
+            self.list_tools()
         except Exception:
-            return ""
-
-    def _initialize(self) -> None:
-        self._ensure_started_base()
-        super()._initialize()
-
-    def _ensure_started_base(self) -> None:
-        if self._process is None or self._process.poll() is not None:
-            self._ensure_started()
-
-    def list_tools(self) -> list[dict[str, Any]]:
-        self._ensure_started_base()
-        return super().list_tools()
-
-    def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        self._ensure_started_base()
-        return super().call_tool(name, arguments)
-
-    def close(self) -> None:
-        process = self._process
-        self._process = None
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=3)
-            except Exception:
-                process.kill()
-                process.wait(timeout=3)
-        for handle in (self._stdout_log, self._stderr_log):
-            try:
-                handle.close()
-            except Exception:
-                pass
-
+            pass
+        self_payload: Any = {}
+        try:
+            self_payload = _structured(self.call_tool("notion_get_self", {}))
+        except Exception:
+            self_payload = {}
+        bot_name = ""
+        bot_id = ""
+        for item in _collect_dicts(self_payload):
+            bot_name = bot_name or _first_str(item, ("name", "workspace_name"))
+            bot_id = bot_id or _first_str(item, ("bot_id", "id"))
+            if bot_name and bot_id:
+                break
+        if workspace:
+            lines.append(f"Workspace: {workspace}")
+        if bot_name or bot_id:
+            integration = bot_name or "connected integration"
+            if bot_id:
+                integration = f"{integration} ({bot_id})"
+            lines.append(f"Integration: {integration}")
+        if len(lines) == 1:
+            lines.append("Workspace: Notion OAuth connected")
+        team_names: list[str] = []
+        try:
+            teams_payload = _structured(self.call_tool("notion_get_teams", {}))
+            for item in _collect_dicts(teams_payload):
+                name = _first_str(item, ("name", "title", "id"))
+                if name and name not in team_names:
+                    team_names.append(name)
+        except Exception:
+            team_names = []
+        if team_names:
+            shown = ", ".join(team_names[:5])
+            extra = f" (+{len(team_names) - 5} more)" if len(team_names) > 5 else ""
+            lines.append(f"Teamspaces: {shown}{extra}")
+        lines.append("More: use notion_search / notion_fetch / notion_get_users / notion_get_teams.")
+        return "\n".join(lines)
