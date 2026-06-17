@@ -1,0 +1,93 @@
+metadata:
+  name: Notion
+  bundle_id: org.deepshard.notion
+  description: |
+    Access and edit your Notion workspace with Truffle using Notion's hosted MCP server.
+  icon_file: ./icon.png
+  background:
+    process:
+      cmd:
+        - python
+        - background.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        NOTION_MCP_BASE: https://mcp.notion.com/mcp
+    default_schedule:
+      type: interval
+      interval:
+        duration: 30m
+        prod_duration: 30m
+        daily_window: "00:00-23:59"
+  foreground:
+    process:
+      cmd:
+        - python
+        - notion_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        NOTION_MCP_BASE: https://mcp.notion.com/mcp
+
+steps:
+  - name: Copy app files
+    type: files
+    update_policy: run_on_update
+    files:
+      - source: ./auth.py
+        destination: ./auth.py
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./remote_mcp_compat.py
+        destination: ./remote_mcp_compat.py
+      - source: ./notion_client.py
+        destination: ./notion_client.py
+      - source: ./notion_foreground.py
+        destination: ./notion_foreground.py
+      - source: ./tools.py
+        destination: ./tools.py
+      - source: ./bg_state.py
+        destination: ./bg_state.py
+      - source: ./bg_worker.py
+        destination: ./bg_worker.py
+      - source: ./background.py
+        destination: ./background.py
+
+  - name: Notion OAuth Sign-In
+    type: oauth
+    update_policy: run_on_update
+    update_check: python ./notion_foreground.py --verify
+    provider: Notion
+    description: Sign in to Notion to connect your workspace through Notion MCP.
+    redirect_uri: https://truffle.net/api/oauth/callback
+    scopes: []
+    dynamic_client_registration: true
+    resource_metadata_endpoint: https://mcp.notion.com/.well-known/oauth-protected-resource
+    oauth_resource: https://mcp.notion.com
+    client_name: Truffle
+    auth_endpoint: https://mcp.notion.com/authorize
+    token_endpoint: https://mcp.notion.com/token
+    client_id_env: NOTION_CLIENT_ID
+    client_secret_env: null
+    prompt: null
+    access_type: null
+    include_granted_scopes: false
+    ui_state_on_show: user_interaction_ready
+    ui_state_on_complete: move_to_background
+    token_output_file: /root/.notion-oauth/tokens.json
+    token_file_env_name: NOTION_OAUTH_TOKEN_FILE
+    app_var_key: notion_oauth_state
+
+  - name: Verify Notion token
+    type: bash
+    update_policy: run_on_update
+    run: |
+      python ./notion_foreground.py --verify
+      python ./background.py --verify
+
+  - name: Finalize installation
+    type: bash
+    update_policy: run_on_update
+    run: |
+      mkdir -p /root/.notion-oauth
+      echo "Notion app install complete."

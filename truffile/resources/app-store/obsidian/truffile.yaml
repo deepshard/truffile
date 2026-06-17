@@ -1,0 +1,61 @@
+truffile_version: 2
+metadata:
+  name: Obsidian
+  bundle_id: org.truffle.obsidian.bridge
+  description: |
+    Read and write a local Obsidian vault on your laptop through the
+    truffile-managed vault bridge.
+  icon_file: ./icon.png
+  foreground:
+    process:
+      cmd:
+        - python
+        - obsidian_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+
+steps:
+  - name: Install Python dependencies
+    type: bash
+    update_policy: run_on_update
+    run: |
+      pip install --no-cache-dir "httpx>=0.27.0"
+
+  - name: Copy application files
+    type: files
+    update_policy: run_on_update
+    files:
+      - source: ./bridge_client.py
+        destination: ./bridge_client.py
+      - source: ./obsidian_foreground.py
+        destination: ./obsidian_foreground.py
+
+  - name: Configure Obsidian bridge
+    type: text
+    update_policy: run_on_update
+    update_check: python ./obsidian_foreground.py --verify
+    ui_state_on_show: user_interaction_ready
+    ui_state_on_complete: move_to_background
+    content: |
+      Enter the URL and bearer token for the truffile-managed Obsidian vault bridge.
+
+      If you are installing from the CLI, run `truffile obsidian deploy` to start the local bridge and preconfigure these values automatically.
+    fields:
+      - name: obsidian_bridge_base_url
+        label: Obsidian Bridge URL
+        type: text
+        placeholder: http://192.168.1.25:27125
+        env: OBSIDIAN_BRIDGE_BASE_URL
+      - name: obsidian_bridge_token
+        label: Obsidian Bridge Token
+        type: password
+        placeholder: paste bridge token
+        env: OBSIDIAN_BRIDGE_TOKEN
+    validator:
+      type: bash
+      run: |
+        python ./obsidian_foreground.py --verify
+      timeout: 30
+      error_message: |
+        Could not verify the Obsidian bridge. Confirm the bridge is running, reachable from this device, and the token is valid.

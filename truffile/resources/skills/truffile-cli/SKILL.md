@@ -3,14 +3,13 @@ name: truffile-cli
 description: |
   Use the `truffile` CLI to manage Truffle devices and Truffle apps from the
   command line: scan/connect, create, validate, deploy, list installed apps,
-  list app-store apps, install app-store apps, update app-store apps, delete
-  apps, and manage the Obsidian bridge app. Use `truffile-chat` for talking to
-  the agent and `truffile-infer` for raw model inference.
+  delete apps, and manage the Obsidian bridge app. Use `truffile-chat` for
+  talking to the agent and `truffile-infer` for raw model inference.
 ---
 
 # truffile CLI
 
-Use this for Truffle device and app lifecycle work. For focused install, update, delete, or app-store inspection tasks, prefer `truffile-app-management`.
+Use this for Truffle device and app lifecycle work.
 
 ## Connection Assumptions
 
@@ -64,39 +63,6 @@ truffile deploy ./apps/my-app --shell
 
 Use `--dry-run` before a risky deploy. Use `--shell` only for debugging.
 
-### List Store Apps
-
-```bash
-truffile list store
-truffile list store --json
-```
-
-This lists app-store apps and indicates installed/update status when the
-device can be queried.
-
-### Install From Store
-
-```bash
-truffile install store notion
-truffile install store exa --field EXA_API_KEY="$EXA_API_KEY" --no-interactive
-truffile install store arxiv --field ARXIV_RESEARCH_INTERESTS="agents, llms" --no-interactive
-truffile install store notion --json
-```
-
-Browser/VNC apps are intentionally rejected by bundle inspection. The CLI
-prints a message telling the user to install those in Symphony Settings.
-
-### Update From Store
-
-```bash
-truffile update store notion
-truffile update store --all
-truffile update store notion --json
-```
-
-If an update reaches an auth step, stop and report that the update needs
-reauthentication in Settings.
-
 ### Delete Installed Apps
 
 ```bash
@@ -126,7 +92,6 @@ app, injects bridge env, and deploys without asking for bridge URL/token again.
 
 - Current manifest step types include `bash`, `files`, `text`, `oauth`, and
   `welcome`.
-- VNC/browser apps are not supported through CLI store install yet.
 - Use `truffile.app_runtime` imports in app code.
 - Read-only tools should use MCP annotations, for example:
 

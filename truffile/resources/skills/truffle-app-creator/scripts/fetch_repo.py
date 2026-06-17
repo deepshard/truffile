@@ -18,7 +18,7 @@ RAW_BASE = f"https://raw.githubusercontent.com/{REPO}/main"
 
 
 def list_example_apps() -> list[str]:
-    url = f"{API_BASE}/contents/app-store"
+    url = f"{API_BASE}/contents/truffile/resources/app-store"
     try:
         resp = httpx.get(url, timeout=15.0)
         if resp.status_code != 200:
@@ -30,7 +30,7 @@ def list_example_apps() -> list[str]:
 
 
 def fetch_app_file(app_name: str, filename: str) -> str:
-    url = f"{RAW_BASE}/app-store/{app_name}/{filename}"
+    url = f"{RAW_BASE}/truffile/resources/app-store/{app_name}/{filename}"
     try:
         resp = httpx.get(url, timeout=15.0)
         return resp.text if resp.status_code == 200 else f"not found: {url}"
@@ -43,7 +43,7 @@ def fetch_app_truffile(app_name: str) -> str:
 
 
 def list_app_files(app_name: str) -> list[str]:
-    url = f"{API_BASE}/contents/app-store/{app_name}"
+    url = f"{API_BASE}/contents/truffile/resources/app-store/{app_name}"
     try:
         resp = httpx.get(url, timeout=15.0)
         if resp.status_code != 200:

@@ -34,7 +34,7 @@ from .ui import C, Spinner, error, info, success, warn
 
 DEFAULT_OBSIDIAN_PORT = 27125
 LOG_FILE_NAME = "obsidian-bridge.log"
-OBSIDIAN_APP_RAW_BASE_URL = "https://raw.githubusercontent.com/deepshard/truffile/main/app-store/obsidian"
+OBSIDIAN_APP_RAW_BASE_URL = "https://raw.githubusercontent.com/deepshard/truffile/main/truffile/resources/app-store/obsidian"
 OBSIDIAN_APP_FILES = (
     "truffile.yaml",
     "bridge_client.py",
@@ -44,7 +44,7 @@ OBSIDIAN_APP_FILES = (
 
 
 def _default_obsidian_app_dir() -> Path:
-    return Path(__file__).resolve().parents[2] / "app-store" / "obsidian"
+    return Path(__file__).resolve().parents[1] / "resources" / "app-store" / "obsidian"
 
 
 def _step_spinner(step: str) -> Spinner:
@@ -91,7 +91,7 @@ def _configure_staged_obsidian_manifest(manifest_path: Path, config: ObsidianBri
     env["OBSIDIAN_BRIDGE_BASE_URL"] = _device_bridge_url(config)
     env["OBSIDIAN_BRIDGE_TOKEN"] = config.token
 
-    # The generic store app needs a text step so users can provide bridge
+    # The packaged Obsidian app needs a text step so users can provide bridge
     # credentials. The bespoke `truffile obsidian deploy` flow has already
     # started/probed the bridge and injects those credentials here, so keeping
     # that step would create a redundant prompt.
