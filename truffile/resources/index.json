@@ -1,0 +1,268 @@
+{
+  "generated_by": "scripts/generate_resource_index.py",
+  "resources": [
+    {
+      "files": [
+        "arxiv_bg_worker.py",
+        "arxiv_common.py",
+        "arxiv_tools.py",
+        "background.py",
+        "foreground.py",
+        "icon.png",
+        "tests/test_arxiv_app_shells.py",
+        "tests/test_arxiv_unit.py",
+        "tools.py",
+        "truffile.yaml"
+      ],
+      "id": "app-store.arxiv",
+      "kind": "app_example",
+      "metadata": {
+        "app_kind": "fg+bg",
+        "bundle_id": "org.deepshard.arxiv",
+        "slug": "arxiv",
+        "step_types": [
+          "bash",
+          "files",
+          "text"
+        ]
+      },
+      "path": "app-store/arxiv",
+      "summary": "Search arXiv research papers, read downloaded papers, and get background recommendations.",
+      "tags": [
+        "bash",
+        "files",
+        "foreground_background",
+        "tests",
+        "text",
+        "text_config_app"
+      ],
+      "title": "ArXiv"
+    },
+    {
+      "files": [
+        "exa_client.py",
+        "exa_common.py",
+        "exa_foreground.py",
+        "exa_verify.py",
+        "foreground.py",
+        "icon.png",
+        "tests/conftest.py",
+        "tests/test_exa_app_shells.py",
+        "tests/test_exa_unit.py",
+        "tools.py",
+        "truffile.yaml"
+      ],
+      "id": "app-store.exa",
+      "kind": "app_example",
+      "metadata": {
+        "app_kind": "fg",
+        "bundle_id": "org.deepshard.exa",
+        "slug": "exa",
+        "step_types": [
+          "files",
+          "text"
+        ]
+      },
+      "path": "app-store/exa",
+      "summary": "Search the web, crawl pages, find code context, research companies or people, and run deeper source-backed research with Exa.",
+      "tags": [
+        "files",
+        "foreground_only",
+        "remote_mcp",
+        "tests",
+        "text",
+        "text_config_app"
+      ],
+      "title": "Exa"
+    },
+    {
+      "files": [
+        "config.py",
+        "ha_mcp_client.py",
+        "home_assistant_foreground.py",
+        "icon.png",
+        "safety.py",
+        "tests/test_home_assistant_app_shells.py",
+        "tests/test_home_assistant_unit.py",
+        "truffile.yaml"
+      ],
+      "id": "app-store.home-assistant",
+      "kind": "app_example",
+      "metadata": {
+        "app_kind": "fg",
+        "bundle_id": "org.truffle.home-assistant",
+        "slug": "home-assistant",
+        "step_types": [
+          "bash",
+          "files",
+          "text"
+        ]
+      },
+      "path": "app-store/home-assistant",
+      "summary": "Control and inspect a Home Assistant instance through its MCP server.",
+      "tags": [
+        "bash",
+        "files",
+        "foreground_only",
+        "remote_mcp",
+        "tests",
+        "text",
+        "text_config_app"
+      ],
+      "title": "Home Assistant"
+    },
+    {
+      "files": [
+        "auth.py",
+        "background.py",
+        "bg_state.py",
+        "bg_worker.py",
+        "config.py",
+        "icon.png",
+        "notion_client.py",
+        "notion_foreground.py",
+        "remote_mcp_compat.py",
+        "tests/conftest.py",
+        "tests/test_notion_app_shells.py",
+        "tests/test_notion_unit.py",
+        "tools.py",
+        "truffile.yaml"
+      ],
+      "id": "app-store.notion",
+      "kind": "app_example",
+      "metadata": {
+        "app_kind": "fg+bg",
+        "bundle_id": "org.deepshard.notion",
+        "slug": "notion",
+        "step_types": [
+          "bash",
+          "files",
+          "oauth"
+        ]
+      },
+      "path": "app-store/notion",
+      "summary": "Access and edit your Notion workspace with Truffle using Notion's hosted MCP server.",
+      "tags": [
+        "bash",
+        "files",
+        "foreground_background",
+        "oauth",
+        "oauth_app",
+        "remote_mcp",
+        "tests"
+      ],
+      "title": "Notion"
+    },
+    {
+      "files": [
+        "bridge_client.py",
+        "icon.png",
+        "obsidian_foreground.py",
+        "truffile.yaml"
+      ],
+      "id": "app-store.obsidian",
+      "kind": "app_example",
+      "metadata": {
+        "app_kind": "fg",
+        "bundle_id": "org.truffle.obsidian.bridge",
+        "slug": "obsidian",
+        "step_types": [
+          "bash",
+          "files",
+          "text"
+        ]
+      },
+      "path": "app-store/obsidian",
+      "summary": "Read and write a local Obsidian vault on your laptop through the truffile-managed vault bridge.",
+      "tags": [
+        "bash",
+        "files",
+        "foreground_only",
+        "text",
+        "text_config_app"
+      ],
+      "title": "Obsidian"
+    },
+    {
+      "files": [
+        "background.py",
+        "config.py",
+        "foreground.py",
+        "icon.png",
+        "location_context.py",
+        "tests/test_viator_app_shells.py",
+        "tests/test_viator_unit.py",
+        "tools.py",
+        "truffile.yaml"
+      ],
+      "id": "app-store.viator",
+      "kind": "app_example",
+      "metadata": {
+        "app_kind": "fg+bg",
+        "bundle_id": "org.deepshard.viator",
+        "slug": "viator",
+        "step_types": [
+          "bash",
+          "files",
+          "welcome"
+        ]
+      },
+      "path": "app-store/viator",
+      "summary": "Search Viator tours, activities, and attractions, then fetch experience details for trip planning and comparison.",
+      "tags": [
+        "bash",
+        "files",
+        "foreground_background",
+        "no_auth_app",
+        "remote_mcp",
+        "tests",
+        "welcome"
+      ],
+      "title": "Viator"
+    },
+    {
+      "files": [
+        ".env.example",
+        ".gitignore",
+        "app-design.md",
+        "bg_worker.py",
+        "config.py",
+        "foreground.py",
+        "icon.png",
+        "scripts/run_whoop_prompts.py",
+        "tests/conftest.py",
+        "tests/test_whoop_app_shells.py",
+        "tests/test_whoop_auth.py",
+        "tools.py",
+        "truffile.yaml",
+        "whoop_auth.py",
+        "whoop_background.py",
+        "whoop_client.py"
+      ],
+      "id": "app-store.whoop",
+      "kind": "app_example",
+      "metadata": {
+        "app_kind": "fg+bg",
+        "bundle_id": "org.truffle.whoop.bridge",
+        "slug": "whoop",
+        "step_types": [
+          "bash",
+          "files",
+          "oauth"
+        ]
+      },
+      "path": "app-store/whoop",
+      "summary": "Read your WHOOP profile, recovery, sleep, cycle, and workout data. During install, authorize access to your WHOOP account through OAuth.",
+      "tags": [
+        "bash",
+        "files",
+        "foreground_background",
+        "oauth",
+        "oauth_app",
+        "tests"
+      ],
+      "title": "Whoop"
+    }
+  ],
+  "version": 1
+}
