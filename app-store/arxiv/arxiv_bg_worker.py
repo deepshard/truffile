@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from datetime import timezone
+import os
+import re
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timezone
 import logging
 from typing import Any
 
@@ -12,6 +14,11 @@ from arxiv_common import get_bg_state_path, parse_research_interests
 
 logger = logging.getLogger("arxiv.bg_worker")
 logger.setLevel(logging.INFO)
+
+DEFAULT_MAX_PAPERS_PER_RUN = 2
+DEFAULT_SEARCH_RESULTS_PER_INTEREST = 5
+DEFAULT_INTERESTS_PER_RUN = 1
+MAX_SEEN_IDS = 3000
 
 
 @dataclass
@@ -27,13 +34,15 @@ class ArxivRecommendation:
 @dataclass
 class BgRunResult:
     content: str | None = None
+    uris: list[str] = field(default_factory=list)
     error: str | None = None
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 class ArxivBackgroundWorker:
     def __init__(self, interests_raw: str) -> None:
         self._interests_raw = interests_raw
-        self._client = arxiv.Client()
+        self._client = self._make_client()
         self._state_path = get_bg_state_path()
 
     @property
@@ -53,12 +62,34 @@ class ArxivBackgroundWorker:
 
         state = self._load_state()
         seen_ids: set[str] = set(state.get("seen_ids") or [])
+        seeded = bool(state.get("initialized_at"))
         recommendations: list[ArxivRecommendation] = []
+        max_papers = self._env_int("ARXIV_BG_MAX_PAPERS_PER_RUN", DEFAULT_MAX_PAPERS_PER_RUN)
+        search_results = self._env_int("ARXIV_BG_SEARCH_RESULTS_PER_INTEREST", DEFAULT_SEARCH_RESULTS_PER_INTEREST)
+        interests_per_run = min(
+            len(interests),
+            self._env_int("ARXIV_BG_INTERESTS_PER_RUN", DEFAULT_INTERESTS_PER_RUN),
+        )
+        selected_interests, next_interest_index = self._select_interests(
+            interests,
+            start_index=self._state_int(state, "next_interest_index", 0),
+            count=interests_per_run,
+        )
+        scanned_ids: set[str] = set()
 
-        for interest in interests:
-            for paper in self._search_interest(interest, max_results=8):
+        for interest in selected_interests:
+            for paper in self._search_interest(interest, max_results=search_results):
                 paper_id = paper.get_short_id()
-                if not paper_id or paper_id in seen_ids:
+                seen_key = self._seen_key(paper_id)
+                if not paper_id or not seen_key:
+                    continue
+                scanned_ids.add(seen_key)
+                if seen_key in seen_ids:
+                    continue
+                seen_ids.add(seen_key)
+                if not seeded:
+                    continue
+                if len(recommendations) >= max_papers:
                     continue
                 published_iso = paper.published.astimezone(timezone.utc).date().isoformat()
                 recommendations.append(
@@ -68,21 +99,75 @@ class ArxivBackgroundWorker:
                         title=paper.title.strip(),
                         published=published_iso,
                         abs_url=f"https://arxiv.org/abs/{paper_id}",
-                        summary=" ".join((paper.summary or "").split())[:450],
+                        summary=" ".join((paper.summary or "").split())[:180],
                     )
                 )
-                seen_ids.add(paper_id)
-                if len(recommendations) >= 3:
-                    break
-            if len(recommendations) >= 3:
-                break
+
+        now = datetime.now(UTC).replace(microsecond=0).isoformat()
+        state["seen_ids"] = sorted(list(seen_ids))[-MAX_SEEN_IDS:]
+        state["next_interest_index"] = next_interest_index
+        state["last_run_at"] = now
+        if not seeded:
+            state["initialized_at"] = now
+        self._save_state(state)
+
+        stats = {
+            "baseline_seeded": not seeded,
+            "interests_scanned": selected_interests,
+            "search_results_per_interest": search_results,
+            "papers_scanned": len(scanned_ids),
+            "papers": len(recommendations),
+        }
 
         if not recommendations:
-            return BgRunResult(content=None)
+            return BgRunResult(
+                content=None,
+                stats=stats,
+            )
 
-        state["seen_ids"] = sorted(list(seen_ids))[-1500:]
-        self._save_state(state)
-        return BgRunResult(content=self._build_context(recommendations))
+        return BgRunResult(
+            content=self._build_context(recommendations),
+            uris=self._paper_uris(recommendations),
+            stats=stats,
+        )
+
+    @staticmethod
+    def _make_client() -> arxiv.Client:
+        try:
+            return arxiv.Client(
+                page_size=DEFAULT_SEARCH_RESULTS_PER_INTEREST,
+                delay_seconds=0.0,
+                num_retries=0,
+            )
+        except TypeError:
+            return arxiv.Client()
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        try:
+            return max(1, int(os.getenv(name, str(default)).strip()))
+        except ValueError:
+            return default
+
+    @staticmethod
+    def _state_int(state: dict[str, Any], key: str, default: int) -> int:
+        try:
+            return max(0, int(state.get(key, default)))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _select_interests(interests: list[str], *, start_index: int, count: int) -> tuple[list[str], int]:
+        if not interests:
+            return [], 0
+        count = max(1, min(count, len(interests)))
+        start = start_index % len(interests)
+        selected = [interests[(start + offset) % len(interests)] for offset in range(count)]
+        return selected, (start + count) % len(interests)
+
+    @staticmethod
+    def _seen_key(paper_id: str) -> str:
+        return re.sub(r"v\d+$", "", str(paper_id or "").strip())
 
     def _search_interest(self, interest: str, *, max_results: int) -> list[arxiv.Result]:
         try:
@@ -100,13 +185,13 @@ class ArxivBackgroundWorker:
         path = self._state_path
         try:
             if not path.exists():
-                return {"seen_ids": []}
+                return {"seen_ids": [], "next_interest_index": 0}
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
         except Exception as exc:
             logger.warning("Failed to load BG state: %s", exc)
-        return {"seen_ids": []}
+        return {"seen_ids": [], "next_interest_index": 0}
 
     def _save_state(self, state: dict[str, Any]) -> None:
         path = self._state_path
@@ -116,19 +201,24 @@ class ArxivBackgroundWorker:
         except Exception as exc:
             logger.warning("Failed to save BG state: %s", exc)
 
-    def _build_context(self, items: list[ArxivRecommendation]) -> str:
-        lines: list[str] = [
-            "These are research papers the user likes.",
-            "Please use a research tool like Exa or web search to read each paper and provide the user a summary and notes.",
-            "",
-            "Recommended papers:",
-        ]
-        for idx, item in enumerate(items, start=1):
-            lines.append(
-                f"{idx}. {item.title} (arXiv:{item.paper_id}, published {item.published})"
-            )
-            lines.append(f"   Interest match: {item.interest}")
-            lines.append(f"   URL: {item.abs_url}")
-            if item.summary:
-                lines.append(f"   Abstract snippet: {item.summary}")
+    def _build_context(
+        self,
+        items: list[ArxivRecommendation],
+    ) -> str:
+        lines: list[str] = [f"arXiv notification delta: {len(items)} new paper(s)."]
+        for item in items:
+            lines.append(f"- {item.title} ({item.paper_id}, published {item.published})")
+            lines.append(f"  why: matches research interest '{item.interest}'")
+            lines.append(f"  open: download_paper paper_id=\"{item.paper_id}\"")
+            lines.append(f"  url: {item.abs_url}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _paper_uris(items: list[ArxivRecommendation]) -> list[str]:
+        uris: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            if item.abs_url and item.abs_url not in seen:
+                uris.append(item.abs_url)
+                seen.add(item.abs_url)
+        return uris

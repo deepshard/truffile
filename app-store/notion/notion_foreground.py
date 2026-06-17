@@ -7,21 +7,61 @@ import os
 import sys
 from typing import Any
 
-
-
-from truffile.app_runtime.errors import AppAuthError, AppRuntimeFailure, ErrorReporter
+from truffile.app_runtime.errors import ErrorReporter
 
 from auth import NotionAuth
-from config import MCP_HOST, MCP_PORT, resolve_binary
-from notion_client import ManagedNotionMcpProcessClient, NotionMcpClient, verify_notion_workspace
+from config import MCP_HOST, MCP_PORT, NOTION_MCP_BASE, build_default_headers
+from notion_client import NotionMcpClient
+from remote_mcp_compat import load_remote_mcp
+
+RemoteMcpProxyServer = load_remote_mcp().RemoteMcpProxyServer
+USER_INFO_RESOURCE_URI = "truffle://user-info"
 
 LOGGER = logging.getLogger("notion.foreground")
 LOGGER.setLevel(logging.INFO)
+_TITLE_OVERRIDES = {"api": "API", "id": "ID", "mcp": "MCP", "url": "URL"}
+
+
+def _tool_title_from_name(name: str) -> str:
+    words = []
+    for part in name.replace("-", "_").split("_"):
+        if not part:
+            continue
+        words.append(_TITLE_OVERRIDES.get(part.lower(), part.capitalize()))
+    return " ".join(words) or name
+
+
+def _infer_tool_annotations(name: str) -> dict[str, bool]:
+    lowered = name.lower()
+    destructive_words = ("delete", "remove", "archive", "trash")
+    read_prefixes = ("get_", "list_", "search_", "fetch_", "read_", "query_", "check_")
+    mutating_words = ("create", "update", "edit", "patch", "append", "add", "set")
+    if any(word in lowered for word in destructive_words):
+        return {"readOnlyHint": False, "destructiveHint": True}
+    if lowered.startswith(read_prefixes) or lowered in {"notion_fetch", "notion_search"}:
+        return {"readOnlyHint": True, "destructiveHint": False}
+    if any(word in lowered for word in mutating_words):
+        return {"readOnlyHint": False, "destructiveHint": False}
+    return {"readOnlyHint": False, "destructiveHint": False}
+
+
+def _enrich_tool_metadata(tool: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(tool)
+    name = str(enriched.get("name", "") or "")
+    enriched.setdefault("title", _tool_title_from_name(name))
+    annotations = enriched.get("annotations")
+    if not isinstance(annotations, dict):
+        annotations = {}
+    inferred = _infer_tool_annotations(name)
+    annotations.setdefault("readOnlyHint", inferred["readOnlyHint"])
+    annotations.setdefault("destructiveHint", inferred["destructiveHint"])
+    enriched["annotations"] = annotations
+    return enriched
 
 
 class _StubNotionMcpClient:
     def verify(self) -> tuple[bool, str]:
-        return True, "Notion access token verified. workspace=Testing tools=3"
+        return True, "Notion OAuth token verified. workspace=Testing tools=3"
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [
@@ -49,6 +89,32 @@ class _StubNotionMcpClient:
             "isError": False,
         }
 
+    def list_resources(self) -> dict[str, Any]:
+        return {
+            "resources": [
+                {
+                    "uri": USER_INFO_RESOURCE_URI,
+                    "name": "user_info",
+                    "title": "User Info",
+                    "description": "Profile of the authed Notion workspace.",
+                    "mimeType": "text/markdown",
+                }
+            ]
+        }
+
+    def read_resource(self, uri: str) -> dict[str, Any]:
+        if uri != USER_INFO_RESOURCE_URI:
+            raise RuntimeError(f"Notion resource not found: {uri}")
+        return {
+            "contents": [
+                {
+                    "uri": USER_INFO_RESOURCE_URI,
+                    "mimeType": "text/markdown",
+                    "text": "# Notion\nWorkspace: Testing\nMore: use notion_search / notion_fetch / notion_get_users / notion_get_teams.",
+                }
+            ]
+        }
+
     def close(self) -> None:
         return None
 
@@ -73,13 +139,10 @@ class NotionForegroundApp:
     def build_client(self) -> NotionMcpClient:
         if os.getenv("APP_STORE_USE_TEST_STUBS") == "1":
             return _StubNotionMcpClient()  # type: ignore[return-value]
-        token = self.get_auth().get_access_token()
-        if not token:
-            raise RuntimeError("Notion access token missing or empty")
-        server_bin = resolve_binary()
-        return ManagedNotionMcpProcessClient(
-            notion_token=token,
-            server_bin=server_bin,
+        return NotionMcpClient(
+            remote_url=NOTION_MCP_BASE,
+            auth=self.get_auth(),
+            default_headers=build_default_headers(),
         )
 
     def get_client(self) -> NotionMcpClient:
@@ -107,7 +170,12 @@ class NotionForegroundApp:
         return [self.logger.name]
 
     def list_tools(self) -> list[dict[str, Any]]:
-        return self.get_client().list_tools()
+        client = self.get_client()
+        if hasattr(client, "list_mcp_tools"):
+            tools = client.list_mcp_tools()
+        else:
+            tools = client.list_tools()
+        return [_enrich_tool_metadata(tool) for tool in tools if isinstance(tool, dict)]
 
     def list_prompts(self) -> list[dict[str, str]]:
         return []
@@ -120,38 +188,20 @@ class NotionForegroundApp:
             raise
 
     def verify(self) -> tuple[bool, str]:
-        token = self.get_auth().get_access_token()
-        if not token:
-            return False, "Notion access token missing or empty"
-        workspace_ok, workspace_message = verify_notion_workspace(token)
-        if not workspace_ok:
-            return False, workspace_message
         client = self.build_client()
         try:
             ok, message = client.verify()
         finally:
             client.close()
-        if not ok:
-            return ok, message
-        return True, f"Notion access token verified. {workspace_message}. {message}"
+        return ok, message
 
     def run(self) -> None:
-        token = self.get_auth().get_access_token()
-        if not token:
-            raise RuntimeError("Notion access token missing or empty")
-        server_bin = resolve_binary()
-        env = dict(os.environ)
-        env["NOTION_TOKEN"] = token
-        cmd = [
-            server_bin,
-            "--transport",
-            "http",
-            "--port",
-            str(MCP_PORT),
-            "--disable-auth",
-        ]
-        LOGGER.info("Starting Notion MCP server on %s:%d", MCP_HOST, MCP_PORT)
-        os.execvpe(cmd[0], cmd, env)
+        client = self.build_client()
+        LOGGER.info("Starting Notion MCP proxy on %s:%d -> %s", MCP_HOST, MCP_PORT, client.remote_url)
+        try:
+            RemoteMcpProxyServer(client=client, host=MCP_HOST, port=MCP_PORT).serve_forever()
+        finally:
+            LOGGER.info("Notion MCP proxy stopped")
 
 
 app = NotionForegroundApp()
@@ -172,7 +222,7 @@ def reset_for_test() -> None:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Notion foreground wrapper")
-    parser.add_argument("--verify", action="store_true", help="Verify installed access token and MCP binary")
+    parser.add_argument("--verify", action="store_true", help="Verify installed OAuth token and MCP binary")
     return parser.parse_args(argv)
 
 

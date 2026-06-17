@@ -1,4 +1,4 @@
-"""WHOOP OAuth token helpers for manual-token Truffle installs."""
+"""WHOOP OAuth token helpers for installer OAuth Truffle installs."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from config import WhoopConfig
 
 
 class WhoopOAuth(OAuth):
-    APP_VAR_KEY = "whoop_oauth"
+    APP_VAR_KEY = "oauth_state"
 
     def __init__(
         self,
@@ -31,11 +31,11 @@ class WhoopOAuth(OAuth):
 
     def config_errors(self) -> list[str]:
         errors: list[str] = []
-        if not self._config.client_id:
+        if not self.get_client_id():
             errors.append("WHOOP_CLIENT_ID is missing")
-        if not self._config.client_secret:
+        if not self.get_client_secret():
             errors.append("WHOOP_CLIENT_SECRET is missing")
-        if not self._config.redirect_uri:
+        if not self.get_redirect_uri():
             errors.append("WHOOP_REDIRECT_URI is missing")
         payload = self.get_oauth_payload() or {}
         if not self.token_from_payload(payload):
@@ -51,13 +51,16 @@ class WhoopOAuth(OAuth):
         return True, "WHOOP OAuth credentials loaded"
 
     def get_client_id(self) -> str:
-        return self._config.client_id
+        payload = self.get_oauth_payload() or {}
+        return self._config.client_id or str(payload.get("client_id", "") or "").strip()
 
     def get_client_secret(self) -> str:
-        return self._config.client_secret
+        payload = self.get_oauth_payload() or {}
+        return self._config.client_secret or str(payload.get("client_secret", "") or "").strip()
 
     def get_redirect_uri(self) -> str:
-        return self._config.redirect_uri
+        payload = self.get_oauth_payload() or {}
+        return self._config.redirect_uri or str(payload.get("redirect_uri", "") or "").strip()
 
     def get_refresh_token(self) -> str:
         payload = self.get_oauth_payload() or {}
@@ -68,8 +71,8 @@ class WhoopOAuth(OAuth):
 
     def can_refresh(self) -> bool:
         return bool(
-            self._config.client_id
-            and self._config.client_secret
+            self.get_client_id()
+            and self.get_client_secret()
             and str((self.get_oauth_payload() or {}).get("refresh_token", "") or "").strip()
         )
 
@@ -118,8 +121,11 @@ class WhoopOAuth(OAuth):
             token_expires_soon = now + 120.0 >= expires_at_value
         return {
             "client_id_configured": bool(self._config.client_id),
+            "client_id_available": bool(self.get_client_id()),
             "client_secret_configured": bool(self._config.client_secret),
+            "client_secret_available": bool(self.get_client_secret()),
             "redirect_uri_configured": bool(self._config.redirect_uri),
+            "redirect_uri_available": bool(self.get_redirect_uri()),
             "access_token_present": bool(self.token_from_payload(payload)),
             "refresh_token_present": bool(str(payload.get("refresh_token", "") or "").strip()),
             "token_expires_at": payload.get("expires_at"),

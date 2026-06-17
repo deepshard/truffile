@@ -295,7 +295,7 @@ class WhoopClient:
 
             if not self._auth.can_refresh():
                 raise AppAuthError(
-                    "WHOOP refresh requires WHOOP_CLIENT_ID, WHOOP_CLIENT_SECRET, and WHOOP_REFRESH_TOKEN."
+                    "WHOOP refresh requires client_id, client_secret, and refresh_token in the installed OAuth token file."
                 )
 
             refresh_payload = {
