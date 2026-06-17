@@ -31,8 +31,6 @@ _DEVICE_REQUIRING_COMMANDS = {
     "infer",
     "deploy",
     "delete",
-    "install",
-    "update",
     "models",
 }
 
@@ -46,7 +44,7 @@ def _command_needs_device(args) -> bool:
     if cmd in _DEVICE_REQUIRING_COMMANDS:
         return True
     if cmd == "list":
-        return getattr(args, "what", "") in {"apps", "store"}
+        return getattr(args, "what", "") == "apps"
     return False
 
 
@@ -152,25 +150,8 @@ def _main() -> int:
 
     # list
     list_p = sub.add_parser("list", help="list apps or devices")
-    list_p.add_argument("what", choices=["apps", "devices", "store"])
+    list_p.add_argument("what", choices=["apps", "devices"])
     list_p.add_argument("--json", action="store_true", help="emit structured json")
-
-    # install
-    install_p = sub.add_parser("install", help="install apps")
-    install_sub = install_p.add_subparsers(dest="install_command")
-    install_store = install_sub.add_parser("store", help="install an app from the Truffle app store")
-    install_store.add_argument("app", help="store app name, slug, or bundle id")
-    install_store.add_argument("--field", action="append", default=None, help="text field as KEY=VALUE (repeatable)")
-    install_store.add_argument("--no-interactive", action="store_true", dest="no_interactive", help="fail instead of prompting")
-    install_store.add_argument("--json", action="store_true", help="emit structured json")
-
-    # update
-    update_p = sub.add_parser("update", help="update apps")
-    update_sub = update_p.add_subparsers(dest="update_command")
-    update_store = update_sub.add_parser("store", help="update an installed app from the Truffle app store")
-    update_store.add_argument("app", nargs="?", help="store app name, slug, or bundle id")
-    update_store.add_argument("--all", action="store_true", help="update all app-store apps with available updates")
-    update_store.add_argument("--json", action="store_true", help="emit structured json")
 
     # delete
     del_p = sub.add_parser("delete", help="delete app from device")
@@ -359,18 +340,6 @@ def _main() -> int:
     elif args.command == "list":
         from .apps import cmd_list
         return cmd_list(args, storage)
-    elif args.command == "install":
-        from .store import cmd_install_store
-        if args.install_command == "store":
-            return run_async(cmd_install_store(args, storage))
-        parser.error("install requires a subcommand")
-    elif args.command == "update":
-        from .store import cmd_update_store
-        if args.update_command == "store":
-            if not args.all and not args.app:
-                parser.error("update store requires an app or --all")
-            return run_async(cmd_update_store(args, storage))
-        parser.error("update requires a subcommand")
     elif args.command == "delete":
         from .apps import cmd_delete
         return run_async(cmd_delete(args, storage))
