@@ -80,6 +80,40 @@ def _stage_obsidian_app(temp_root: Path, source_arg: str | None) -> Path:
     return temp_app_dir
 
 
+def _configure_staged_obsidian_manifest(manifest_path: Path, config: ObsidianBridgeConfig) -> None:
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    env = (
+        manifest.setdefault("metadata", {})
+        .setdefault("foreground", {})
+        .setdefault("process", {})
+        .setdefault("environment", {})
+    )
+    env["OBSIDIAN_BRIDGE_BASE_URL"] = _device_bridge_url(config)
+    env["OBSIDIAN_BRIDGE_TOKEN"] = config.token
+
+    # The generic store app needs a text step so users can provide bridge
+    # credentials. The bespoke `truffile obsidian deploy` flow has already
+    # started/probed the bridge and injects those credentials here, so keeping
+    # that step would create a redundant prompt.
+    steps = manifest.get("steps")
+    if isinstance(steps, list):
+        manifest["steps"] = [
+            step
+            for step in steps
+            if not (
+                isinstance(step, dict)
+                and step.get("type") == "text"
+                and any(
+                    isinstance(field, dict)
+                    and field.get("env") in {"OBSIDIAN_BRIDGE_BASE_URL", "OBSIDIAN_BRIDGE_TOKEN"}
+                    for field in step.get("fields", [])
+                )
+            )
+        ]
+
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+
 def _best_effort_advertise_host() -> str:
     probe_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -722,16 +756,7 @@ async def cmd_obsidian_deploy(args, storage: StorageService) -> int:
             return 1
 
         manifest_path = temp_app_dir / "truffile.yaml"
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-        env = (
-            manifest.setdefault("metadata", {})
-            .setdefault("foreground", {})
-            .setdefault("process", {})
-            .setdefault("environment", {})
-        )
-        env["OBSIDIAN_BRIDGE_BASE_URL"] = _device_bridge_url(config)
-        env["OBSIDIAN_BRIDGE_TOKEN"] = config.token
-        manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+        _configure_staged_obsidian_manifest(manifest_path, config)
 
         deploy_args = SimpleNamespace(
             path=str(temp_app_dir),

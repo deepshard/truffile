@@ -46,6 +46,7 @@ steps:
 
   - name: Configure
     type: text
+    update_policy: run_on_update
     fields:
       - name: api_key
         label: API Key
@@ -55,6 +56,24 @@ steps:
       type: bash
       run: python ./my_background.py --verify
       timeout: 120
+
+  - name: Connect with OAuth
+    type: oauth
+    update_policy: run_on_update
+    update_check: python ./my_foreground.py --verify
+    provider: Example
+    redirect_uri: https://truffle.net/api/oauth/callback
+    auth_endpoint: https://example.com/oauth/authorize
+    token_endpoint: https://example.com/oauth/token
+    scopes: []
+    token_output_file: /root/.example/oauth.json
+    token_file_env_name: EXAMPLE_TOKEN_FILE
+
+  - name: Continue
+    type: welcome
+    update_policy: run_on_update
+    content: |
+      This app does not need sign-in. Continue to finish installing.
 ```
 
 ## Rules
@@ -64,8 +83,9 @@ steps:
 - foreground cmd must start a process that listens on port 8000
 - every source file must be listed in a files step
 - use --no-cache-dir for pip installs
-- don't reinstall packages in the base image (python3, grpcio, mcp, httpx)
 - PYTHONUNBUFFERED=1 should be set in all process environments
+- supported install step types include bash, files, text, oauth, and welcome
+- browser/VNC apps are not supported through CLI store install yet
 
 ## Files Step
 

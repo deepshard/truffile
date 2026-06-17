@@ -2,9 +2,11 @@
 
 ## Foreground Rules
 
-- tools must return ok() or err() response dicts
+- tools may return compact `CallToolResult` objects for model-facing text, or
+  ok()/err() dicts for simple internal/local tools
 - every tool needs a name, description, and icon
-- set readonly=True for tools that only read data
+- set `annotations={"readOnlyHint": True, "destructiveHint": False}` for
+  tools that only read data
 - destructive tools (purchases, deletions, sends) must say so in description
 - catch exceptions and return err(), don't let them propagate
 - report auth failures to firmware via report_app_error with needs_intervention=True

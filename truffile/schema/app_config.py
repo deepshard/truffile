@@ -19,10 +19,9 @@ def _check_python_syntax(file_path: Path) -> tuple[bool, str]:
 
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-_SUPPORTED_STEP_TYPES = {"bash", "files", "text"}
+_SUPPORTED_STEP_TYPES = {"bash", "files", "oauth", "text", "welcome"}
 _UNSUPPORTED_STEP_HINTS = {
-    "oauth": "OAuth is not supported yet — use a 'text' step with a password field to collect an access token.",
-    "vnc": "VNC is not supported yet — use a 'text' step to collect credentials instead.",
+    "vnc": "VNC/browser app installation is not supported through truffile yet. Please use Symphony Settings.",
 }
 
 
