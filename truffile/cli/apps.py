@@ -222,6 +222,9 @@ def cmd_list(args, storage: StorageService) -> int:
     what = args.what
     if what == "apps":
         return _run_async(cmd_list_apps(storage))
+    elif what == "store":
+        from .store import cmd_list_store
+        return _run_async(cmd_list_store(args, storage))
     elif what == "devices":
         devices = storage.list_devices()
         if not devices:

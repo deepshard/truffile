@@ -53,7 +53,8 @@ Ask the user which approach they prefer.
 
 Based on the user's answers, determine:
 - app shape: foreground only, background only, or hybrid
-- auth type: API key or public (OAuth and VNC not yet supported in truffile deploy)
+- auth type: API key/text config, OAuth, or public. Browser/VNC apps are not
+  supported through CLI store install yet.
 - base image: minimal for API apps
 
 Reference: see references/auth-patterns.md for the decision tree.
@@ -98,11 +99,16 @@ This makes everything testable from the start.
 Register tools using ForegroundApp and ToolSpec:
 
 ```python
-from truffile import ForegroundApp, ToolSpec, ok, err
+from truffile.app_runtime import ForegroundApp, ToolSpec, err, ok
 
 app = ForegroundApp("my-app")
 
-@app.tool(ToolSpec(name="search", description="Search.", icon="magnifying-glass", readonly=True))
+@app.tool(ToolSpec(
+    name="search",
+    description="Search.",
+    icon="magnifying-glass",
+    annotations={"readOnlyHint": True, "destructiveHint": False},
+))
 async def search(query: str) -> dict:
     ...
 ```

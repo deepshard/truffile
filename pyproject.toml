@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 license = {text = "MIT"}
 
 dependencies = [
+    "aiohttp>=3.9.0",
     "protobuf>=6.30.0",
     "googleapis-common-protos>=1.63.2",
     "grpcio==1.76.0",
@@ -38,3 +39,6 @@ include = ["truffile*", "truffle*"]
 [tool.setuptools.package-data]
 "*" = ["*.pyi", "py.typed"]
 "truffile" = ["assets/*.png", "assets/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
