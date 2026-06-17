@@ -1,0 +1,60 @@
+truffile_version: 2
+metadata:
+  name: Viator
+  bundle_id: org.deepshard.viator
+  description: |
+    Search Viator tours, activities, and attractions, then fetch experience
+    details for trip planning and comparison.
+  icon_file: ./icon.png
+  background:
+    process:
+      cmd:
+        - python
+        - background.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+    default_schedule:
+      type: interval
+      interval:
+        duration: 60m
+        daily_window: 00:00-23:59
+  foreground:
+    process:
+      cmd:
+        - python
+        - foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        VIATOR_MCP_BASE: https://exp-app-mcp.prod.ep.viator.com/mcp
+
+steps:
+  - name: Copy app files
+    type: files
+    update_policy: run_on_update
+    files:
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./foreground.py
+        destination: ./foreground.py
+      - source: ./tools.py
+        destination: ./tools.py
+      - source: ./background.py
+        destination: ./background.py
+      - source: ./location_context.py
+        destination: ./location_context.py
+  - name: Verify Viator MCP
+    type: bash
+    update_policy: run_on_update
+    run: |
+      python ./foreground.py --verify
+
+  - name: Connect Viator
+    type: welcome
+    update_policy: run_on_update
+    ui_state_on_complete: move_to_background
+    content: |
+      Viator adds travel experience search and detail lookup tools for tours, activities, and attractions.
+
+      No sign-in is required. Continue to finish installing the app.

@@ -41,7 +41,9 @@ class TestHomeAssistantAppShells(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.success)
         self.assertFalse(result.errors)
         self.assertEqual(result.tool_calls[0]["tool"], "ha_get_live_context")
-        self.assertIn("Kitchen", result.tool_calls[0]["result"]["content"][0]["text"])
+        tool_result = result.tool_calls[0]["result"]
+        self.assertIn("Kitchen", tool_result.content[0].text)
+        self.assertFalse(tool_result.isError)
         fake_client.call_tool.assert_awaited_once_with(
             "GetLiveContext",
             {
@@ -71,8 +73,9 @@ class TestHomeAssistantAppShells(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.success)
         self.assertFalse(result.errors)
         tool_result = result.tool_calls[0]["result"]
-        self.assertEqual(tool_result["status"], "error")
-        self.assertTrue(tool_result["requires_confirmation"])
+        self.assertTrue(tool_result.isError)
+        self.assertIn("safety-sensitive", tool_result.content[0].text)
+        self.assertTrue(tool_result.structuredContent["requires_confirmation"])
         fake_client.call_tool.assert_not_called()
 
     async def test_foreground_lists_capabilities(self) -> None:
@@ -86,7 +89,10 @@ class TestHomeAssistantAppShells(unittest.IsolatedAsyncioTestCase):
         result = await harness.run_fg(calls=[("ha_list_capabilities", {})])
 
         self.assertTrue(result.success)
-        self.assertEqual(result.tool_calls[0]["result"]["status"], "success")
+        tool_result = result.tool_calls[0]["result"]
+        self.assertFalse(tool_result.isError)
+        self.assertIn("Home Assistant capabilities", tool_result.content[0].text)
+        self.assertEqual(tool_result.structuredContent["tools"], [{"name": "GetLiveContext"}])
         self.assertIn("ha_get_live_context", {tool["name"] for tool in app.list_tools()})
         self.assertEqual(app.list_prompts(), [])
 

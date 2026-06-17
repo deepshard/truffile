@@ -1,3 +1,4 @@
+truffile_version: 2
 metadata:
   name: ArXiv
   bundle_id: org.deepshard.arxiv
@@ -8,7 +9,7 @@ metadata:
     process:
       cmd:
         - python
-        - arxiv_background.py
+        - background.py
       working_directory: /
       environment:
         PYTHONUNBUFFERED: "1"
@@ -16,12 +17,13 @@ metadata:
       type: interval
       interval:
         duration: 30m
+        prod_duration: 30m
         daily_window: "00:00-23:59"
   foreground:
     process:
       cmd:
         - python
-        - arxiv_foreground.py
+        - foreground.py
       working_directory: /
       environment:
         PYTHONUNBUFFERED: "1"
@@ -29,15 +31,16 @@ metadata:
 steps:
   - name: Install Python dependencies
     type: bash
+    update_policy: run_on_update
     run: |
       pip install --no-cache-dir \
         "arxiv>=2.1.0" \
         "httpx>=0.24.0" \
-        "python-dateutil>=2.8.2" \
         "pypdf>=5.0.0"
 
   - name: Copy application files
     type: files
+    update_policy: run_on_update
     files:
       - source: ./arxiv_common.py
         destination: ./arxiv_common.py
@@ -45,13 +48,16 @@ steps:
         destination: ./arxiv_tools.py
       - source: ./arxiv_bg_worker.py
         destination: ./arxiv_bg_worker.py
-      - source: ./arxiv_foreground.py
-        destination: ./arxiv_foreground.py
-      - source: ./arxiv_background.py
-        destination: ./arxiv_background.py
+      - source: ./foreground.py
+        destination: ./foreground.py
+      - source: ./tools.py
+        destination: ./tools.py
+      - source: ./background.py
+        destination: ./background.py
 
   - name: Configure research interests
     type: text
+    update_policy: run_on_update
     ui_state_on_show: user_interaction_ready
     ui_state_on_complete: move_to_background
     content: |
@@ -73,13 +79,14 @@ steps:
     validator:
       type: bash
       run: |
-        python ./arxiv_background.py --verify
+        python ./background.py --verify
       timeout: 60
       error_message: |
         Please enter at least one research interest (comma-separated).
 
   - name: Finalize installation
     type: bash
+    update_policy: run_on_update
     run: |
       mkdir -p /root/.arxiv-mcp-server/papers
       mkdir -p /root/.arxiv-truffle

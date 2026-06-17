@@ -20,11 +20,13 @@ class ExaRpcError(RuntimeError):
         status_code: int | None = None,
         error: dict[str, Any] | None = None,
         raw: str | None = None,
+        retry_after_seconds: int | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.error = error or {}
         self.raw = raw or ""
+        self.retry_after_seconds = retry_after_seconds
 
 
 class HttpxTransport:
@@ -210,13 +212,24 @@ class ExaRemoteClient:
             )
 
         if response.status_code >= 400:
+            retry_after = _parse_retry_after_seconds(lowered_headers.get("retry-after"))
             raise ExaRpcError(
                 f"Exa request failed with HTTP {response.status_code}",
                 status_code=response.status_code,
                 error=(parsed or {}).get("error") if isinstance(parsed, dict) else None,
                 raw=raw,
+                retry_after_seconds=retry_after,
             )
 
         if isinstance(parsed, dict):
             return parsed
         raise ExaRpcError("Exa request failed: response was not valid JSON-RPC", raw=raw)
+
+
+def _parse_retry_after_seconds(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        return max(1, int(float(value)))
+    except ValueError:
+        return None
