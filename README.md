@@ -66,6 +66,22 @@ truffile chat
 - copy-file steps for generated `*_foreground.py` and `*_background.py`
 - `icon.png` copied from `docs/Truffle.png` (deploy requires an icon)
 
+## Obsidian Bridge Workflow
+
+For a local Obsidian vault on your laptop, `truffile` can run a small host-side
+bridge and deploy a bundled foreground app to the device:
+
+```bash
+truffile obsidian attach --vault ~/Documents/abd-vault
+truffile obsidian serve
+truffile obsidian deploy
+```
+
+Use `truffile obsidian status` to inspect the saved bridge configuration. The
+bridge stores a scoped bearer token in the local `truffile` state file and the
+bundled app uses that token to read, write, list, and search notes in the
+configured vault.
+
 
 In `truffile chat`, runtime controls are slash commands (not launch flags):
 
