@@ -3,7 +3,7 @@ metadata:
   name: Turkish Airlines
   bundle_id: org.deepshard.turkish-airlines
   description: Turkish Airlines flight search, booking, and Miles&Smiles via MCP
-  icon_file: ./icon.svg
+  icon_file: ./icon.png
   foreground:
     process:
       cmd:
@@ -31,8 +31,8 @@ steps:
         destination: ./turkish_foreground.py
       - source: ./tools.py
         destination: ./tools.py
-      - source: ./icon.svg
-        destination: ./icon.svg
+      - source: ./icon.png
+        destination: ./icon.png
 
   - name: Turkish Airlines OAuth Sign-In
     type: oauth
