@@ -1,0 +1,73 @@
+truffile_version: 2
+metadata:
+  name: Home Assistant
+  bundle_id: org.truffle.home-assistant
+  description: |
+    Control and inspect a Home Assistant instance through its MCP server.
+  icon_file: ./icon.png
+  foreground:
+    process:
+      cmd:
+        - python
+        - home_assistant_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+
+steps:
+  - name: Install Python dependencies
+    type: bash
+    update_policy: run_on_update
+    run: |
+      pip install --no-cache-dir "httpx>=0.27.0" "mcp==1.26.0"
+
+  - name: Copy application files
+    type: files
+    update_policy: run_on_update
+    files:
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./ha_mcp_client.py
+        destination: ./ha_mcp_client.py
+      - source: ./safety.py
+        destination: ./safety.py
+      - source: ./home_assistant_foreground.py
+        destination: ./home_assistant_foreground.py
+
+  - name: Configure Home Assistant
+    type: text
+    update_policy: run_on_update
+    update_check: python ./home_assistant_foreground.py --verify
+    ui_state_on_show: user_interaction_ready
+    ui_state_on_complete: move_to_background
+    content: |
+      Enter your Home Assistant URL and a long-lived access token.
+
+      The Home Assistant MCP Server integration must be enabled. Current Home Assistant releases expose the MCP endpoint at:
+      https://<your-home-assistant-url>/api/mcp
+
+      To create a long-lived access token:
+      1. Open Home Assistant.
+      2. Open your user profile.
+      3. Create a Long-Lived Access Token.
+      4. Paste it below.
+
+      This app reads Home Assistant MCP tools and wraps common operations with safety checks for locks, covers, alarms, scripts, scenes, and climate setpoints.
+    fields:
+      - name: home_assistant_base_url
+        label: Home Assistant URL
+        type: text
+        placeholder: https://homeassistant.local:8123
+        env: HOME_ASSISTANT_BASE_URL
+      - name: home_assistant_token
+        label: Long-Lived Access Token
+        type: password
+        placeholder: eyJ...
+        env: HOME_ASSISTANT_TOKEN
+    validator:
+      type: bash
+      run: |
+        python ./home_assistant_foreground.py --verify
+      timeout: 90
+      error_message: |
+        Could not verify Home Assistant. Confirm the URL is reachable from this device, the MCP Server integration is enabled, and the token is valid.

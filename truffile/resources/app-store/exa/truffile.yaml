@@ -1,0 +1,69 @@
+truffile_version: 2
+metadata:
+  name: Exa
+  bundle_id: org.deepshard.exa
+  description: |
+    Search the web, crawl pages, find code context, research companies or people,
+    and run deeper source-backed research with Exa.
+  icon_file: ./icon.png
+  foreground:
+    process:
+      cmd:
+        - python
+        - foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+
+steps:
+  - name: Copy application files
+    type: files
+    update_policy: run_on_update
+    files:
+      - source: ./exa_client.py
+        destination: ./exa_client.py
+      - source: ./exa_common.py
+        destination: ./exa_common.py
+      - source: ./exa_verify.py
+        destination: ./exa_verify.py
+      - source: ./foreground.py
+        destination: ./foreground.py
+      - source: ./tools.py
+        destination: ./tools.py
+      - source: ./exa_foreground.py
+        destination: ./exa_foreground.py
+
+  - name: Configure Exa API key
+    type: text
+    update_policy: run_on_update
+    update_check: python ./foreground.py --verify
+    ui_state_on_show: user_interaction_ready
+    ui_state_on_complete: move_to_background
+    content: |
+      Enter your Exa API key.
+
+      To get a key:
+      1. Go to https://dashboard.exa.ai/onboarding
+      2. Answer the onboarding questions
+      3. Paste the key below
+
+      This app enables these Exa research tools:
+      - web_search_exa
+      - web_search_advanced_exa
+      - get_code_context_exa
+      - crawling_exa
+      - company_research_exa and people_search_exa for specialized lookup
+      - deep_researcher_start and deep_researcher_check for async reports
+    fields:
+      - name: exa_api_key
+        label: Exa API Key
+        type: password
+        placeholder: exa_...
+        env: EXA_API_KEY
+    validator:
+      type: bash
+      run: |
+        python ./foreground.py --verify
+      timeout: 90
+      error_message: |
+        Could not verify EXA_API_KEY. Please confirm the key is valid and has access.

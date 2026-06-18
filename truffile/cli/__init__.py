@@ -151,6 +151,7 @@ def _main() -> int:
     # list
     list_p = sub.add_parser("list", help="list apps or devices")
     list_p.add_argument("what", choices=["apps", "devices"])
+    list_p.add_argument("--json", action="store_true", help="emit structured json")
 
     # delete
     del_p = sub.add_parser("delete", help="delete app from device")
