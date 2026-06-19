@@ -5,6 +5,8 @@ from typing import Any, Callable
 
 from truffile.transport.client import TruffleClient
 
+from .env import build_env_prefix
+
 
 async def handle_bash(
     step: dict[str, Any],
@@ -14,10 +16,11 @@ async def handle_bash(
     info: Callable,
     error: Callable,
     scrolling_log_cls: Any,
+    collected_env: dict[str, str] | None = None,
     **_kw: Any,
 ) -> None:
     step_name = step.get("name", "bash")
-    run_cmd = step["run"]
+    run_cmd = f"{build_env_prefix(collected_env)}{step['run']}"
     info(f"Running: {step_name}")
     log = scrolling_log_cls(height=6, prefix="  ")
     exit_code = 0

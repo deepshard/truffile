@@ -1,7 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
+from truffile.deploy.builder import deploy_with_builder
 from truffile.deploy.plan import (
     build_deploy_plan,
     _normalize_cmd,
@@ -98,3 +100,100 @@ class TestBuildDeployPlan(unittest.TestCase):
             app_dir = self._make_app_dir(tmp, "", {"bg.py": "pass"})
             plan = build_deploy_plan(config=config, app_dir=app_dir, app_type="ambient")
             self.assertIsNotNone(plan)
+
+
+class _NoopSpinner:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self, success=True):
+        pass
+
+    def fail(self, _message=None):
+        pass
+
+
+class _NoopLog:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def add(self, _line):
+        pass
+
+    def finish(self):
+        pass
+
+
+class TestDeployWithBuilder(unittest.IsolatedAsyncioTestCase):
+    async def test_discards_build_session_when_step_fails(self):
+        class FakeClient:
+            def __init__(self):
+                self.app_uuid = None
+                self.access_path = None
+                self.discarded = False
+
+            async def connect(self):
+                pass
+
+            async def start_build(self):
+                self.app_uuid = "app-uuid"
+                self.access_path = "route-token"
+
+            async def exec(self, _cmd, cwd="/"):
+                return SimpleNamespace(exit_code=0)
+
+            async def upload(self, _src, _dest):
+                raise RuntimeError("upload failed")
+
+            async def discard(self):
+                self.discarded = True
+                self.app_uuid = None
+                self.access_path = None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            app_dir = Path(tmp) / "test-app"
+            app_dir.mkdir()
+            (app_dir / "app.py").write_text("pass", encoding="utf-8")
+            config = {
+                "metadata": {
+                    "name": "FG App",
+                    "bundle_id": "org.test.fg",
+                    "foreground": {
+                        "process": {"cmd": ["python", "app.py"]},
+                    },
+                },
+                "steps": [
+                    {
+                        "name": "Copy",
+                        "type": "files",
+                        "files": [{"source": "./app.py", "destination": "./app.py"}],
+                    }
+                ],
+            }
+            client = FakeClient()
+
+            with self.assertRaisesRegex(RuntimeError, "upload failed"):
+                await deploy_with_builder(
+                    client=client,
+                    config=config,
+                    app_dir=app_dir,
+                    app_type="focus",
+                    device="truffle-test",
+                    interactive=False,
+                    spinner_cls=_NoopSpinner,
+                    scrolling_log_cls=_NoopLog,
+                    info=lambda _msg: None,
+                    success=lambda _msg: None,
+                    error=lambda _msg: None,
+                    color_dim="",
+                    color_reset="",
+                    color_bold="",
+                    arrow="->",
+                    interactive_shell=lambda _url: None,
+                )
+
+        self.assertTrue(client.discarded)
+        self.assertIsNone(client.app_uuid)

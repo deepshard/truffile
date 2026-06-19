@@ -107,7 +107,7 @@ def _run_onboarding(storage) -> int:
 
 
 def _main() -> int:
-    parser = argparse.ArgumentParser(prog="truffile", add_help=False)
+    parser = argparse.ArgumentParser(prog="truffile")
     parser.add_argument("--resume", action="store_true", help="resume a previous task")
     sub = parser.add_subparsers(dest="command")
 
@@ -136,10 +136,10 @@ def _main() -> int:
     # deploy
     dep_p = sub.add_parser("deploy", help="deploy app to device")
     dep_p.add_argument("path", nargs="?", default=".")
-    dep_p.add_argument("--shell", action="store_true")
-    dep_p.add_argument("--interactive", action="store_true")
+    dep_p.add_argument("--shell", action="store_true", help=argparse.SUPPRESS)
+    dep_p.add_argument("--interactive", "-i", action="store_true")
     dep_p.add_argument("--dry-run", action="store_true")
-    dep_p.add_argument("--no-finalize", action="store_true")
+    dep_p.add_argument("--no-finalize", action="store_true", help=argparse.SUPPRESS)
     dep_p.add_argument("--vault", type=str, default=None, help=argparse.SUPPRESS)
     dep_p.add_argument("--pick-vault", action="store_true", dest="pick_vault", help=argparse.SUPPRESS)
     dep_p.add_argument("--advertise-host", type=str, default=None, dest="advertise_host", help=argparse.SUPPRESS)
@@ -240,10 +240,10 @@ def _main() -> int:
 
     obs_deploy = obs_sub.add_parser("deploy", help="deploy the bundled Obsidian app")
     obs_deploy.add_argument("--path", type=str, default=None, help="override the Obsidian app directory")
-    obs_deploy.add_argument("--shell", action="store_true")
-    obs_deploy.add_argument("--interactive", action="store_true")
+    obs_deploy.add_argument("--shell", action="store_true", help=argparse.SUPPRESS)
+    obs_deploy.add_argument("--interactive", "-i", action="store_true")
     obs_deploy.add_argument("--dry-run", action="store_true")
-    obs_deploy.add_argument("--no-finalize", action="store_true")
+    obs_deploy.add_argument("--no-finalize", action="store_true", help=argparse.SUPPRESS)
 
     # easter egg
     sub.add_parser("glow")
