@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import json
 import os
 import signal
 import sys
@@ -13,6 +15,95 @@ from .connect import _resolve_connected_device
 from .ui import C, ARROW, CROSS, DOT, Spinner, ScrollingLog, error, warn, info, success
 
 
+def _json_print(payload: dict) -> None:
+    print(json.dumps(payload, indent=2))
+
+
+def _deploy_error(json_out: bool, code: str, message: str, **extra) -> int:
+    if json_out:
+        payload = {"status": "error", "error": code, "message": message}
+        payload.update({k: v for k, v in extra.items() if v not in (None, "", [], {})})
+        _json_print(payload)
+    else:
+        error(message)
+    return 1
+
+
+def _plan_json(plan: dict, app_dir: Path) -> dict:
+    files = [
+        {"source": f.get("source", ""), "destination": f.get("destination", "")}
+        for f in plan["files_to_upload"]
+    ]
+    return {
+        "name": plan["name"],
+        "bundle_id": plan["bundle_id"],
+        "mode": plan["finish_label"],
+        "app_dir": str(app_dir),
+        "files": files,
+        "bash_steps": [name for name, _cmd in plan["bash_commands"]],
+    }
+
+
+def _non_interactive_blockers(plan: dict) -> list[dict[str, str]]:
+    blockers: list[dict[str, str]] = []
+    for step in plan["ordered_steps"]:
+        step_type = str(step.get("type", "") or "")
+        if step_type in {"text", "oauth"}:
+            blockers.append({
+                "type": step_type,
+                "name": str(step.get("name") or step_type),
+            })
+    return blockers
+
+
+async def _replace_existing_app(
+    *,
+    address: str,
+    token: str,
+    storage: StorageService,
+    device: str,
+    bundle_id: str,
+    json_out: bool,
+) -> tuple[int, dict | None]:
+    client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
+    spinner = None if json_out else Spinner("Checking for existing app")
+    if spinner:
+        spinner.start()
+    try:
+        await client.connect()
+        apps = await client.get_all_apps()
+        matches = [
+            app for app in apps
+            if getattr(app.metadata, "bundle_id", "") == bundle_id
+        ]
+        if spinner:
+            spinner.stop(success=True)
+        if not matches:
+            return 0, None
+        if len(matches) > 1:
+            names = ", ".join(f"{app.metadata.name} ({app.uuid})" for app in matches)
+            return _deploy_error(
+                json_out,
+                "replace_ambiguous",
+                f"Multiple installed apps match bundle id {bundle_id}: {names}",
+            ), None
+
+        app = matches[0]
+        delete_spinner = None if json_out else Spinner(f"Replacing existing {app.metadata.name}")
+        if delete_spinner:
+            delete_spinner.start()
+        await client.delete_app(app.uuid)
+        if delete_spinner:
+            delete_spinner.stop(success=True)
+        return 0, {"name": app.metadata.name, "uuid": app.uuid}
+    except Exception as exc:
+        if spinner:
+            spinner.fail(str(exc))
+        return _deploy_error(json_out, "replace_failed", str(exc)), None
+    finally:
+        await client.close()
+
+
 async def cmd_deploy(args, storage: StorageService) -> int:
     app_path = args.path if args.path else "."
     if app_path == "obsidian":
@@ -23,39 +114,62 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     app_dir = Path(app_path).resolve()
     interactive = args.interactive
     dry_run = bool(getattr(args, "dry_run", False))
+    json_out = bool(getattr(args, "json", False))
+    non_interactive = bool(getattr(args, "non_interactive", False))
+    replace = bool(getattr(args, "replace", False))
+    if interactive and non_interactive:
+        return _deploy_error(json_out, "invalid_args", "--interactive and --non-interactive cannot be used together")
     if not app_dir.exists() or not app_dir.is_dir():
-        error(f"{app_dir} is not a valid directory")
-        return 1
+        return _deploy_error(json_out, "invalid_path", f"{app_dir} is not a valid directory")
 
-    info(f"Validating app in {app_dir.name}")
+    if not json_out:
+        info(f"Validating app in {app_dir.name}")
     valid, config, app_type, warnings, errors = validate_app_dir(app_dir)
     if not valid or not app_type:
+        if json_out:
+            return _deploy_error(json_out, "validation_failed", "App validation failed", errors=errors)
         for msg in errors:
             error(msg)
         return 1
 
     for w in warnings:
-        warn(w)
+        if not json_out:
+            warn(w)
 
     metadata = config.get("metadata", {}) if isinstance(config, dict) else {}
     icon_file = metadata.get("icon_file") if isinstance(metadata, dict) else None
     if not isinstance(icon_file, str) or not icon_file.strip():
-        error("Deploy requires metadata.icon_file in truffile.yaml")
-        return 1
+        return _deploy_error(json_out, "missing_icon", "Deploy requires metadata.icon_file in truffile.yaml")
     deploy_icon_path = app_dir / icon_file
     if not deploy_icon_path.exists() or not deploy_icon_path.is_file():
-        error(f"Deploy requires an icon file; not found: {icon_file}")
-        return 1
+        return _deploy_error(json_out, "missing_icon", f"Deploy requires an icon file; not found: {icon_file}")
     if deploy_icon_path.stat().st_size == 0:
-        error(f"Deploy requires a non-empty icon file: {icon_file}")
-        return 1
+        return _deploy_error(json_out, "empty_icon", f"Deploy requires a non-empty icon file: {icon_file}")
+
+    try:
+        plan = build_deploy_plan(config=config, app_dir=app_dir, app_type=app_type)
+    except Exception as e:
+        return _deploy_error(json_out, "plan_failed", f"Failed to build deploy plan: {e}")
+
+    if non_interactive:
+        blockers = _non_interactive_blockers(plan)
+        if blockers:
+            return _deploy_error(
+                json_out,
+                "input_required",
+                "Deploy requires interactive input for one or more steps",
+                steps=blockers,
+            )
 
     if dry_run:
-        try:
-            plan = build_deploy_plan(config=config, app_dir=app_dir, app_type=app_type)
-        except Exception as e:
-            error(f"Failed to build deploy plan: {e}")
-            return 1
+        if json_out:
+            _json_print({
+                "status": "ok",
+                "dry_run": True,
+                "app": _plan_json(plan, app_dir),
+                "warnings": warnings,
+            })
+            return 0
         print()
         print(f"{C.BOLD}Dry Run: Deploy Plan{C.RESET}")
         print(f"  Name: {plan['name']}")
@@ -105,11 +219,26 @@ async def cmd_deploy(args, storage: StorageService) -> int:
 
     token = storage.get_token(device)
     if not token:
+        if json_out:
+            return _deploy_error(json_out, "missing_token", f"No token for {device}")
         error(f"No token for {device}")
         print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return 1
 
     address = f"{ip}:80"
+    replaced_app = None
+    if replace:
+        replace_code, replaced_app = await _replace_existing_app(
+            address=address,
+            token=token,
+            storage=storage,
+            device=device,
+            bundle_id=plan["bundle_id"],
+            json_out=json_out,
+        )
+        if replace_code != 0:
+            return replace_code
+
     client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
     deploy_task = None
 
@@ -141,30 +270,74 @@ async def cmd_deploy(args, storage: StorageService) -> int:
                 color_bold=C.BOLD,
                 arrow=ARROW,
                 interactive_shell=_interactive_shell,
+                non_interactive=non_interactive,
             )
         )
-        return await deploy_task
+        if json_out:
+            with contextlib.redirect_stdout(sys.stderr):
+                result = await deploy_task
+        else:
+            result = await deploy_task
+        if result == 0 and json_out:
+            _json_print({
+                "status": "ok",
+                "app": {
+                    "name": plan["name"],
+                    "bundle_id": plan["bundle_id"],
+                    "mode": plan["finish_label"],
+                },
+                "build_session": client.last_app_uuid,
+                "replaced": replaced_app,
+                "warnings": warnings,
+            })
+        return result
     except asyncio.CancelledError:
-        print()
-        spinner = Spinner("Discarding build session")
-        spinner.start()
-        if client.app_uuid:
-            try:
-                await client.discard()
-                spinner.stop(success=True)
-            except Exception:
-                spinner.fail("Failed to discard")
-        return 130
-    except Exception as e:
-        error(str(e))
-        if client.app_uuid:
+        if json_out:
+            with contextlib.redirect_stdout(sys.stderr):
+                print()
+                spinner = Spinner("Discarding build session")
+                spinner.start()
+                if client.app_uuid:
+                    try:
+                        await client.discard()
+                        spinner.stop(success=True)
+                    except Exception:
+                        spinner.fail("Failed to discard")
+            _deploy_error(json_out, "interrupted", "Deploy interrupted")
+        else:
+            print()
             spinner = Spinner("Discarding build session")
             spinner.start()
-            try:
-                await client.discard()
-                spinner.stop(success=True)
-            except Exception:
-                spinner.fail("Failed to discard")
+            if client.app_uuid:
+                try:
+                    await client.discard()
+                    spinner.stop(success=True)
+                except Exception:
+                    spinner.fail("Failed to discard")
+        return 130
+    except Exception as e:
+        if json_out:
+            _deploy_error(json_out, "deploy_failed", str(e))
+        else:
+            error(str(e))
+        if client.app_uuid:
+            if json_out:
+                with contextlib.redirect_stdout(sys.stderr):
+                    spinner = Spinner("Discarding build session")
+                    spinner.start()
+                    try:
+                        await client.discard()
+                        spinner.stop(success=True)
+                    except Exception:
+                        spinner.fail("Failed to discard")
+            else:
+                spinner = Spinner("Discarding build session")
+                spinner.start()
+                try:
+                    await client.discard()
+                    spinner.stop(success=True)
+                except Exception:
+                    spinner.fail("Failed to discard")
         return 1
     finally:
         loop.remove_signal_handler(signal.SIGINT)

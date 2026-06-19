@@ -80,6 +80,7 @@ class TruffleClient:
         self.channel: aio.Channel | None = None
         self.stub: TruffleOSStub | None = None
         self.app_uuid: str | None = None
+        self.last_app_uuid: str | None = None
         self.access_path: str | None = None
 
     @property
@@ -168,6 +169,7 @@ class TruffleClient:
             req, metadata=self._metadata
         )
         self.app_uuid = resp.app_uuid
+        self.last_app_uuid = resp.app_uuid
         self.access_path = resp.access_path
         return resp
 

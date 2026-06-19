@@ -5,6 +5,7 @@ Python SDK/CLI for Truffle devices.
 ## What It Does
 
 - discovers and connects to your Truffle (`scan`, `connect`, `disconnect`)
+- copies bundled agent resources into your workspace (`load`)
 - validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
 - manages installed apps (`list apps`, `delete`)
 - talks to inference directly (`models`, `chat`)
@@ -51,11 +52,12 @@ In practice:
 truffile scan
 truffile connect <device>
 truffile create [app_name]
+truffile load all
 truffile validate [app_dir]
 truffile deploy [app_dir]
 truffile deploy --dry-run [app_dir]
-truffile list apps
-truffile delete
+truffile list apps --json
+truffile delete <app-name>
 truffile models
 truffile chat
 ```
@@ -64,6 +66,15 @@ truffile chat
 - `truffile.yaml` (foreground + background process config)
 - copy-file steps for generated `*_foreground.py` and `*_background.py`
 - `icon.png` copied from `docs/Truffle.png` (deploy requires an icon)
+
+`truffile load all` copies bundled agent-readable resources into your current
+workspace:
+
+- `./truffile/skills/` for CLI/chat/infer/app-creation skills
+- `./truffile/examples/` for bundled example apps such as ArXiv, Exa, Notion,
+  Obsidian, Viator, WHOOP, and Home Assistant
+
+Use `truffile load skills` or `truffile load examples` to copy only one group.
 
 ## Obsidian Bridge Workflow
 

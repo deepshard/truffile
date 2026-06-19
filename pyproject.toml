@@ -43,6 +43,8 @@ include = ["truffile*", "truffle*"]
     "assets/**/*",
     "app-store/**/*",
     "app-store/**/.*",
+    "skills/**/*",
+    "skills/**/.*",
 ]
 
 [tool.pytest.ini_options]

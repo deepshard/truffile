@@ -53,6 +53,7 @@ async def deploy_with_builder(
     color_bold: str,
     arrow: str,
     interactive_shell: Callable[[str], Any],
+    non_interactive: bool = False,
 ) -> int:
     plan = build_deploy_plan(config=config, app_dir=app_dir, app_type=app_type)
     build_session_started = False
@@ -98,6 +99,7 @@ async def deploy_with_builder(
             color_bold=color_bold,
             arrow=arrow,
             collected_env=collected_env,
+            non_interactive=non_interactive,
         )
 
         for step in plan["ordered_steps"]:
