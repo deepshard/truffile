@@ -15,9 +15,9 @@ Does the service already have an MCP server?
         Public APIs. Just bash + files steps.
 ```
 
-OAuth install steps are supported by the platform/store installer. Browser/VNC
-apps are not supported through CLI store install yet; tell users to install
-those in Symphony Settings.
+Use a `text` step for API keys and pasted access tokens. Use an `oauth` step
+when the provider requires a browser authorization flow. Browser/VNC apps are
+not supported through the current CLI flow.
 
 ## API Key (truffile.yaml)
 
@@ -51,13 +51,11 @@ No auth step needed. Just bash + files steps in truffile.yaml. The app accesses 
 ## OAuth
 
 Use an `oauth` step when the provider supports browser OAuth and the app has a
-token file/env path. Keep update behavior explicit:
+token file/env path.
 
 ```yaml
 - name: Service OAuth Sign-In
   type: oauth
-  update_policy: run_on_update
-  update_check: python ./foreground.py --verify
   provider: ServiceName
   redirect_uri: https://truffle.net/api/oauth/callback
   auth_endpoint: https://example.com/oauth/authorize

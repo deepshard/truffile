@@ -58,10 +58,10 @@ Run validation before deploy. Validation is local and does not need a device.
 truffile deploy ./apps/my-app
 truffile deploy ./apps/my-app --dry-run
 truffile deploy ./apps/my-app --interactive
-truffile deploy ./apps/my-app --shell
 ```
 
-Use `--dry-run` before a risky deploy. Use `--shell` only for debugging.
+Use `--dry-run` before a risky deploy. Use `--interactive` only for debugging
+inside the build container before finalizing.
 
 ### Delete Installed Apps
 
@@ -90,8 +90,10 @@ app, injects bridge env, and deploys without asking for bridge URL/token again.
 
 ## App Authoring Notes
 
-- Current manifest step types include `bash`, `files`, `text`, `oauth`, and
+- Current CLI deploy step types are `bash`, `files`, `text`, `oauth`, and
   `welcome`.
+- `vnc` steps are rejected by `truffile validate`; browser/VNC apps are not
+  supported through the current CLI flow.
 - Use `truffile.app_runtime` imports in app code.
 - Read-only tools should use MCP annotations, for example:
 
