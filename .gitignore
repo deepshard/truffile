@@ -9,3 +9,6 @@ docs-repo/
 truffile/app_runtime/
 truffle/
 docs/
+dev/
+app-store/builder
+temp/

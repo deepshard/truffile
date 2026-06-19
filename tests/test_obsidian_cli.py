@@ -4,8 +4,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import yaml
+
 from truffile.cli.obsidian import (
     _collect_bridge_config,
+    _configure_staged_obsidian_manifest,
     _ensure_bridge_running,
     _list_managed_bridge_processes,
     _stage_obsidian_app,
@@ -103,6 +106,50 @@ class TestObsidianCli(unittest.TestCase):
 
             self.assertTrue((app_dir / "truffile.yaml").exists())
             self.assertEqual((app_dir / "bridge_client.py").read_text(encoding="utf-8"), "print('bridge')\n")
+
+    def test_configure_staged_manifest_injects_bridge_env_and_removes_bridge_text_step(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "truffile.yaml"
+            manifest_path.write_text(
+                """
+metadata:
+  name: Obsidian
+  foreground:
+    process:
+      environment:
+        PYTHONUNBUFFERED: "1"
+steps:
+  - name: Copy application files
+    type: files
+    files: []
+  - name: Configure Obsidian bridge
+    type: text
+    fields:
+      - name: obsidian_bridge_base_url
+        env: OBSIDIAN_BRIDGE_BASE_URL
+      - name: obsidian_bridge_token
+        env: OBSIDIAN_BRIDGE_TOKEN
+  - name: Other config
+    type: text
+    fields:
+      - name: other
+        env: OTHER_ENV
+""",
+                encoding="utf-8",
+            )
+            config = SimpleNamespace(
+                advertise_host="10.0.0.5",
+                port=27125,
+                token="secret-token",
+            )
+
+            _configure_staged_obsidian_manifest(manifest_path, config)
+
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+            env = manifest["metadata"]["foreground"]["process"]["environment"]
+            self.assertEqual(env["OBSIDIAN_BRIDGE_BASE_URL"], "http://10.0.0.5:27125")
+            self.assertEqual(env["OBSIDIAN_BRIDGE_TOKEN"], "secret-token")
+            self.assertEqual([step["name"] for step in manifest["steps"]], ["Copy application files", "Other config"])
 
     def test_list_managed_bridge_processes_filters_for_obsidian_serve(self):
         ps_output = "\n".join(

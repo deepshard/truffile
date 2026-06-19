@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 from typing import Any, Callable
 
 from truffile.transport.client import TruffleClient
 from .plan import build_deploy_plan, _env_map_to_list
-from .steps import handle_bash, handle_files, handle_text
+from .steps import handle_bash, handle_files, handle_oauth, handle_text, handle_welcome
 
 STEP_HANDLERS = {
     "bash": handle_bash,
     "files": handle_files,
+    "oauth": handle_oauth,
     "text": handle_text,
+    "welcome": handle_welcome,
 }
 
 
@@ -50,8 +53,10 @@ async def deploy_with_builder(
     color_bold: str,
     arrow: str,
     interactive_shell: Callable[[str], Any],
+    non_interactive: bool = False,
 ) -> int:
     plan = build_deploy_plan(config=config, app_dir=app_dir, app_type=app_type)
+    build_session_started = False
 
     spinner = spinner_cls(f"Connecting to {device}")
     spinner.start()
@@ -66,76 +71,87 @@ async def deploy_with_builder(
     spinner.start()
     try:
         await client.start_build()
+        build_session_started = True
         await _wait_for_build_session_ready(client)
         spinner.stop(success=True)
     except Exception:
         spinner.fail("Starting build session")
+        if build_session_started and client.app_uuid:
+            with contextlib.suppress(Exception):
+                await asyncio.shield(client.discard())
         raise
     print(f"  {color_dim}Session: {client.app_uuid}{color_reset}")
 
-    collected_env: dict[str, str] = {}
-
-    ctx = dict(
-        client=client,
-        app_dir=app_dir,
-        exec_cwd=plan["exec_cwd"],
-        spinner_cls=spinner_cls,
-        scrolling_log_cls=scrolling_log_cls,
-        info=info,
-        success=success,
-        error=error,
-        color_dim=color_dim,
-        color_reset=color_reset,
-        color_bold=color_bold,
-        arrow=arrow,
-        collected_env=collected_env,
-    )
-
-    for step in plan["ordered_steps"]:
-        step_type = step.get("type", "")
-        handler = STEP_HANDLERS.get(step_type)
-        if handler is None:
-            supported = ", ".join(sorted(STEP_HANDLERS))
-            name = step.get("name") or step_type or "<unnamed>"
-            raise RuntimeError(
-                f"step '{name}': unsupported step type '{step_type}' "
-                f"(supported: {supported})"
-            )
-        await handler(step, **ctx)
-
-    # inject collected env vars into process configs
-    fg_payload = plan["fg_payload"]
-    bg_payload = plan["bg_payload"]
-    if collected_env:
-        env_list = _env_map_to_list(collected_env)
-        if fg_payload:
-            fg_payload["env"] = fg_payload.get("env", []) + env_list
-        if bg_payload:
-            bg_payload["env"] = bg_payload.get("env", []) + env_list
-
-    if interactive:
-        print()
-        info("Opening interactive shell (exit with Ctrl+D or 'exit' to finish deploy)")
-        ws_url = str(client.http_base or "").replace("http://", "ws://").replace("https://", "wss://") + "/term"
-        await interactive_shell(ws_url)
-        print()
-
-    spinner = spinner_cls(f"Finishing as {plan['finish_label']} app")
-    spinner.start()
     try:
-        await client.finish_app(
-            name=plan["name"],
-            bundle_id=plan["bundle_id"],
-            description=plan["description"],
-            icon=plan["icon_path"],
-            foreground=fg_payload,
-            background=bg_payload,
-            default_schedule=plan["default_schedule"],
+        collected_env: dict[str, str] = {}
+
+        ctx = dict(
+            client=client,
+            app_dir=app_dir,
+            exec_cwd=plan["exec_cwd"],
+            spinner_cls=spinner_cls,
+            scrolling_log_cls=scrolling_log_cls,
+            info=info,
+            success=success,
+            error=error,
+            color_dim=color_dim,
+            color_reset=color_reset,
+            color_bold=color_bold,
+            arrow=arrow,
+            collected_env=collected_env,
+            non_interactive=non_interactive,
         )
-        spinner.stop(success=True)
-    except Exception:
-        spinner.fail(f"Finishing as {plan['finish_label']} app")
+
+        for step in plan["ordered_steps"]:
+            step_type = step.get("type", "")
+            handler = STEP_HANDLERS.get(step_type)
+            if handler is None:
+                supported = ", ".join(sorted(STEP_HANDLERS))
+                name = step.get("name") or step_type or "<unnamed>"
+                raise RuntimeError(
+                    f"step '{name}': unsupported step type '{step_type}' "
+                    f"(supported: {supported})"
+                )
+            await handler(step, **ctx)
+
+        # inject collected env vars into process configs
+        fg_payload = plan["fg_payload"]
+        bg_payload = plan["bg_payload"]
+        if collected_env:
+            env_list = _env_map_to_list(collected_env)
+            if fg_payload:
+                fg_payload["env"] = fg_payload.get("env", []) + env_list
+            if bg_payload:
+                bg_payload["env"] = bg_payload.get("env", []) + env_list
+
+        if interactive:
+            print()
+            info("Opening interactive shell (exit with Ctrl+D or 'exit' to finish deploy)")
+            ws_url = str(client.http_base or "").replace("http://", "ws://").replace("https://", "wss://") + "/term"
+            await interactive_shell(ws_url)
+            print()
+
+        spinner = spinner_cls(f"Finishing as {plan['finish_label']} app")
+        spinner.start()
+        try:
+            await client.finish_app(
+                name=plan["name"],
+                bundle_id=plan["bundle_id"],
+                description=plan["description"],
+                icon=plan["icon_path"],
+                foreground=fg_payload,
+                background=bg_payload,
+                default_schedule=plan["default_schedule"],
+            )
+            spinner.stop(success=True)
+        except Exception:
+            spinner.fail(f"Finishing as {plan['finish_label']} app")
+            raise
+        print()
+        success(f"Deployed: {color_bold}{plan['name']}{color_reset} ({plan['finish_label']})")
+        return 0
+    except BaseException:
+        if build_session_started and client.app_uuid:
+            with contextlib.suppress(Exception):
+                await asyncio.shield(client.discard())
         raise
-    print()
-    success(f"Deployed: {color_bold}{plan['name']}{color_reset} ({plan['finish_label']})")
-    return 0

@@ -38,7 +38,14 @@ include = ["truffile*", "truffle*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.pyi", "py.typed"]
-"truffile" = ["assets/*.png", "assets/**/*", "resources/**/*", "resources/**/.*"]
+"truffile" = [
+    "assets/*.png",
+    "assets/**/*",
+    "app-store/**/*",
+    "app-store/**/.*",
+    "skills/**/*",
+    "skills/**/.*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

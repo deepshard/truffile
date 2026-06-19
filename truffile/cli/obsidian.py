@@ -34,7 +34,7 @@ from .ui import C, Spinner, error, info, success, warn
 
 DEFAULT_OBSIDIAN_PORT = 27125
 LOG_FILE_NAME = "obsidian-bridge.log"
-OBSIDIAN_APP_RAW_BASE_URL = "https://raw.githubusercontent.com/deepshard/truffile/main/truffile/resources/app-store/obsidian"
+OBSIDIAN_APP_RAW_BASE_URL = "https://raw.githubusercontent.com/deepshard/truffile/main/truffile/app-store/obsidian"
 OBSIDIAN_APP_FILES = (
     "truffile.yaml",
     "bridge_client.py",
@@ -44,7 +44,7 @@ OBSIDIAN_APP_FILES = (
 
 
 def _default_obsidian_app_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "resources" / "app-store" / "obsidian"
+    return Path(__file__).resolve().parents[1] / "app-store" / "obsidian"
 
 
 def _step_spinner(step: str) -> Spinner:

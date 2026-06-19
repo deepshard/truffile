@@ -41,8 +41,14 @@ class TestTemplateGeneration(unittest.TestCase):
 
     def test_foreground_template_valid_python(self):
         import ast
-        code = _sample_foreground_py()
+        code = _sample_foreground_py("Test", "test")
         ast.parse(code)
+
+    def test_foreground_template_has_real_mcp_tool(self):
+        code = _sample_foreground_py("Test", "test")
+        self.assertIn("ForegroundApp", code)
+        self.assertIn("test_ping", code)
+        self.assertIn("app.run()", code)
 
     def test_background_template_valid_python(self):
         import ast

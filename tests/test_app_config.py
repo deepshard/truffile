@@ -152,3 +152,23 @@ steps:
             all_messages = warnings + errors
             has_missing = any("not found" in m.lower() or "missing" in m.lower() or "does not exist" in m.lower() for m in all_messages)
             self.assertTrue(has_missing, f"expected missing file message in: {all_messages}")
+
+    def test_vnc_step_is_rejected_before_deploy(self):
+        for step_type in ("vnc",):
+            yaml = f"""
+metadata:
+  name: Unsupported Step
+  bundle_id: org.test.unsupported
+  foreground:
+    process:
+      cmd: [python, app.py]
+steps:
+  - name: Unsupported
+    type: {step_type}
+"""
+            with self.subTest(step_type=step_type), tempfile.TemporaryDirectory() as tmp:
+                app_dir = self._make_app(tmp, yaml, {"app.py": "pass"})
+                valid, _config, _app_type, _warnings, errors = validate_app_dir(app_dir)
+
+                self.assertFalse(valid)
+                self.assertTrue(errors)

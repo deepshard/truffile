@@ -54,7 +54,7 @@ Ask the user which approach they prefer.
 Based on the user's answers, determine:
 - app shape: foreground only, background only, or hybrid
 - auth type: API key/text config, OAuth, or public. Browser/VNC apps are not
-  supported through CLI store install yet.
+  supported through the current CLI flow.
 - base image: minimal for API apps
 
 Reference: see references/auth-patterns.md for the decision tree.
@@ -128,8 +128,7 @@ Subclass BackgroundWorkerApp with the 4 required methods. Follow the rules:
 Don't wait until the end. Write tests as you implement:
 
 ```bash
-python scripts/check_python.py ./my-app/          # syntax check
-python scripts/validate_yaml.py ./my-app/          # yaml check
+truffile validate ./my-app                         # yaml + source checks
 python -m pytest ./my-app/tests/ -v                # unit tests
 ```
 
@@ -137,10 +136,9 @@ Use FakeHttpTransport and AppHarness. See references/testing-guide.md.
 
 ### Step 9: Validate and iterate
 
-Run the validation scripts:
-- `python scripts/validate_yaml.py ./my-app/` — check manifest
-- `python scripts/check_python.py ./my-app/` — check all python files
-- `python scripts/list_app_files.py ./my-app/` — verify file list matches truffile.yaml
+Run validation:
+- `truffile validate ./my-app` — check manifest, file references, and Python syntax
+- `truffile deploy --dry-run ./my-app` — inspect the deploy plan without changing the device
 - `python -m pytest ./my-app/tests/` — run tests
 
 Fix any issues. Repeat until everything passes.
@@ -165,9 +163,9 @@ Ask the user if they want to add skills — workflow guides that teach the agent
 ## Error handling
 
 Common issues during app creation:
-- yaml parse errors: run validate_yaml.py and fix the reported issues
-- python syntax errors: run check_python.py
-- missing files in truffile.yaml: run list_app_files.py and compare with the files step
+- yaml parse errors: run `truffile validate` and fix the reported issues
+- python syntax errors: run `truffile validate`
+- missing files in truffile.yaml: run `truffile validate` and compare with the files step
 - import errors: make sure all deps are in the bash install step
 - auth failures during deploy: check env var names match between text step and code
 
@@ -176,10 +174,8 @@ Common issues during app creation:
 | Script | What it does |
 |--------|-------------|
 | `scripts/fetch_docs.py` | pull docs from docs.truffle.net |
-| `scripts/fetch_repo.py` | browse example apps from the truffile repo |
-| `scripts/validate_yaml.py` | check truffile.yaml format and structure |
-| `scripts/check_python.py` | syntax-check all python files |
-| `scripts/list_app_files.py` | list files with sizes |
+| `truffile validate <path>` | check truffile.yaml, referenced files, and Python syntax |
+| `truffile deploy --dry-run <path>` | inspect the deploy plan without changing the device |
 
 ## Reference docs
 

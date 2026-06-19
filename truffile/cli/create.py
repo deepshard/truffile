@@ -58,16 +58,33 @@ def _sample_truffile_yaml(app_name: str, slug: str) -> str:
     )
 
 
-def _sample_foreground_py() -> str:
+def _sample_foreground_py(app_name: str, slug: str) -> str:
+    app_name_json = json.dumps(app_name)
     return (
         '"""Foreground app entrypoint (MCP-facing surface)."""\n'
         "\n"
-        "def main() -> None:\n"
-        '    print(\"TODO: implement foreground MCP tool server\")\n'
+        "from __future__ import annotations\n"
+        "\n"
+        "from truffile.app_runtime import ForegroundApp, ToolSpec\n"
+        "\n"
+        "\n"
+        f"app = ForegroundApp({app_name_json})\n"
+        "\n"
+        "\n"
+        "@app.tool(\n"
+        "    ToolSpec(\n"
+        f"        name=\"{slug}_ping\",\n"
+        "        description=\"Return a small pong payload for smoke testing this app.\",\n"
+        "        icon=\"check-circle\",\n"
+        "        annotations={\"readOnlyHint\": True, \"destructiveHint\": False},\n"
+        "    )\n"
+        ")\n"
+        f"async def {slug}_ping(message: str = \"pong\") -> dict:\n"
+        "    return {\"status\": \"ok\", \"message\": message}\n"
         "\n"
         "\n"
         "if __name__ == \"__main__\":\n"
-        "    main()\n"
+        "    app.run()\n"
     )
 
 
@@ -149,7 +166,7 @@ def cmd_create(args) -> int:
     try:
         app_dir.mkdir(parents=True, exist_ok=False)
         (app_dir / "truffile.yaml").write_text(_sample_truffile_yaml(app_name, slug), encoding="utf-8")
-        (app_dir / fg_file).write_text(_sample_foreground_py(), encoding="utf-8")
+        (app_dir / fg_file).write_text(_sample_foreground_py(app_name, slug), encoding="utf-8")
         (app_dir / bg_file).write_text(_sample_background_py(), encoding="utf-8")
         (app_dir / "icon.png").write_bytes(stock_icon_bytes)
     except Exception as exc:

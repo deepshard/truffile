@@ -107,7 +107,7 @@ def _run_onboarding(storage) -> int:
 
 
 def _main() -> int:
-    parser = argparse.ArgumentParser(prog="truffile", add_help=False)
+    parser = argparse.ArgumentParser(prog="truffile")
     parser.add_argument("--resume", action="store_true", help="resume a previous task")
     sub = parser.add_subparsers(dest="command")
 
@@ -133,13 +133,23 @@ def _main() -> int:
     val_p = sub.add_parser("validate", help="validate app directory")
     val_p.add_argument("path", nargs="?", default=".")
 
+    # load bundled agent resources into a workspace
+    load_p = sub.add_parser("load", help="copy bundled skills and example apps into the current workspace")
+    load_p.add_argument("what", nargs="?", choices=["skills", "examples", "all"], default="all")
+    load_p.add_argument("--path", type=str, default=".", help="workspace directory to copy resources into")
+    load_p.add_argument("--force", action="store_true", help="replace existing copied resources")
+    load_p.add_argument("--json", action="store_true", help="emit structured json")
+
     # deploy
     dep_p = sub.add_parser("deploy", help="deploy app to device")
     dep_p.add_argument("path", nargs="?", default=".")
-    dep_p.add_argument("--shell", action="store_true")
-    dep_p.add_argument("--interactive", action="store_true")
+    dep_p.add_argument("--shell", action="store_true", help=argparse.SUPPRESS)
+    dep_p.add_argument("--interactive", "-i", action="store_true")
     dep_p.add_argument("--dry-run", action="store_true")
-    dep_p.add_argument("--no-finalize", action="store_true")
+    dep_p.add_argument("--json", action="store_true", help="emit structured json")
+    dep_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="fail instead of prompting for input")
+    dep_p.add_argument("--replace", action="store_true", help="replace an installed app with the same bundle id")
+    dep_p.add_argument("--no-finalize", action="store_true", help=argparse.SUPPRESS)
     dep_p.add_argument("--vault", type=str, default=None, help=argparse.SUPPRESS)
     dep_p.add_argument("--pick-vault", action="store_true", dest="pick_vault", help=argparse.SUPPRESS)
     dep_p.add_argument("--advertise-host", type=str, default=None, dest="advertise_host", help=argparse.SUPPRESS)
@@ -155,7 +165,7 @@ def _main() -> int:
 
     # delete
     del_p = sub.add_parser("delete", help="delete app from device")
-    del_p.add_argument("selection", nargs="*", help="'all', or app numbers (e.g. 1 2 3)")
+    del_p.add_argument("selection", nargs="*", help="'all', app numbers, names, slugs, or uuids")
 
     # models
     sub.add_parser("models", help="list inference models")
@@ -240,10 +250,10 @@ def _main() -> int:
 
     obs_deploy = obs_sub.add_parser("deploy", help="deploy the bundled Obsidian app")
     obs_deploy.add_argument("--path", type=str, default=None, help="override the Obsidian app directory")
-    obs_deploy.add_argument("--shell", action="store_true")
-    obs_deploy.add_argument("--interactive", action="store_true")
+    obs_deploy.add_argument("--shell", action="store_true", help=argparse.SUPPRESS)
+    obs_deploy.add_argument("--interactive", "-i", action="store_true")
     obs_deploy.add_argument("--dry-run", action="store_true")
-    obs_deploy.add_argument("--no-finalize", action="store_true")
+    obs_deploy.add_argument("--no-finalize", action="store_true", help=argparse.SUPPRESS)
 
     # easter egg
     sub.add_parser("glow")
@@ -308,6 +318,9 @@ def _main() -> int:
     elif args.command == "validate":
         from .validate import cmd_validate
         return cmd_validate(args)
+    elif args.command == "load":
+        from .load import cmd_load
+        return cmd_load(args)
     elif args.command == "deploy":
         from .deploy import cmd_deploy
         return run_async(cmd_deploy(args, storage))

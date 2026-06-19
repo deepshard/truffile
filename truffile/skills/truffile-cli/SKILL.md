@@ -17,8 +17,15 @@ When running inside a Truffle app or agent container, assume the runtime has
 already provided the session token in env. `truffile connect` should report
 that the device is already connected. Do not ask the user for tokens.
 
-For normal laptop use, `truffile` may use stored device state or onboarding.
-If a command needs a device and none is connected, let the CLI guide the user.
+For normal laptop use, the user must first onboard their Truffle through the
+Symphony desktop client:
+
+https://docs.truffle.net/client/overview
+
+After onboarding, ask the user for the User ID from Symphony **Settings >
+About** if they have not already provided it. `truffile connect` uses that User
+ID and then the user must approve the new session on the Truffle device.
+Stored credentials are reused after the first approval.
 
 Useful checks:
 
@@ -34,7 +41,7 @@ truffile list apps
 
 ```bash
 truffile scan
-truffile connect truffle-1234
+truffile connect truffle-1234 --user-id "$TRUFFLE_USER_ID"
 truffile list devices
 truffile disconnect truffle-1234
 truffile disconnect all
@@ -46,9 +53,15 @@ session comes from env.
 ### Create and Validate an App
 
 ```bash
+truffile load all
 truffile create my-app --path ./apps
 truffile validate ./apps/my-app
 ```
+
+`truffile load all` copies bundled skills and example apps into
+`./truffile/skills` and `./truffile/examples` so the agent can inspect them
+directly in the current workspace. Use `truffile load skills` or
+`truffile load examples` for only one resource group.
 
 Run validation before deploy. Validation is local and does not need a device.
 
@@ -57,22 +70,25 @@ Run validation before deploy. Validation is local and does not need a device.
 ```bash
 truffile deploy ./apps/my-app
 truffile deploy ./apps/my-app --dry-run
+truffile deploy ./apps/my-app --json --non-interactive --replace
 truffile deploy ./apps/my-app --interactive
-truffile deploy ./apps/my-app --shell
 ```
 
-Use `--dry-run` before a risky deploy. Use `--shell` only for debugging.
+Use `--dry-run` before a risky deploy. Use `--interactive` only for debugging
+inside the build container before finalizing.
 
 ### Delete Installed Apps
 
 ```bash
-truffile list apps
+truffile list apps --json
+truffile delete my-app
 truffile delete 1
 truffile delete 1 2 3
 truffile delete all
 ```
 
-Indices come from `truffile list apps`; re-list immediately before deleting.
+Prefer deleting by app name, slug, or uuid. Numeric indices still work, but
+they are less safe for agent workflows because app ordering can change.
 
 ### Obsidian
 
@@ -90,8 +106,10 @@ app, injects bridge env, and deploys without asking for bridge URL/token again.
 
 ## App Authoring Notes
 
-- Current manifest step types include `bash`, `files`, `text`, `oauth`, and
+- Current CLI deploy step types are `bash`, `files`, `text`, `oauth`, and
   `welcome`.
+- `vnc` steps are rejected by `truffile validate`; browser/VNC apps are not
+  supported through the current CLI flow.
 - Use `truffile.app_runtime` imports in app code.
 - Read-only tools should use MCP annotations, for example:
 

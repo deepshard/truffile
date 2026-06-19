@@ -46,7 +46,6 @@ steps:
 
   - name: Configure
     type: text
-    update_policy: run_on_update
     fields:
       - name: api_key
         label: API Key
@@ -59,8 +58,6 @@ steps:
 
   - name: Connect with OAuth
     type: oauth
-    update_policy: run_on_update
-    update_check: python ./my_foreground.py --verify
     provider: Example
     redirect_uri: https://truffle.net/api/oauth/callback
     auth_endpoint: https://example.com/oauth/authorize
@@ -71,7 +68,6 @@ steps:
 
   - name: Continue
     type: welcome
-    update_policy: run_on_update
     content: |
       This app does not need sign-in. Continue to finish installing.
 ```
@@ -84,8 +80,8 @@ steps:
 - every source file must be listed in a files step
 - use --no-cache-dir for pip installs
 - PYTHONUNBUFFERED=1 should be set in all process environments
-- supported install step types include bash, files, text, oauth, and welcome
-- browser/VNC apps are not supported through CLI store install yet
+- supported CLI deploy step types are bash, files, text, oauth, and welcome
+- browser/VNC apps are not supported through the current CLI flow
 
 ## Files Step
 

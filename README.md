@@ -5,6 +5,7 @@ Python SDK/CLI for Truffle devices.
 ## What It Does
 
 - discovers and connects to your Truffle (`scan`, `connect`, `disconnect`)
+- copies bundled agent resources into your workspace (`load`)
 - validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
 - manages installed apps (`list apps`, `delete`)
 - talks to inference directly (`models`, `chat`)
@@ -15,9 +16,8 @@ Python SDK/CLI for Truffle devices.
 - schedule parsing: `truffile/truffile/schedule.py`
 - deploy planning + builder flow: `truffile/truffile/deploy/builder.py`
 - generated TruffleOS protos vendored in: `truffile/truffle/`
-- packaged app examples:
-  - `truffile/resources/app-store/exa`
-  - `truffile/resources/app-store/notion`
+- bundled example apps live under `truffile/app-store/`
+- bundled Codex skills live under `truffile/skills/`
 
 `truffile.yaml` defines:
 - metadata (`name`, `description`, `type`)
@@ -52,11 +52,12 @@ In practice:
 truffile scan
 truffile connect <device>
 truffile create [app_name]
+truffile load all
 truffile validate [app_dir]
 truffile deploy [app_dir]
 truffile deploy --dry-run [app_dir]
-truffile list apps
-truffile delete
+truffile list apps --json
+truffile delete <app-name>
 truffile models
 truffile chat
 ```
@@ -65,6 +66,31 @@ truffile chat
 - `truffile.yaml` (foreground + background process config)
 - copy-file steps for generated `*_foreground.py` and `*_background.py`
 - `icon.png` copied from `docs/Truffle.png` (deploy requires an icon)
+
+`truffile load all` copies bundled agent-readable resources into your current
+workspace:
+
+- `./truffile/skills/` for CLI/chat/infer/app-creation skills
+- `./truffile/examples/` for bundled example apps such as ArXiv, Exa, Notion,
+  Obsidian, Viator, WHOOP, and Home Assistant
+
+Use `truffile load skills` or `truffile load examples` to copy only one group.
+
+## Obsidian Bridge Workflow
+
+For a local Obsidian vault on your laptop, `truffile` can run a small host-side
+bridge and deploy a bundled foreground app to the device:
+
+```bash
+truffile obsidian attach --vault ~/Documents/abd-vault
+truffile obsidian serve
+truffile obsidian deploy
+```
+
+Use `truffile obsidian status` to inspect the saved bridge configuration. The
+bridge stores a scoped bearer token in the local `truffile` state file and the
+bundled app uses that token to read, write, list, and search notes in the
+configured vault.
 
 
 In `truffile chat`, runtime controls are slash commands (not launch flags):
@@ -99,13 +125,17 @@ Refresh vendored protos from firmware repo:
 ./scripts/sync_protos.sh
 ```
 
-## Contributors
+## Development Loop
 
-Contributors are welcome to submit apps to the Truffle App Store.
+The supported app development loop is CLI-first:
 
-To submit:
-- open a PR with your app under the `truffile/resources/app-store/` folder
-- include a screen recording of your app in action
+```bash
+truffile create my-app --path ./apps
+truffile validate ./apps/my-app
+truffile deploy --dry-run ./apps/my-app
+truffile deploy ./apps/my-app
+```
 
-The Truffle team will deploy accepted apps to the App Store for everyone with Truffle to use and your name will be featured there!
-There may be small changes needed to make the app run optimally, but most features and the credit will remain yours.
+After deploy, use `truffile chat` to attach the app to a task and exercise its
+tools with the on-device agent. Use `truffile delete` to remove test apps from
+the connected device.
