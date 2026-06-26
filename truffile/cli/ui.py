@@ -212,6 +212,8 @@ def print_help():
   {C.CYAN}deploy{C.RESET} [path]            deploy app to connected device
   {C.CYAN}list{C.RESET} <apps|devices>      list installed apps or connected devices
   {C.CYAN}delete{C.RESET} [app]             delete app from device
+  {C.CYAN}users{C.RESET} clear-other        clear old users except current account
+  {C.CYAN}convo{C.RESET} reset              reset the current user's Convo agent
   {C.CYAN}models{C.RESET}                   list inference models on device
   {C.CYAN}chat{C.RESET}                     interactive chat with device
   {C.CYAN}help{C.RESET}                     show this help
@@ -222,5 +224,6 @@ def print_help():
   truffile create my-app
   truffile deploy ./my-app
   truffile list apps
+  truffile convo reset --hard
   truffile chat
 """)

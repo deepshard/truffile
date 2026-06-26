@@ -69,12 +69,12 @@ async def cmd_connect(args, storage: StorageService) -> int:
     if not user_id:
         print()
         print(f"  {C.DIM}Make sure you have:{C.RESET}")
-        print(f"  {C.DIM}{DOT} Onboarded with the Truffle app{C.RESET}")
-        print(f"  {C.DIM}{DOT} Your User ID from the recovery codes{C.RESET}")
+        print(f"  {C.DIM}{DOT} Onboarded with Symphony{C.RESET}")
+        print(f"  {C.DIM}{DOT} Your User ID from Symphony > Settings{C.RESET}")
         print()
         try:
             default_hint = f" [{stored_uid}]" if stored_uid else ""
-            entered = input(f"{C.CYAN}?{C.RESET} Enter your User ID{default_hint}: ").strip()
+            entered = input(f"{C.CYAN}?{C.RESET} Enter your User ID from Symphony > Settings{default_hint}: ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
             raise KeyboardInterrupt()

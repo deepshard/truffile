@@ -28,10 +28,12 @@ def main() -> int:
 _DEVICE_REQUIRING_COMMANDS = {
     None,  # default → chat
     "chat",
+    "convo",
     "infer",
     "deploy",
     "delete",
     "models",
+    "users",
 }
 
 
@@ -74,6 +76,7 @@ def _run_onboarding(storage) -> int:
     print()
     print(f"  {MUSHROOM} {C.BOLD}Welcome to truffile!{C.RESET}")
     print(f"  {C.DIM}Let's get you connected to your Truffle.{C.RESET}")
+    print(f"  {C.DIM}You can find your User ID in Symphony > Settings.{C.RESET}")
     print()
 
     try:
@@ -89,7 +92,7 @@ def _run_onboarding(storage) -> int:
     stored_uid = (storage.state.client_user_id or "").strip()
     default_hint = f" [{stored_uid}]" if stored_uid else ""
     try:
-        raw_uid = input(f"{C.CYAN}?{C.RESET} User ID{default_hint}: ").strip()
+        raw_uid = input(f"{C.CYAN}?{C.RESET} User ID from Symphony > Settings{default_hint}: ").strip()
     except (KeyboardInterrupt, EOFError):
         print()
         return 130
@@ -118,7 +121,7 @@ def _main() -> int:
     # connect
     conn_p = sub.add_parser("connect", help="connect to a truffle")
     conn_p.add_argument("device", help="device name (e.g. truffle-1234)")
-    conn_p.add_argument("--user-id", type=str, default=None, dest="user_id", help="user id from recovery codes (skips interactive prompt)")
+    conn_p.add_argument("--user-id", type=str, default=None, dest="user_id", help="user id from Symphony > Settings (skips interactive prompt)")
 
     # disconnect
     disc_p = sub.add_parser("disconnect", help="disconnect from device(s)")
@@ -166,6 +169,42 @@ def _main() -> int:
     # delete
     del_p = sub.add_parser("delete", help="delete app from device")
     del_p.add_argument("selection", nargs="*", help="'all', app numbers, names, slugs, or uuids")
+
+    # users
+    users_p = sub.add_parser("users", help="manage users on the connected device")
+    users_sub = users_p.add_subparsers(dest="users_command")
+    users_clear = users_sub.add_parser(
+        "clear-other",
+        help="clear all users except the current account",
+        description=(
+            "Clear data for old users that are not associated with the current "
+            "authenticated account."
+        ),
+    )
+    users_clear.add_argument("--force", action="store_true", help="skip confirmation prompt")
+    users_clear.add_argument("--json", action="store_true", help="emit structured json")
+
+    # convo
+    convo_p = sub.add_parser("convo", help="manage Convo on the connected device")
+    convo_sub = convo_p.add_subparsers(dest="convo_command")
+    convo_reset = convo_sub.add_parser(
+        "reset",
+        help="reset the current user's Convo agent",
+        description="Reset the current user's Convo agent.",
+        epilog=(
+            "Soft reset restarts the agent/runtime path and keeps Convo history.\n"
+            "Hard reset clears persisted Convo nodes, threads, and runtime state, "
+            "then recreates core threads.\n\n"
+            "Examples:\n"
+            "  truffile convo reset\n"
+            "  truffile convo reset --hard\n"
+            "  truffile convo reset --hard --force"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    convo_reset.add_argument("--hard", action="store_true", help="clear persisted Convo state before restart")
+    convo_reset.add_argument("--force", action="store_true", help="skip hard-reset confirmation prompt")
+    convo_reset.add_argument("--json", action="store_true", help="emit structured json")
 
     # models
     sub.add_parser("models", help="list inference models")
@@ -356,6 +395,16 @@ def _main() -> int:
     elif args.command == "delete":
         from .apps import cmd_delete
         return run_async(cmd_delete(args, storage))
+    elif args.command == "users":
+        if args.users_command == "clear-other":
+            from .users import cmd_users_clear_other
+            return run_async(cmd_users_clear_other(args, storage))
+        parser.error("users requires a subcommand")
+    elif args.command == "convo":
+        if args.convo_command == "reset":
+            from .convo import cmd_convo_reset
+            return run_async(cmd_convo_reset(args, storage))
+        parser.error("convo requires a subcommand")
     elif args.command == "models":
         from .models import cmd_models
         return run_async(cmd_models(storage))

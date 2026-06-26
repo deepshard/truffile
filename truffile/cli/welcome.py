@@ -146,6 +146,8 @@ def show_help_welcome() -> None:
         ("deploy [path]", "deploy to device"),
         ("list <apps|devices>", "list apps or devices"),
         ("delete [app]", "delete app"),
+        ("users clear-other", "clear old users"),
+        ("convo reset", "reset Convo"),
         ("models", "list models"),
         ("chat", "agent chat"),
         ("infer", "raw inference"),
