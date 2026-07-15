@@ -173,7 +173,13 @@ def _main() -> int:
     # chat (agent runtime with apps)
     chat_p = sub.add_parser("chat", help="agent chat with apps")
     chat_p.add_argument("prompt_words", nargs="*", help="prompt text (joined). if omitted, drops into REPL")
-    chat_p.add_argument("--resume", action="store_true", help="resume a previous task (interactive picker)")
+    chat_p.add_argument(
+        "--resume",
+        nargs="?",
+        const=True,
+        metavar="TASK_ID",
+        help="resume a task by id; omit the id to choose interactively",
+    )
     # one-shot prompt sources
     chat_p.add_argument("--prompt-file", type=str, default=None, help="read prompt from file")
     chat_p.add_argument("--stdin", action="store_true", help="force read prompt from stdin")
@@ -259,6 +265,12 @@ def _main() -> int:
     sub.add_parser("glow")
 
     args = parser.parse_args()
+
+    if args.command == "chat" and isinstance(args.resume, str):
+        if args.task_id and args.task_id != args.resume:
+            parser.error("--resume TASK_ID conflicts with --task-id")
+        args.task_id = args.resume
+        args.resume = True
 
     if args.command == "help":
         from .welcome import show_help_welcome

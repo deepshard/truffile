@@ -60,7 +60,11 @@ truffile list apps --json
 truffile delete <app-name>
 truffile models
 truffile chat
+truffile chat --resume [task-id]
 ```
+
+`truffile chat --resume TASK_ID` reopens that task interactively. Omit the ID
+to use the task picker, or add a prompt to continue the task non-interactively.
 
 `truffile create` scaffolds a hybrid app starter with:
 - `truffile.yaml` (foreground + background process config)

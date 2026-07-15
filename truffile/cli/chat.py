@@ -461,6 +461,14 @@ def _is_oneshot_chat(args) -> bool:
         return True
     if getattr(args, "stdin", False):
         return True
+    if (
+        getattr(args, "resume", False)
+        and getattr(args, "task_id", None)
+        and not getattr(args, "prompt_words", None)
+        and not getattr(args, "json", False)
+        and sys.stdin.isatty()
+    ):
+        return False
     if getattr(args, "task_id", None):
         return True
     if getattr(args, "resume_last", False):
@@ -764,20 +772,21 @@ async def cmd_chat(args, storage: StorageService) -> int:
     # welcome panel
     show_chat_welcome(device=device, apps=app_slugs or None)
 
-    if resume:
+    task_id = getattr(args, "task_id", None)
+    if not task_id and resume:
         task_id = await _pick_task(client)
-        if task_id:
-            state.task_id = task_id
-            stream = client.open_existing_task_stream(task_id)
-            try:
-                async for update in stream:
-                    _print_update(update, state)
-                    if state.run_state:
-                        break
-            except Exception:
-                pass
-            info(f"resumed \"{state.title or 'task'}\"")
-            prompt.task_name = state.title
+    if task_id:
+        state.task_id = task_id
+        stream = client.open_existing_task_stream(task_id)
+        try:
+            async for update in stream:
+                _print_update(update, state)
+                if state.run_state:
+                    break
+        except Exception:
+            pass
+        info(f"resumed \"{state.title or 'task'}\"")
+        prompt.task_name = state.title
 
     try:
         while True:
