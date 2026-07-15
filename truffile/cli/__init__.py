@@ -1,21 +1,55 @@
 import argparse
 import asyncio
 import sys
-from pathlib import Path
 
 from .guard import CLIGuard
 
 
+_CLI_COMMANDS = {
+    "agent",
+    "chat",
+    "connect",
+    "create",
+    "delete",
+    "deploy",
+    "disconnect",
+    "glow",
+    "help",
+    "infer",
+    "list",
+    "load",
+    "models",
+    "obsidian",
+    "resume",
+    "run",
+    "scan",
+    "shell",
+    "task",
+    "validate",
+}
+
+
+def _normalize_cli_argv(argv: list[str]) -> list[str]:
+    """Route a bare prompt into the interactive runtime.
+
+    Exact command names retain command precedence, matching other agent CLIs.
+    Use ``truffile -- PROMPT`` when a prompt starts with a dash.
+    """
+    if not argv or argv[0].startswith("-") or argv[0] in _CLI_COMMANDS:
+        if argv and argv[0] == "--":
+            return ["shell", "--new", "--", *argv[1:]]
+        return argv
+    return ["shell", "--new", "--", *argv]
+
+
 def run_async(coro):
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, coro).result()
-        return loop.run_until_complete(coro)
+        asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def main() -> int:
@@ -27,11 +61,16 @@ def main() -> int:
 
 _DEVICE_REQUIRING_COMMANDS = {
     None,  # default → chat
+    "run",
+    "resume",
+    "shell",
+    "agent",
     "chat",
     "infer",
     "deploy",
     "delete",
     "models",
+    "task",
 }
 
 
@@ -107,13 +146,21 @@ def _run_onboarding(storage) -> int:
 
 
 def _main() -> int:
-    parser = argparse.ArgumentParser(prog="truffile")
-    parser.add_argument("--resume", action="store_true", help="resume a previous task")
-    sub = parser.add_subparsers(dest="command")
+    from truffile import __version__
+
+    parser = argparse.ArgumentParser(
+        prog="truffile",
+        description="Run persistent tasks on your Truffle. With no command, open an interactive session.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--resume", action="store_true", help=argparse.SUPPRESS)
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     # scan
     scan_p = sub.add_parser("scan", help="scan for truffle devices")
     scan_p.add_argument("--timeout", type=int, default=5)
+    scan_p.add_argument("--json", action="store_true", help="emit discovered devices as JSON without prompting")
+    scan_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="list devices without prompting to connect")
 
     # connect
     conn_p = sub.add_parser("connect", help="connect to a truffle")
@@ -170,8 +217,104 @@ def _main() -> int:
     # models
     sub.add_parser("models", help="list inference models")
 
-    # chat (agent runtime with apps)
-    chat_p = sub.add_parser("chat", help="agent chat with apps")
+    # persistent task workflows
+    def add_agent_options(command_parser):
+        command_parser.add_argument("--prompt-file", type=str, default=None, help="read prompt from file")
+        command_parser.add_argument("--stdin", action="store_true", help="force read prompt from stdin")
+        command_parser.add_argument("--app", action="append", default=None, help="attach app by exact name, unique slug, or uuid (repeatable)")
+        command_parser.add_argument("--device", type=str, default=None, help="target a connected device explicitly")
+        command_parser.add_argument("--json", action="store_true", help="emit one structured JSON result")
+        command_parser.add_argument("--show-thinking", action="store_true", dest="show_thinking", help="include thinking summaries on stderr")
+        command_parser.add_argument("--quiet", "-q", action="store_true", help="suppress progress on stderr")
+        command_parser.add_argument("--timeout", type=float, default=None, help="maximum wall-clock seconds")
+
+    run_p = sub.add_parser("run", help="run a task non-interactively")
+    run_p.add_argument("prompt_words", nargs="*", metavar="PROMPT", help="prompt text")
+    add_agent_options(run_p)
+    run_context = run_p.add_mutually_exclusive_group()
+    run_context.add_argument("--resume", metavar="TASK_ID", dest="resume_task_id", help="continue an exact task")
+    run_context.add_argument("--last", action="store_true", help="continue the most recently updated task")
+    run_p.add_argument("--ephemeral", action="store_true", help="delete the task after returning its result")
+    run_p.set_defaults(agent_command="run")
+
+    resume_p = sub.add_parser("resume", help="resume an interactive task")
+    resume_p.add_argument("task_id", nargs="?", metavar="TASK_ID", help="task id to resume")
+    resume_p.add_argument("prompt_words", nargs="*", metavar="PROMPT", help="optional first prompt")
+    resume_p.add_argument("--last", action="store_true", help="resume the most recently updated task")
+    resume_p.add_argument("--device", type=str, default=None, help="target a connected device explicitly")
+    resume_p.set_defaults(agent_command="resume", interactive_resume=True)
+
+    # Hidden compatibility alias for the bare interactive interface.
+    shell_p = sub.add_parser("shell")
+    shell_p.add_argument("task_id", nargs="?", metavar="TASK_ID", help="open a specific task")
+    shell_p.add_argument("prompt_words", nargs="*", metavar="PROMPT", help=argparse.SUPPRESS)
+    shell_p.add_argument("--resume", action="store_true", help="pick a task to resume")
+    shell_p.add_argument("--new", action="store_true", help=argparse.SUPPRESS)
+    shell_p.add_argument("--device", type=str, default=None, help="target a connected device explicitly")
+    shell_p.set_defaults(agent_command="shell")
+
+    # Deprecated namespace retained as a hidden compatibility route.
+    agent_p = sub.add_parser("agent")
+    agent_sub = agent_p.add_subparsers(dest="agent_command", metavar="COMMAND")
+
+    agent_run = agent_sub.add_parser("run", help="start a new persistent agent task")
+    agent_run.add_argument("prompt_words", nargs="*", help="prompt text")
+    add_agent_options(agent_run)
+    agent_run.add_argument("--ephemeral", action="store_true", help="delete the task after returning its result")
+
+    agent_resume = agent_sub.add_parser("resume", help="continue an existing task")
+    agent_resume.add_argument("task_id", nargs="?", help="task id to resume")
+    agent_resume.add_argument("prompt_words", nargs="*", help="follow-up prompt text")
+    agent_resume.add_argument("--last", action="store_true", help="resume the most recently updated task")
+    add_agent_options(agent_resume)
+
+    agent_continue = agent_sub.add_parser("continue", help="alias for agent resume --last")
+    agent_continue.add_argument("prompt_words", nargs="*", help="follow-up prompt text")
+    add_agent_options(agent_continue)
+
+    agent_shell = agent_sub.add_parser("shell", help="open the interactive agent shell")
+    agent_shell.add_argument("--resume", action="store_true", help="pick a task to resume")
+    agent_shell.add_argument("--task-id", type=str, default=None, dest="task_id", help="open a specific task")
+    agent_shell.add_argument("--device", type=str, default=None, help="target a connected device explicitly")
+
+    # task resource management
+    task_p = sub.add_parser("task", help="inspect and manage persistent tasks")
+    task_sub = task_p.add_subparsers(dest="task_command")
+    task_common = argparse.ArgumentParser(add_help=False)
+    task_common.add_argument("--device", type=str, default=None, help="target a connected device explicitly")
+    task_common.add_argument("--json", action="store_true", help="emit structured JSON")
+    task_common.add_argument("--quiet", "-q", action="store_true", help="suppress progress on stderr")
+
+    task_list = task_sub.add_parser("list", parents=[task_common], help="list tasks newest-first")
+    task_list.add_argument("--limit", type=int, default=15, help="maximum tasks to return")
+
+    task_show = task_sub.add_parser("show", parents=[task_common], help="show task state and latest result")
+    task_show.add_argument("task_id")
+    task_show.add_argument("--with-nodes", action="store_true", help="include the raw task graph in JSON")
+
+    task_status = task_sub.add_parser("status", parents=[task_common], help="show concise task status")
+    task_status.add_argument("task_id")
+
+    task_logs = task_sub.add_parser("logs", parents=[task_common], help="show task history events")
+    task_logs.add_argument("task_id")
+
+    task_wait = task_sub.add_parser("wait", parents=[task_common], help="wait until a task settles or asks for input")
+    task_wait.add_argument("task_id")
+    task_wait.add_argument("--timeout", type=float, default=None, help="maximum seconds to wait")
+
+    task_interrupt = task_sub.add_parser("interrupt", parents=[task_common], help="interrupt active task execution")
+    task_interrupt.add_argument("task_id")
+
+    task_rename = task_sub.add_parser("rename", parents=[task_common], help="rename a task")
+    task_rename.add_argument("task_id")
+    task_rename.add_argument("name")
+
+    task_delete = task_sub.add_parser("delete", parents=[task_common], help="delete a task")
+    task_delete.add_argument("task_id")
+    task_delete.add_argument("--yes", "-y", action="store_true", help="confirm deletion noninteractively")
+
+    # Deprecated legacy runtime retained as a hidden compatibility route.
+    chat_p = sub.add_parser("chat")
     chat_p.add_argument("prompt_words", nargs="*", help="prompt text (joined). if omitted, drops into REPL")
     chat_p.add_argument("--resume", action="store_true", help="resume a previous task (interactive picker)")
     # one-shot prompt sources
@@ -190,6 +333,7 @@ def _main() -> int:
     chat_p.add_argument("--show-thinking", action="store_true", dest="show_thinking", help="include thinking summaries on stderr")
     chat_p.add_argument("--quiet", "-q", action="store_true", help="suppress decoration on stderr")
     chat_p.add_argument("--timeout", type=float, default=None, help="max seconds to wait for task to settle")
+    chat_p.add_argument("--device", type=str, default=None, help="target a connected device explicitly")
 
     # infer (raw model inference)
     infer_p = sub.add_parser("infer", help="raw model inference")
@@ -258,7 +402,7 @@ def _main() -> int:
     # easter egg
     sub.add_parser("glow")
 
-    args = parser.parse_args()
+    args = parser.parse_args(_normalize_cli_argv(sys.argv[1:]))
 
     if args.command == "help":
         from .welcome import show_help_welcome
@@ -359,7 +503,32 @@ def _main() -> int:
     elif args.command == "models":
         from .models import cmd_models
         return run_async(cmd_models(storage))
+    elif args.command in {"run", "resume", "shell"}:
+        from .agent import cmd_agent
+        return run_async(cmd_agent(args, storage))
+    elif args.command == "agent":
+        if not args.agent_command:
+            parser.error("agent requires run, resume, continue, or shell")
+        if not getattr(args, "quiet", False):
+            print(
+                "warning: 'truffile agent' is deprecated; use 'truffile run' for scripts "
+                "or bare 'truffile'/'truffile resume' interactively",
+                file=sys.stderr,
+            )
+        from .agent import cmd_agent
+        return run_async(cmd_agent(args, storage))
+    elif args.command == "task":
+        if not args.task_command:
+            parser.error("task requires list, show, status, logs, wait, interrupt, rename, or delete")
+        from .task import cmd_task
+        return run_async(cmd_task(args, storage))
     elif args.command == "chat":
+        if not getattr(args, "quiet", False):
+            print(
+                "warning: 'truffile chat' is deprecated; use 'truffile run' for scripts "
+                "or bare 'truffile'/'truffile resume' interactively",
+                file=sys.stderr,
+            )
         from .chat import cmd_chat
         return run_async(cmd_chat(args, storage))
     elif args.command == "infer":

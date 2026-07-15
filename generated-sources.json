@@ -1,0 +1,10 @@
+{
+  "files": {
+    "truffile/app_runtime": 39,
+    "truffle": 186
+  },
+  "package": "truffile",
+  "sha256": "f0c72582d2a056ce1c3b7442011f2690dbb1ba1b37450e12c7731852487aa9c6",
+  "source_wheel": "truffile-0.3.6-py3-none-any.whl",
+  "version": "0.3.6"
+}

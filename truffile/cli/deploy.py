@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import json
-import os
 import signal
 import sys
 from pathlib import Path
@@ -11,8 +10,8 @@ from truffile.client import TruffleClient
 from truffile.schema import validate_app_dir
 from truffile.deploy import build_deploy_plan, deploy_with_builder
 
-from .connect import _resolve_connected_device
-from .ui import C, ARROW, CROSS, DOT, Spinner, ScrollingLog, error, warn, info, success
+from .connect import _grpc_address, _resolve_connected_device
+from .ui import C, ARROW, CROSS, Spinner, ScrollingLog, error, warn, info, success
 
 
 def _json_print(payload: dict) -> None:
@@ -194,7 +193,7 @@ async def cmd_deploy(args, storage: StorageService) -> int:
             print(f"  Background Cmd: {bg['cmd']} {' '.join(bg.get('args', []))}".rstrip())
             print(f"  Background Env Keys: {', '.join(bg_keys) if bg_keys else '<none>'}")
             if plan["default_schedule"] is not None:
-                print(f"  Background Schedule: configured")
+                print("  Background Schedule: configured")
             else:
                 print(f"  Background Schedule: {C.DIM}<default runtime policy>{C.RESET}")
 
@@ -225,7 +224,7 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return 1
 
-    address = f"{ip}:80"
+    address = _grpc_address(ip)
     replaced_app = None
     if replace:
         replace_code, replaced_app = await _replace_existing_app(
@@ -345,78 +344,97 @@ async def cmd_deploy(args, storage: StorageService) -> int:
 
 
 async def _interactive_shell(ws_url: str) -> int:
-        print(f"{C.DIM}Opening shell... (exit with Ctrl+D or 'exit'){C.RESET}")
-        import os, termios, fcntl, struct, tty, contextlib, json
-        try:
-            import websockets
-            from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
-        except Exception:
-            print(f"{C.RED}{CROSS} Error:{C.RESET} websockets package is required for terminal mode")
-            return 67
+    print(f"{C.DIM}Opening shell... (exit with Ctrl+D or 'exit'){C.RESET}")
+    import fcntl
+    import os
+    import struct
+    import termios
+    import tty
 
-        def _winsz():
-            try:
-                h, w, _, _ = struct.unpack("HHHH", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0"*8))
-                return w, h
-            except Exception:
-                return 80, 24
-
-        class Raw:
-            def __enter__(self):
-                self.fd = sys.stdin.fileno()
-                self.old = termios.tcgetattr(self.fd)
-                tty.setraw(self.fd); return self
-            def __exit__(self, *a):
-                termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
-
-        async def run_once():
-            async with websockets.connect(ws_url, max_size=None, ping_interval=30) as ws:
-                cols, rows = _winsz()
-                await ws.send(json.dumps({"resize":[cols, rows]}))
-
-                loop = asyncio.get_running_loop()
-                q: asyncio.Queue[bytes] = asyncio.Queue()
-                stop = asyncio.Event()
-
-                def on_stdin():
-                    try:
-                        data = os.read(sys.stdin.fileno(), 4096)
-                        if data: q.put_nowait(data)
-                    except BlockingIOError:
-                        pass
-                loop.add_reader(sys.stdin.fileno(), on_stdin)
-
-                async def pump_in():
-                    try:
-                        while not stop.is_set():
-                            data = await q.get()
-                            try: await ws.send(data)
-                            except (ConnectionClosed, ConnectionClosedOK): break
-                    finally:
-                        stop.set()
-                async def pump_out():
-                    try:
-                        async for msg in ws:
-                            if isinstance(msg, bytes):
-                                os.write(sys.stdout.fileno(), msg)
-                            else:
-                                os.write(sys.stdout.fileno(), msg.encode()) # type: ignore
-                    except (ConnectionClosed, ConnectionClosedOK):
-                        pass
-                    finally:
-                        stop.set()
-
-                with Raw():
-                    t_in = asyncio.create_task(pump_in())
-                    t_out = asyncio.create_task(pump_out())
-                    try:
-                        await asyncio.wait({t_in, t_out}, return_when=asyncio.FIRST_COMPLETED)
-                    finally:
-                        stop.set(); t_in.cancel(); t_out.cancel()
-                        with contextlib.suppress(Exception):
-                            await asyncio.gather(t_in, t_out, return_exceptions=True)
-                        loop.remove_reader(sys.stdin.fileno())
-
-
-        await run_once()
+    try:
+        import websockets
+        from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
+    except Exception:
+        print(f"{C.RED}{CROSS} Error:{C.RESET} websockets package is required for terminal mode")
         return 67
+
+    def _winsz():
+        try:
+            h, w, _, _ = struct.unpack(
+                "HHHH",
+                fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8),
+            )
+            return w, h
+        except Exception:
+            return 80, 24
+
+    class Raw:
+        def __enter__(self):
+            self.fd = sys.stdin.fileno()
+            self.old = termios.tcgetattr(self.fd)
+            tty.setraw(self.fd)
+            return self
+
+        def __exit__(self, *args):
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
+
+    async def run_once():
+        async with websockets.connect(ws_url, max_size=None, ping_interval=30) as ws:
+            cols, rows = _winsz()
+            await ws.send(json.dumps({"resize": [cols, rows]}))
+
+            loop = asyncio.get_running_loop()
+            q: asyncio.Queue[bytes] = asyncio.Queue()
+            stop = asyncio.Event()
+
+            def on_stdin():
+                try:
+                    data = os.read(sys.stdin.fileno(), 4096)
+                    if data:
+                        q.put_nowait(data)
+                except BlockingIOError:
+                    pass
+
+            loop.add_reader(sys.stdin.fileno(), on_stdin)
+
+            async def pump_in():
+                try:
+                    while not stop.is_set():
+                        data = await q.get()
+                        try:
+                            await ws.send(data)
+                        except (ConnectionClosed, ConnectionClosedOK):
+                            break
+                finally:
+                    stop.set()
+
+            async def pump_out():
+                try:
+                    async for msg in ws:
+                        if isinstance(msg, bytes):
+                            os.write(sys.stdout.fileno(), msg)
+                        else:
+                            os.write(sys.stdout.fileno(), msg.encode())
+                except (ConnectionClosed, ConnectionClosedOK):
+                    pass
+                finally:
+                    stop.set()
+
+            with Raw():
+                t_in = asyncio.create_task(pump_in())
+                t_out = asyncio.create_task(pump_out())
+                try:
+                    await asyncio.wait(
+                        {t_in, t_out},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    stop.set()
+                    t_in.cancel()
+                    t_out.cancel()
+                    with contextlib.suppress(Exception):
+                        await asyncio.gather(t_in, t_out, return_exceptions=True)
+                    loop.remove_reader(sys.stdin.fileno())
+
+    await run_once()
+    return 67

@@ -145,16 +145,16 @@ def _make_run_dir(base: Path) -> Path:
 
 
 def _list_apps(truffile: str, *, timeout: float | None) -> tuple[list[dict[str, Any]] | None, str | None]:
-    result = _run([truffile, "chat", "--quiet", "--json", "--list-apps"], timeout=timeout)
+    result = _run([truffile, "list", "apps", "--json"], timeout=timeout)
     if result.returncode != 0:
         detail = result.error or result.stderr.strip() or result.stdout.strip() or "unknown error"
-        return None, f"`truffile chat --list-apps` failed: {detail}"
+        return None, f"`truffile list apps --json` failed: {detail}"
     payload, error = _load_json(result.stdout)
     if error:
-        return None, f"`truffile chat --list-apps` returned invalid JSON: {error}"
+        return None, f"`truffile list apps --json` returned invalid JSON: {error}"
     apps = payload.get("apps") if payload else None
     if not isinstance(apps, list):
-        return None, "`truffile chat --list-apps` JSON did not include an apps list"
+        return None, "`truffile list apps --json` did not include an apps list"
     return [app for app in apps if isinstance(app, dict)], None
 
 
@@ -164,7 +164,7 @@ def _peek_task(
     task_id: str,
     timeout: float | None,
 ) -> tuple[CommandResult, dict[str, Any] | None, str | None]:
-    command = [truffile, "chat", "--quiet", "--json", "--task-id", task_id]
+    command = [truffile, "task", "show", task_id, "--quiet", "--json"]
     result = _run(command, timeout=timeout)
     if result.returncode != 0:
         detail = result.error or result.stderr.strip() or result.stdout.strip() or "unknown error"
@@ -231,7 +231,7 @@ def _run_prompt(
             prompt_path = Path(handle.name)
         command = [
             truffile,
-            "chat",
+            "run",
             "--quiet",
             "--json",
             "--app",
@@ -367,7 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--settle-checks",
         type=int,
         default=1,
-        help="number of --task-id polls after a pending or empty response before starting the next prompt (default: 1)",
+        help="number of task-status polls after a pending or empty response before starting the next prompt (default: 1)",
     )
     parser.add_argument(
         "--settle-delay",

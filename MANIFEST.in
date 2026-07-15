@@ -1,0 +1,3 @@
+include GENERATED_SOURCES.md
+include generated-sources.json
+include scripts/sync_generated_from_wheel.py

@@ -1,4 +1,7 @@
-from truffile.cli.apps import _resolve_delete_selection
+from types import SimpleNamespace
+
+from truffile.cli.apps import _resolve_delete_selection, cmd_list
+from truffile.storage import StoredDevice, StoredState
 
 
 APPS = [
@@ -49,3 +52,21 @@ def test_resolve_delete_selection_multiple_names():
 
     assert indices == [0, 2]
     assert error is None
+
+
+def test_list_devices_json_is_machine_readable(capsys):
+    storage = SimpleNamespace(
+        state=StoredState(
+            devices=[StoredDevice(name="truffle-1234", token="token")],
+            last_used_device="truffle-1234",
+        ),
+        list_devices=lambda: ["truffle-1234"],
+    )
+
+    result = cmd_list(SimpleNamespace(what="devices", json=True), storage)
+
+    assert result == 0
+    assert capsys.readouterr().out == (
+        '{\n  "devices": [\n    {\n      "name": "truffle-1234",\n'
+        '      "active": true\n    }\n  ]\n}\n'
+    )

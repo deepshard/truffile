@@ -213,7 +213,9 @@ def print_help():
   {C.CYAN}list{C.RESET} <apps|devices>      list installed apps or connected devices
   {C.CYAN}delete{C.RESET} [app]             delete app from device
   {C.CYAN}models{C.RESET}                   list inference models on device
-  {C.CYAN}chat{C.RESET}                     interactive chat with device
+  {C.CYAN}run{C.RESET} <prompt>             run a task non-interactively
+  {C.CYAN}resume{C.RESET} [task] [prompt]   resume interactively
+  {C.CYAN}task{C.RESET} <command>           inspect and manage tasks
   {C.CYAN}help{C.RESET}                     show this help
 
 {C.BOLD}Examples:{C.RESET}
@@ -222,5 +224,5 @@ def print_help():
   truffile create my-app
   truffile deploy ./my-app
   truffile list apps
-  truffile chat
+  truffile run "summarize my apps"
 """)

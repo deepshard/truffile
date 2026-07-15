@@ -1,8 +1,12 @@
+import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from shlex import quote as shlex_quote
+from types import SimpleNamespace
 
+from truffile.cli import infer as infer_cli
 from truffile.cli.infer import (
     _attachment_buffer_prefix,
     _attachment_labels,
@@ -90,3 +94,31 @@ class TestDefaultModelSelection(unittest.TestCase):
         default = _pick_default_model(models)
         assert default is not None
         self.assertEqual(default["id"], "alpha")
+
+
+def test_oneshot_json_reports_default_model_failure(monkeypatch, capsys):
+    async def resolve_device(storage, requested_device=None, *, emit_errors=True):
+        return "truffle-1234", "127.0.0.1"
+
+    async def no_default_model(ip):
+        return None
+
+    monkeypatch.setattr(infer_cli, "_resolve_connected_device", resolve_device)
+    monkeypatch.setattr(infer_cli, "_default_model", no_default_model)
+    args = SimpleNamespace(
+        json=True,
+        quiet=True,
+        list_models=False,
+        model=None,
+        timeout=None,
+    )
+
+    result = asyncio.run(infer_cli._run_oneshot(args, object()))
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    assert payload["error"] == {
+        "code": "execution_error",
+        "message": "failed to resolve default model from IF2",
+    }
+    assert payload["device"] == "truffle-1234"

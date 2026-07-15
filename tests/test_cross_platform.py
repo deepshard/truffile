@@ -1,9 +1,7 @@
-import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
 
 from truffile.storage import StorageService, StoredState
 
@@ -67,3 +65,54 @@ class TestWindowsCompat(unittest.TestCase):
             s.state = StoredState()
             s.set_token("dev-1", "tok")
             self.assertEqual(s.get_token("dev-1"), "tok")
+
+
+def test_scan_json_in_container_never_prompts(monkeypatch, capsys):
+    from truffile.cli import connect
+
+    info = SimpleNamespace(
+        device_name="truffle-container",
+        ip_address="10.0.0.2",
+        grpc_address="host:80",
+        serial="",
+        mac_address="",
+        firmware_version="",
+        timezone="",
+        probe_failed=False,
+    )
+    monkeypatch.setattr(connect, "probe_in_container_device", lambda: info)
+    storage = SimpleNamespace(get_token=lambda name: "token")
+
+    result = __import__("asyncio").run(
+        connect.cmd_scan(
+            SimpleNamespace(json=True, non_interactive=False, timeout=0),
+            storage,
+        )
+    )
+
+    assert result == 0
+    assert '"name": "truffle-container"' in capsys.readouterr().out
+
+
+def test_grpc_address_preserves_explicit_ports_and_ipv6():
+    from truffile.cli.connect import _grpc_address
+
+    assert _grpc_address("10.0.0.2") == "10.0.0.2:80"
+    assert _grpc_address("host:50051") == "host:50051"
+    assert _grpc_address("[::1]:50051") == "[::1]:50051"
+    assert _grpc_address("::1") == "[::1]:80"
+
+
+def test_in_container_resolution_preserves_configured_grpc_port():
+    from truffile.cli.connect import _resolve_connected_device
+
+    storage = SimpleNamespace(
+        _in_container_info=SimpleNamespace(
+            device_name="truffle-container",
+            grpc_address="127.0.0.1:50051",
+        )
+    )
+
+    result = __import__("asyncio").run(_resolve_connected_device(storage))
+
+    assert result == ("truffle-container", "127.0.0.1:50051")

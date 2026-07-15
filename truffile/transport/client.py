@@ -24,7 +24,6 @@ from truffle.os.client_session_pb2 import (
 from truffle.os.client_metadata_pb2 import ClientMetadata
 from truffle.os.app_queries_pb2 import GetAllAppsRequest, GetAllAppsResponse, DeleteAppRequest, DeleteAppResponse
 from truffle.app.app_pb2 import App
-from truffle.app.background_pb2 import BackgroundApp, BackgroundAppRuntimePolicy
 from truffle.os.task_actions_pb2 import (
     OpenTaskRequest,
     InterruptTaskRequest,
@@ -33,10 +32,23 @@ from truffle.os.task_actions_pb2 import (
     TaskSetAvailableAppsRequest,
 )
 from truffle.os.task_user_response_pb2 import RespondToTaskRequest
-from truffle.os.task_queries_pb2 import GetTaskInfosRequest
+from truffle.os.task_queries_pb2 import GetOneTaskRequest, GetTaskInfosRequest
 from truffile.schedule import parse_runtime_policy
 
 GRPC_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
+
+
+def _sort_task_infos(tasks: list[dict]) -> list[dict]:
+    """Return task previews newest-first with deterministic tie breaking."""
+    return sorted(
+        tasks,
+        key=lambda task: (
+            task.get("updated") or task.get("created") or "",
+            task.get("created") or "",
+            task.get("task_id") or "",
+        ),
+        reverse=True,
+    )
 
 
 def get_client_metadata() -> ClientMetadata:
@@ -483,6 +495,15 @@ class TruffleClient:
         req.existing_task.task_id = task_id
         return self.stub.Task_OpenTask(req, metadata=self._metadata)
 
+    async def get_task(self, task_id: str, *, with_nodes: bool = True):
+        """Fetch one task, raising the underlying RPC error when it is absent."""
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = GetOneTaskRequest()
+        req.task_id = task_id
+        req.with_nodes = with_nodes
+        return await self.stub.Task_GetOneTask(req, metadata=self._metadata)
+
     async def get_task_infos(self, *, max_before: int = 20) -> list[dict]:
         if not self.stub:
             raise RuntimeError("not connected")
@@ -501,7 +522,7 @@ class TruffleClient:
                 "created": created,
                 "updated": updated,
             })
-        return tasks
+        return _sort_task_infos(tasks)[:max_before]
 
     async def rename_task(self, task_id: str, new_name: str) -> str:
         if not self.stub:
@@ -510,7 +531,12 @@ class TruffleClient:
         req.task_id = task_id
         req.new_name = new_name
         resp = await self.stub.Task_Rename(req, metadata=self._metadata)
-        return resp.new_name
+        # Current firmware can echo a stale generated title in Task_RenameResponse.
+        # Read the task back so CLI output reflects the authoritative state.
+        task = await self.get_task(task_id, with_nodes=False)
+        if task.HasField("info") and task.info.task_title:
+            return task.info.task_title
+        return resp.new_name or new_name
 
     async def delete_task(self, task_id: str) -> None:
         if not self.stub:

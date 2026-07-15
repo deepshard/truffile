@@ -3,8 +3,8 @@ name: truffile-cli
 description: |
   Use the `truffile` CLI to manage Truffle devices and Truffle apps from the
   command line: scan/connect, create, validate, deploy, list installed apps,
-  delete apps, and manage the Obsidian bridge app. Use `truffile-chat` for
-  talking to the agent and `truffile-infer` for raw model inference.
+  delete apps, and manage the Obsidian bridge app. Use `truffile-agent` for
+  persistent agent work and `truffile-infer` for raw model inference.
 ---
 
 # truffile CLI

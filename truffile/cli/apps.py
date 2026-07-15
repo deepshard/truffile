@@ -5,8 +5,8 @@ import sys
 from truffile.storage import StorageService
 from truffile.client import TruffleClient
 
-from .connect import _resolve_connected_device
-from .ui import C, DOT, CROSS, CHECK, Spinner, error, warn, success
+from .connect import _grpc_address, _resolve_connected_device
+from .ui import C, DOT, Spinner, error, warn, success
 
 
 def _app_kind(app) -> str:
@@ -47,7 +47,7 @@ async def cmd_list_apps(args, storage: StorageService) -> int:
         spinner = Spinner(f"Connecting to {device}")
         spinner.start()
 
-    address = f"{ip}:80"
+    address = _grpc_address(ip)
     client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
 
     try:
@@ -131,7 +131,7 @@ async def cmd_delete(args, storage: StorageService) -> int:
     spinner = Spinner(f"Connecting to {device}")
     spinner.start()
 
-    address = f"{ip}:80"
+    address = _grpc_address(ip)
     client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
 
     try:
@@ -315,6 +315,22 @@ def cmd_list(args, storage: StorageService) -> int:
         return _run_async(cmd_list_apps(args, storage))
     elif what == "devices":
         devices = storage.list_devices()
+        if bool(getattr(args, "json", False)):
+            print(
+                json.dumps(
+                    {
+                        "devices": [
+                            {
+                                "name": device,
+                                "active": device == storage.state.last_used_device,
+                            }
+                            for device in devices
+                        ]
+                    },
+                    indent=2,
+                )
+            )
+            return 0
         if not devices:
             print(f"  {C.DIM}No connected devices{C.RESET}")
         else:

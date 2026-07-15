@@ -1,9 +1,11 @@
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import truffile
+from truffle.os.task_actions_pb2 import TaskRenameResponse
+from truffle.os.task_pb2 import Task
 from truffile.transport.client import GRPC_MAX_MESSAGE_BYTES, TruffleClient
 
 
@@ -43,3 +45,36 @@ def test_init_prepends_repo_root_for_bundled_truffle(monkeypatch):
     truffile._ensure_bundled_truffle_on_path()
 
     assert sys.path[0] == repo_root
+
+
+def test_get_task_uses_unary_lookup_with_nodes():
+    stub = Mock()
+    stub.Task_GetOneTask = AsyncMock(return_value="task")
+    client = TruffleClient("127.0.0.1:80", token="token")
+    client.stub = stub
+
+    result = asyncio.run(client.get_task("task-123", with_nodes=True))
+
+    assert result == "task"
+    request = stub.Task_GetOneTask.await_args.args[0]
+    assert request.task_id == "task-123"
+    assert request.with_nodes is True
+
+
+def test_bundled_protocol_and_app_runtime_are_importable():
+    from truffle.os import truffleos_pb2  # noqa: F401
+    from truffile import app_runtime  # noqa: F401
+
+
+def test_rename_task_returns_authoritative_readback():
+    task = Task(task_id="task-123")
+    task.info.task_title = "Requested title"
+    stub = Mock()
+    stub.Task_Rename = AsyncMock(return_value=TaskRenameResponse(new_name="Stale title"))
+    stub.Task_GetOneTask = AsyncMock(return_value=task)
+    client = TruffleClient("127.0.0.1:80", token="token")
+    client.stub = stub
+
+    result = asyncio.run(client.rename_task("task-123", "Requested title"))
+
+    assert result == "Requested title"

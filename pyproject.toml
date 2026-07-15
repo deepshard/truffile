@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "truffile"
-version = "0.2.0"
+dynamic = ["version"]
 description = "truffile the TruffleOS SDK - Connect and deploy apps to Truffle devices"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "MIT"}
+license = "MIT"
 
 dependencies = [
     "aiohttp>=3.9.0",
@@ -35,6 +35,9 @@ dev = ["pytest>=9.0.2"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["truffile*", "truffle*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "truffile._version.__version__"}
 
 [tool.setuptools.package-data]
 "*" = ["*.pyi", "py.typed"]

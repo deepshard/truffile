@@ -1,4 +1,6 @@
 import asyncio
+import json
+import sys
 
 from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
@@ -42,7 +44,7 @@ async def cmd_connect(args, storage: StorageService) -> int:
         print()
         return 1
 
-    address = f"{ip}:80"
+    address = _grpc_address(ip)
     existing_token = storage.get_token(device_name)
 
     if existing_token:
@@ -155,11 +157,30 @@ def cmd_disconnect(args, storage: StorageService) -> int:
 
 
 async def cmd_scan(args, storage: StorageService) -> int:
+    json_out = bool(getattr(args, "json", False))
+    non_interactive = bool(getattr(args, "non_interactive", False))
     # In-container short-circuit: the host firmware is the only "device" we
     # can possibly reach from inside a CNI-isolated app container, and we
     # already know how to reach it. Skip mDNS entirely.
     ic_info = probe_in_container_device()
     if ic_info is not None:
+        if json_out:
+            print(
+                json.dumps(
+                    {
+                        "devices": [
+                            {
+                                "name": ic_info.device_name,
+                                "addresses": [ic_info.ip_address] if ic_info.ip_address else [],
+                                "connected": True,
+                                "in_container": True,
+                            }
+                        ]
+                    },
+                    indent=2,
+                )
+            )
+            return 0
         print(f"{C.DIM}[in-container mode] skipping mDNS scan{C.RESET}")
         print()
         print(f"{C.BOLD}DEVICES{C.RESET}")
@@ -195,8 +216,6 @@ async def cmd_scan(args, storage: StorageService) -> int:
         return 1
 
     devices: dict[str, dict] = {}
-    scan_done = asyncio.Event()
-
     class TruffleListener(ServiceListener):
         def add_service(self, zc: Zeroconf, type_: str, name: str):
             if name.lower().startswith("truffle-"):
@@ -218,8 +237,10 @@ async def cmd_scan(args, storage: StorageService) -> int:
 
     timeout = args.timeout if hasattr(args, 'timeout') else 5
 
-    spinner = Spinner(f"Scanning for Truffle devices ({timeout}s)")
-    spinner.start()
+    spinner = None
+    if not json_out:
+        spinner = Spinner(f"Scanning for Truffle devices ({timeout}s)")
+        spinner.start()
 
     try:
         zc = Zeroconf(ip_version=IPVersion.V4Only)
@@ -236,12 +257,19 @@ async def cmd_scan(args, storage: StorageService) -> int:
         zc.close()
 
     except Exception as e:
-        spinner.fail(f"Scan failed: {e}")
+        if spinner:
+            spinner.fail(f"Scan failed: {e}")
+        elif json_out:
+            print(json.dumps({"error": {"code": "scan_failed", "message": str(e)}}))
         return 1
 
-    spinner.stop(success=True)
+    if spinner:
+        spinner.stop(success=True)
 
     if not devices:
+        if json_out:
+            print(json.dumps({"devices": []}, indent=2))
+            return 0
         print()
         print(f"  {C.DIM}No Truffle devices found on the network{C.RESET}")
         print()
@@ -251,11 +279,28 @@ async def cmd_scan(args, storage: StorageService) -> int:
         print()
         return 1
 
+    device_list = list(devices.values())
+    if json_out:
+        print(
+            json.dumps(
+                {
+                    "devices": [
+                        {
+                            **device,
+                            "connected": storage.get_token(device["name"]) is not None,
+                        }
+                        for device in device_list
+                    ]
+                },
+                indent=2,
+            )
+        )
+        return 0
+
     print()
     print(f"{C.BOLD}Found {len(devices)} Truffle device(s):{C.RESET}")
     print()
 
-    device_list = list(devices.values())
     for i, device in enumerate(device_list, 1):
         name = device["name"]
         addrs = ", ".join(device["addresses"]) if device["addresses"] else "unknown"
@@ -267,6 +312,9 @@ async def cmd_scan(args, storage: StorageService) -> int:
             print(f"  {C.CYAN}{i}.{C.RESET} {C.BOLD}{name}{C.RESET} {C.DIM}({addrs}){C.RESET}")
 
     print()
+
+    if non_interactive or not sys.stdin.isatty():
+        return 0
 
     try:
         choice = input(f"Select device to connect (1-{len(device_list)}) or press Enter to cancel: ").strip()
@@ -295,21 +343,53 @@ async def cmd_scan(args, storage: StorageService) -> int:
         return 1
 
 
-async def _resolve_connected_device(storage: StorageService) -> tuple[str, str] | tuple[None, None]:
+async def _resolve_connected_device(
+    storage: StorageService,
+    requested_device: str | None = None,
+    *,
+    emit_errors: bool = True,
+) -> tuple[str, str] | tuple[None, None]:
     # In-container short-circuit: skip mDNS, return the env-provided host
     # for the synthetic device that the CLI startup injected into storage.
     ic_info = getattr(storage, "_in_container_info", None)
     if ic_info is not None:
-        return ic_info.device_name, ic_info.host
+        if requested_device and requested_device != ic_info.device_name:
+            if emit_errors:
+                error(f"In-container device is {ic_info.device_name}, not {requested_device}")
+            return None, None
+        return ic_info.device_name, ic_info.grpc_address
 
-    device = storage.state.last_used_device
+    device = (requested_device or storage.state.last_used_device or "").strip()
+    if device and not device.lower().startswith("truffle-"):
+        digits = "".join(ch for ch in device if ch.isdigit())
+        if digits:
+            device = f"truffle-{digits}"
     if not device:
-        error("No device connected")
-        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+        if emit_errors:
+            error("No device connected")
+            print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+        return None, None
+    if not storage.has_token(device):
+        if emit_errors:
+            error(f"No saved connection for {device}")
+            print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return None, None
     try:
         ip = await resolve_mdns(f"{device}.local")
     except RuntimeError:
-        error(f"Could not resolve {device}.local")
+        if emit_errors:
+            error(f"Could not resolve {device}.local")
         return None, None
     return device, ip
+
+
+def _grpc_address(host_or_address: str, *, default_port: int = 80) -> str:
+    """Add the LAN default port without overwriting an explicit endpoint."""
+    value = host_or_address.strip()
+    if "://" in value or (value.startswith("[") and "]:" in value):
+        return value
+    if value.count(":") == 1 and value.rsplit(":", 1)[1].isdigit():
+        return value
+    if ":" in value:
+        return f"[{value}]:{default_port}"
+    return f"{value}:{default_port}"

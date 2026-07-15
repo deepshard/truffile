@@ -22,7 +22,7 @@ import yaml
 from truffile.client import TruffleClient
 from truffile.storage import StorageService, StoredObsidianBridge
 
-from .connect import _resolve_connected_device
+from .connect import _grpc_address, _resolve_connected_device
 from .obsidian_bridge import (
     ObsidianBridgeConfig,
     build_server,
@@ -606,7 +606,7 @@ async def _probe_bridge_from_device(storage: StorageService, config: ObsidianBri
     if not token:
         return False, [f"No token stored for {device}"]
 
-    client = TruffleClient(f"{ip}:80", token=token, app_id=storage.app_id_for_device(device))
+    client = TruffleClient(_grpc_address(ip), token=token, app_id=storage.app_id_for_device(device))
     try:
         await client.connect()
         await client.start_build()

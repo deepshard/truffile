@@ -1,4 +1,4 @@
-"""Rich welcome panels for chat, infer, and help."""
+"""Rich welcome panels for agent, infer, and help."""
 from __future__ import annotations
 
 from rich.console import Console
@@ -66,9 +66,9 @@ def _build_panel(
 
 
 def show_chat_welcome(*, device: str = "", apps: list[str] | None = None) -> None:
-    """Welcome panel for truffile chat."""
+    """Welcome panel for the interactive agent shell."""
     right: list[str] = []
-    right.append(f"\033[1m\033[96mCommands\033[0m")
+    right.append("\033[1m\033[96mCommands\033[0m")
     cmds = [
         ("/help", "show commands"),
         ("/tasks", "pick a task"),
@@ -76,13 +76,13 @@ def show_chat_welcome(*, device: str = "", apps: list[str] | None = None) -> Non
         ("/apps", "list installed apps"),
         ("/deploy <path>", "deploy an app"),
         ("/create <name>", "scaffold new app"),
-        ("/exit", "exit chat"),
+        ("/exit", "exit agent shell"),
     ]
     for name, desc in cmds:
         right.append(f"  \033[96m{name:<18}\033[0m \033[2m{desc}\033[0m")
 
     right.append("")
-    right.append(f"\033[1m\033[96mKeys\033[0m")
+    right.append("\033[1m\033[96mKeys\033[0m")
     right.append(f"  \033[96m{'alt+enter':<18}\033[0m \033[2mnew line\033[0m")
     right.append(f"  \033[96m{'tab':<18}\033[0m \033[2mcomplete command\033[0m")
     right.append(f"  \033[96m{'esc':<18}\033[0m \033[2minterrupt stream\033[0m")
@@ -90,20 +90,20 @@ def show_chat_welcome(*, device: str = "", apps: list[str] | None = None) -> Non
 
     if apps:
         right.append("")
-        right.append(f"\033[1m\033[96mApps\033[0m")
+        right.append("\033[1m\033[96mApps\033[0m")
         for a in apps[:6]:
             right.append(f"  \033[96m/{a}\033[0m")
         if len(apps) > 6:
             right.append(f"  \033[2m...and {len(apps) - 6} more\033[0m")
 
     subtitle = f"connected to {device}" if device else ""
-    _console.print(_build_panel(right_lines=right, title="Truffile Chat", subtitle=subtitle))
+    _console.print(_build_panel(right_lines=right, title="Truffile Agent", subtitle=subtitle))
 
 
 def show_infer_welcome(*, model: str = "", device: str = "") -> None:
     """Welcome panel for truffile infer."""
     right: list[str] = []
-    right.append(f"\033[1m\033[96mCommands\033[0m")
+    right.append("\033[1m\033[96mCommands\033[0m")
     cmds = [
         ("/help", "show commands"),
         ("/models", "switch model"),
@@ -118,7 +118,7 @@ def show_infer_welcome(*, model: str = "", device: str = "") -> None:
         right.append(f"  \033[96m{name:<22}\033[0m \033[2m{desc}\033[0m")
 
     right.append("")
-    right.append(f"\033[1m\033[96mKeys\033[0m")
+    right.append("\033[1m\033[96mKeys\033[0m")
     right.append(f"  \033[96m{'alt+enter':<22}\033[0m \033[2mnew line\033[0m")
     right.append(f"  \033[96m{'tab':<22}\033[0m \033[2mcomplete command\033[0m")
     right.append(f"  \033[96m{'esc':<22}\033[0m \033[2minterrupt stream\033[0m")
@@ -126,7 +126,7 @@ def show_infer_welcome(*, model: str = "", device: str = "") -> None:
 
     if model:
         right.append("")
-        right.append(f"\033[1m\033[96mModel\033[0m")
+        right.append("\033[1m\033[96mModel\033[0m")
         right.append(f"  \033[2m{model}\033[0m")
 
     subtitle = f"{device} · {model}" if device and model else device or model or ""
@@ -136,7 +136,7 @@ def show_infer_welcome(*, model: str = "", device: str = "") -> None:
 def show_help_welcome() -> None:
     """Welcome panel for truffile help."""
     right: list[str] = []
-    right.append(f"\033[1m\033[96mCommands\033[0m")
+    right.append("\033[1m\033[96mCommands\033[0m")
     cmds = [
         ("scan", "scan for devices"),
         ("connect <device>", "connect to device"),
@@ -147,7 +147,9 @@ def show_help_welcome() -> None:
         ("list <apps|devices>", "list apps or devices"),
         ("delete [app]", "delete app"),
         ("models", "list models"),
-        ("chat", "agent chat"),
+        ("run <prompt>", "start task"),
+        ("resume <id>", "continue context"),
+        ("task <command>", "manage tasks"),
         ("infer", "raw inference"),
         ("help", "show this"),
     ]
@@ -155,13 +157,14 @@ def show_help_welcome() -> None:
         right.append(f"  \033[96m{name:<22}\033[0m \033[2m{desc}\033[0m")
 
     right.append("")
-    right.append(f"\033[1m\033[96mExamples\033[0m")
+    right.append("\033[1m\033[96mExamples\033[0m")
     examples = [
         "truffile scan",
         "truffile connect truffle-1234",
         "truffile create my-app",
         "truffile deploy ./my-app",
-        "truffile chat",
+        "truffile run \"summarize my apps\"",
+        "truffile task list",
     ]
     for ex in examples:
         right.append(f"  \033[2m{ex}\033[0m")

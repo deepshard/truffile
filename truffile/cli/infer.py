@@ -1,4 +1,3 @@
-import argparse
 import base64
 import contextlib
 import json
@@ -6,10 +5,7 @@ import mimetypes
 import re
 import shlex
 import shutil
-import signal
 import sys
-import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -17,7 +13,7 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 
-from .ui import C, MUSHROOM, CHECK, HAMMER, WARN, SUPPORTED_SERVER_MIME_TYPES, Spinner, StreamAbortWatcher, error, success, info, warn, create_thinking_orb
+from .ui import C, MUSHROOM, CHECK, HAMMER, WARN, SUPPORTED_SERVER_MIME_TYPES, Spinner, StreamAbortWatcher, error, warn, create_thinking_orb
 from .connect import _resolve_connected_device
 from .models import _fetch_models_payload, _pick_model_interactive, _default_model
 from .commands import INFER_COMMANDS
@@ -472,8 +468,6 @@ def _run_single_chat_request(
         tool_calls_by_index: dict[int, dict[str, Any]] = {}
         reasoning_stream_started = False
         interrupted = False
-        first_event_seen = False
-
         try:
             with StreamAbortWatcher() as abort_watcher:
                 with client.stream("POST", url, headers=headers, json=payload) as resp:
@@ -886,11 +880,22 @@ async def _run_oneshot(args, storage: StorageService) -> int:
     quiet = bool(getattr(args, "quiet", False))
     eprint = _eprint_factory(quiet)
     json_out = bool(getattr(args, "json", False))
+    device: str | None = None
+
+    def fail(message: str, *, code: str = "execution_error") -> int:
+        if json_out:
+            print(json.dumps({
+                "error": {"code": code, "message": message},
+                "device": device,
+            }, indent=2))
+        else:
+            eprint(message)
+        return 1
 
     # device + IP
-    device, ip = await _resolve_connected_device(storage)
+    device, ip = await _resolve_connected_device(storage, emit_errors=not json_out)
     if not device or not ip:
-        return 1
+        return fail("could not resolve connected device", code="connection_error")
 
     # --list-models: short circuit, no model resolution
     if getattr(args, "list_models", False):
@@ -898,8 +903,7 @@ async def _run_oneshot(args, storage: StorageService) -> int:
             try:
                 models = _fetch_models_payload(http, ip)
             except Exception as exc:
-                eprint(f"failed to list models: {exc}")
-                return 1
+                return fail(f"failed to list models: {exc}")
         if json_out:
             print(json.dumps({"models": models}, indent=2))
         else:
@@ -916,8 +920,7 @@ async def _run_oneshot(args, storage: StorageService) -> int:
         eprint(f"resolving default model on {device}")
         model = await _default_model(ip)
         if not model:
-            eprint("failed to resolve default model from IF2")
-            return 1
+            return fail("failed to resolve default model from IF2")
 
     settings = ChatSettings(model=model)
     # in one-shot mode, default to non-streaming for clean stdout capture.
