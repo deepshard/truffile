@@ -501,7 +501,15 @@ class TruffleClient:
                 "created": created,
                 "updated": updated,
             })
-        return tasks
+        tasks.sort(
+            key=lambda task: (
+                task["updated"] or task["created"],
+                task["created"],
+                task["task_id"],
+            ),
+            reverse=True,
+        )
+        return tasks[:max(0, max_before)]
 
     async def rename_task(self, task_id: str, new_name: str) -> str:
         if not self.stub:
