@@ -1,11 +1,13 @@
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
+import pytest
 
-from truffile.cli import build_parser
+from truffile.cli import _main, build_parser
 from truffile.cli.apps import cmd_list
 from truffile.cli.connect import cmd_connect, cmd_scan
 from truffile.cli.infer import _run_oneshot
@@ -58,6 +60,21 @@ def test_machine_flags_parse_without_prompts():
     assert connect.json is True
     assert connect.non_interactive is True
     assert connect.approval_timeout == 10
+
+
+def test_invalid_machine_arguments_return_one_json_error(capsys):
+    with patch.object(
+        sys,
+        "argv",
+        ["truffile", "scan", "--timeout", "not-a-number", "--json"],
+    ):
+        with pytest.raises(SystemExit) as exc:
+            _main()
+
+    assert exc.value.code == 2
+    payload = _json_stdout(capsys)
+    assert payload["code"] == "invalid_args"
+    assert payload["retryable"] is False
 
 
 def test_list_devices_json_is_parseable(capsys):

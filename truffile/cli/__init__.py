@@ -6,6 +6,16 @@ from pathlib import Path
 from .guard import CLIGuard
 
 
+class TruffileArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        if "--json" in sys.argv[1:]:
+            from .output import emit_json, error_payload
+
+            emit_json(error_payload("invalid_args", message))
+            self.exit(2)
+        super().error(message)
+
+
 def run_async(coro):
     try:
         loop = asyncio.get_event_loop()
@@ -107,7 +117,7 @@ def _run_onboarding(storage) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="truffile")
+    parser = TruffileArgumentParser(prog="truffile")
     parser.add_argument("--resume", action="store_true", help="resume a previous task")
     sub = parser.add_subparsers(dest="command")
 
