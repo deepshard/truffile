@@ -275,6 +275,13 @@ def cmd_disconnect(args, storage: StorageService) -> int:
 async def cmd_scan(args, storage: StorageService) -> int:
     json_out = bool(getattr(args, "json", False))
     non_interactive = bool(getattr(args, "non_interactive", False)) or json_out
+    timeout = int(getattr(args, "timeout", 5))
+    if timeout <= 0:
+        if json_out:
+            return emit_error("invalid_args", "--timeout must be greater than zero")
+        error("--timeout must be greater than zero")
+        return 1
+
     # In-container short-circuit: the host firmware is the only "device" we
     # can possibly reach from inside a CNI-isolated app container, and we
     # already know how to reach it. Skip mDNS entirely.
@@ -354,8 +361,6 @@ async def cmd_scan(args, storage: StorageService) -> int:
 
         def update_service(self, zc: Zeroconf, type_: str, name: str):
             pass
-
-    timeout = args.timeout if hasattr(args, 'timeout') else 5
 
     spinner = None if json_out else Spinner(f"Scanning for Truffle devices ({timeout}s)")
     if spinner:

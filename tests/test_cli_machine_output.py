@@ -7,7 +7,7 @@ import httpx
 
 from truffile.cli import build_parser
 from truffile.cli.apps import cmd_list
-from truffile.cli.connect import cmd_connect
+from truffile.cli.connect import cmd_connect, cmd_scan
 from truffile.cli.infer import _run_oneshot
 from truffile.cli.load import cmd_load
 from truffile.storage import StoredDevice, StoredState
@@ -112,6 +112,17 @@ def test_connect_json_reports_missing_symphony_user_id(capsys):
     payload = _json_stdout(capsys)
     assert payload["code"] == "user_id_required"
     assert "Symphony Settings" in payload["next_action"]
+
+
+def test_scan_json_rejects_non_positive_timeout_without_starting_discovery(capsys):
+    args = SimpleNamespace(timeout=0, json=True, non_interactive=True)
+
+    result = asyncio.run(cmd_scan(args, MemoryStorage()))
+
+    assert result == 1
+    payload = _json_stdout(capsys)
+    assert payload["code"] == "invalid_args"
+    assert payload["message"] == "--timeout must be greater than zero"
 
 
 def test_infer_json_preserves_if2_http_failure(capsys):
