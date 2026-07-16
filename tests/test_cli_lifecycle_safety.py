@@ -213,6 +213,29 @@ def test_delete_invalid_selection_is_structured(capsys):
     assert _json_stdout(capsys)["code"] == "invalid_selection"
 
 
+def test_delete_invalid_selection_never_prompts_from_a_tty(monkeypatch, capsys):
+    client = FakeClient([FakeApp("Alpha App", "uuid-alpha")])
+    args = SimpleNamespace(
+        selection=["missing-app"],
+        dry_run=False,
+        yes=True,
+        json=True,
+        non_interactive=True,
+    )
+    monkeypatch.setattr("truffile.cli.apps.sys.stdin.isatty", lambda: True)
+
+    def unexpected_prompt(_prompt: str) -> str:
+        raise AssertionError("machine mode must not prompt")
+
+    monkeypatch.setattr("builtins.input", unexpected_prompt)
+
+    result = _run_delete(args, client)
+
+    assert result == 1
+    assert client.deleted == []
+    assert _json_stdout(capsys)["code"] == "invalid_selection"
+
+
 def test_delete_interactive_cancel_does_not_mutate(monkeypatch):
     client = FakeClient([FakeApp("Alpha App", "uuid-alpha")])
     args = SimpleNamespace(

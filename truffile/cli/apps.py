@@ -216,7 +216,7 @@ async def cmd_delete(args, storage: StorageService) -> int:
             to_delete, selection_error = _resolve_delete_selection(raw, all_apps)
             if to_delete is None:
                 # Invalid / out-of-range — fall back to interactive when possible.
-                if sys.stdin.isatty():
+                if sys.stdin.isatty() and not non_interactive:
                     if selection_error:
                         warn(selection_error)
                     warn("Invalid selection, switching to interactive prompt")
