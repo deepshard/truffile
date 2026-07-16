@@ -28,6 +28,7 @@ def test_cli_skill_prefers_machine_contract_and_safe_deletion():
     assert "delete my-app --dry-run --json --non-interactive" in CLI_SKILL
     assert "delete my-app --yes --json --non-interactive" in CLI_SKILL
     assert "Settings >\nAbout" not in CLI_SKILL
+    assert "### Running inside a Truffle app container" in CLI_SKILL
 
 
 def test_chat_skill_documents_bounded_compact_output():

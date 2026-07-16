@@ -26,9 +26,13 @@ Use this for Truffle device and app lifecycle work.
 
 ## Connection Assumptions
 
+### Running inside a Truffle app container
+
 When running inside a Truffle app or agent container, assume the runtime has
 already provided the session token in env. `truffile connect` should report
 that the device is already connected. Do not ask the user for tokens.
+
+### Connecting from a computer
 
 For normal laptop use, the user must first onboard their Truffle through the
 Symphony desktop client:
