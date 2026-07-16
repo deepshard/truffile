@@ -3,6 +3,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+from truffile import __version__
+
 from .guard import CLIGuard
 
 
@@ -118,6 +120,7 @@ def _run_onboarding(storage) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = TruffileArgumentParser(prog="truffile")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--resume", action="store_true", help="resume a previous task")
     sub = parser.add_subparsers(dest="command")
 
@@ -187,6 +190,10 @@ def build_parser() -> argparse.ArgumentParser:
     models_p = sub.add_parser("models", help="list inference models")
     models_p.add_argument("--json", action="store_true", help="emit structured json")
     models_p.add_argument("--timeout", type=float, default=15.0, help="request timeout in seconds")
+    doctor_p = sub.add_parser("doctor", help="check Truffile, device, and service health")
+    doctor_p.add_argument("--json", action="store_true", help="emit structured json")
+    doctor_p.add_argument("--timeout", type=float, default=15.0, help="timeout for each network check")
+    doctor_p.add_argument("--builder", action="store_true", help="open and discard a build session to verify Builder")
 
     # chat (agent runtime with apps)
     chat_p = sub.add_parser("chat", help="agent chat with apps")
@@ -285,8 +292,7 @@ def _main() -> int:
     args = parser.parse_args()
 
     if args.command == "help":
-        from .welcome import show_help_welcome
-        show_help_welcome()
+        parser.print_help()
         return 0
 
     if args.command == "glow":
@@ -391,6 +397,9 @@ def _main() -> int:
     elif args.command == "models":
         from .models import cmd_models
         return run_async(cmd_models(args, storage))
+    elif args.command == "doctor":
+        from .doctor import cmd_doctor
+        return run_async(cmd_doctor(args, storage))
     elif args.command == "chat":
         from .chat import cmd_chat
         return run_async(cmd_chat(args, storage))
