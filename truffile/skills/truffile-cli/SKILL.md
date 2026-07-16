@@ -11,6 +11,19 @@ description: |
 
 Use this for Truffle device and app lifecycle work.
 
+## Agent workflow
+
+1. Preserve the user's original goal; setup is a prerequisite, not the result.
+2. Run `truffile --version`, `truffile load all --json`, and
+   `truffile doctor --json` before guessing about state.
+3. Prefer `--json --non-interactive` for commands that support them. Treat
+   stdout as machine output and report the command's `code`, `message`, and
+   `next_action` when it fails.
+4. Continue through local create and validation even when no device is paired.
+5. Pause only for a human boundary: Symphony onboarding, User ID, physical
+   device approval, credentials, deployment approval, or destructive action
+   confirmation.
+
 ## Connection Assumptions
 
 When running inside a Truffle app or agent container, assume the runtime has
@@ -22,29 +35,37 @@ Symphony desktop client:
 
 https://docs.truffle.net/client/overview
 
-After onboarding, ask the user for the User ID from Symphony **Settings >
-About** if they have not already provided it. `truffile connect` uses that User
-ID and then the user must approve the new session on the Truffle device.
-Stored credentials are reused after the first approval.
+After onboarding, ask the user for the User ID from Symphony **Settings** if
+they have not already provided it. `truffile connect` uses that User ID and
+then the user must approve the new session on the Truffle device. Stored
+credentials are reused after the first approval.
 
 Useful checks:
 
 ```bash
-truffile connect truffle-1234
-truffile list devices
-truffile list apps
+truffile doctor --json
+truffile scan --json --non-interactive
+truffile connect truffle-1234 --user-id "$TRUFFLE_USER_ID" \
+  --json --non-interactive --approval-timeout 120
+truffile list devices --json
+truffile list apps --json
 ```
+
+`connect` can return discovery, authentication, or approval failures as
+structured JSON. Pairing always requires the user to approve the new session
+on the physical Truffle. Do not ask them to paste a session token.
 
 ## Core Commands
 
 ### Discover and Connect
 
 ```bash
-truffile scan
-truffile connect truffle-1234 --user-id "$TRUFFLE_USER_ID"
-truffile list devices
-truffile disconnect truffle-1234
-truffile disconnect all
+truffile scan --json --non-interactive
+truffile connect truffle-1234 --user-id "$TRUFFLE_USER_ID" \
+  --json --non-interactive --approval-timeout 120
+truffile list devices --json
+truffile disconnect truffle-1234 --json
+truffile disconnect all --json
 ```
 
 Inside a container, `connect` is effectively a no-op success because the
@@ -53,9 +74,9 @@ session comes from env.
 ### Create and Validate an App
 
 ```bash
-truffile load all
-truffile create my-app --path ./apps
-truffile validate ./apps/my-app
+truffile load all --json
+truffile create my-app --path ./apps --json --non-interactive
+truffile validate ./apps/my-app --json
 ```
 
 `truffile load all` copies bundled skills and example apps into
@@ -68,27 +89,27 @@ Run validation before deploy. Validation is local and does not need a device.
 ### Deploy a Local App Directory
 
 ```bash
-truffile deploy ./apps/my-app
-truffile deploy ./apps/my-app --dry-run
+truffile deploy ./apps/my-app --dry-run --json --non-interactive
+truffile deploy ./apps/my-app --json --non-interactive
 truffile deploy ./apps/my-app --json --non-interactive --replace
 truffile deploy ./apps/my-app --interactive
 ```
 
-Use `--dry-run` before a risky deploy. Use `--interactive` only for debugging
-inside the build container before finalizing.
+Run `--dry-run` first. Deploy only when the user asked for deployment, and use
+`--replace` only when they approved replacing the installed bundle. Use
+`--interactive` only for debugging inside the build container.
 
 ### Delete Installed Apps
 
 ```bash
 truffile list apps --json
-truffile delete my-app
-truffile delete 1
-truffile delete 1 2 3
-truffile delete all
+truffile delete my-app --dry-run --json --non-interactive
+truffile delete my-app --yes --json --non-interactive
 ```
 
 Prefer deleting by app name, slug, or uuid. Numeric indices still work, but
-they are less safe for agent workflows because app ordering can change.
+they are less safe for agent workflows because app ordering can change. Never
+add `--yes` until the user has confirmed the exact apps shown by `--dry-run`.
 
 ### Obsidian
 
@@ -124,6 +145,8 @@ ToolSpec(
 
 ## Output Habits
 
-- Use `--json` when available for scripting.
+- Use `--json` when available for scripting. Successful payloads contain
+  `schema_version` and `status: "ok"`; failures contain `status: "error"` plus
+  stable `code`, `message`, `retryable`, and `next_action` fields.
 - Keep stdout clean when feeding another command.
 - Relay important command results to the user; they do not see shell output.

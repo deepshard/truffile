@@ -56,6 +56,11 @@ In one-shot mode:
 This means you can always do `truffile infer --quiet "..."` and get a clean,
 parseable response on stdout with no preamble.
 
+Before inference, use `truffile doctor --json` to distinguish connection,
+authentication, and IF2 service failures. In `--json` mode, failures keep a
+stable `code`, `message`, `retryable`, and `next_action`, including HTTP 503
+service-unavailable responses.
+
 ## Full flag reference
 
 ### Conversation
@@ -248,8 +253,8 @@ truffile infer --quiet --prompt-file ./prompt.txt --max-tokens 1024
   `--mcp`, image attachments, and `--json` all work the same way they do on
   a LAN client. See the `truffile-cli` skill's "Running inside a Truffle
   app container" section for the full contract.
-- **No device connected (LAN) → exit 1.** Run `truffile list devices` to
-  verify a Truffle is connected before invoking infer in scripts.
+- **No device connected (LAN) → exit 1.** Run `truffile doctor --json` to
+  identify whether discovery, pairing, authentication, or IF2 is missing.
 - **`--mcp` URLs must start with `http://` or `https://`.** Streamable HTTP only.
 - **`--tool-args` must be a JSON object** (not an array, not a bare value).
 - **Default behavior is non-streaming in one-shot mode.** Pass `--stream` if

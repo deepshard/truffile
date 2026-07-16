@@ -2,13 +2,38 @@
 
 Python SDK/CLI for Truffle devices.
 
+## Agent setup
+
+Give this to Codex, Claude Code, or another coding agent from the workspace
+where you want to use Truffile. Replace the final placeholder with the result
+you actually want:
+
+> Set up the latest Truffile in this workspace, then **<goal>**. Follow the
+> [installation guide](https://docs.truffle.net/sdk/installation). Use Python
+> 3.12 or newer, prefer `uv` when available, and create a local `.venv`. Run
+> `truffile load all --json`, read the copied skills, then run
+> `truffile doctor --json` and use non-interactive JSON commands. Do not stop
+> after setup; continue to my goal. Ask me only when you need Symphony
+> onboarding, my User ID from Symphony Settings, approval on the physical
+> Truffle, credentials, or confirmation of a deployment or destructive action.
+
+How the pieces fit:
+
+- Symphony onboards the Truffle and supplies the User ID used for pairing.
+- Truffile gives a coding agent a local CLI and SDK for the device.
+- `truffile chat` talks to the on-device agent, including its tasks and apps.
+- `truffile infer` calls the raw on-device model and can test MCP servers.
+- The user still approves pairing on the device and authorizes deployments or
+  destructive actions.
+
 ## What It Does
 
 - discovers and connects to your Truffle (`scan`, `connect`, `disconnect`)
 - copies bundled agent resources into your workspace (`load`)
+- diagnoses the local-to-device path (`doctor`)
 - validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
 - manages installed apps (`list apps`, `delete`)
-- talks to inference directly (`models`, `chat`)
+- talks to the on-device agent (`chat`) or raw inference service (`infer`)
 
 ## Start making your Own Apps
 
@@ -49,18 +74,28 @@ In practice:
 ## Core Commands
 
 ```bash
-truffile scan
-truffile connect <device>
-truffile create [app_name]
-truffile load all
-truffile validate [app_dir]
-truffile deploy [app_dir]
-truffile deploy --dry-run [app_dir]
+truffile --version
+truffile load all --json
+truffile doctor --json
+truffile scan --json --non-interactive
+truffile connect <device> --user-id <user-id> --json --non-interactive
+truffile create <app-name> --path ./apps --json --non-interactive
+truffile validate ./apps/<app-name> --json
+truffile deploy ./apps/<app-name> --dry-run --json --non-interactive
+truffile deploy ./apps/<app-name> --json --non-interactive
 truffile list apps --json
-truffile delete <app-name>
-truffile models
-truffile chat
+truffile delete <app-name> --dry-run --json --non-interactive
+truffile delete <app-name> --yes --json --non-interactive
+truffile models --json
+truffile chat --quiet --json "your request"
+truffile infer --quiet --json "your prompt"
 ```
+
+For a first connection, onboard the device in
+[Symphony](https://docs.truffle.net/client/overview), copy the User ID from
+Symphony Settings, run the `scan` and `connect` commands above, then approve
+the new session on the Truffle. Installation and local validation do not
+require a connected device.
 
 `truffile create` scaffolds a hybrid app starter with:
 - `truffile.yaml` (foreground + background process config)
@@ -130,12 +165,12 @@ Refresh vendored protos from firmware repo:
 The supported app development loop is CLI-first:
 
 ```bash
-truffile create my-app --path ./apps
-truffile validate ./apps/my-app
-truffile deploy --dry-run ./apps/my-app
-truffile deploy ./apps/my-app
+truffile create my-app --path ./apps --json --non-interactive
+truffile validate ./apps/my-app --json
+truffile deploy ./apps/my-app --dry-run --json --non-interactive
+truffile deploy ./apps/my-app --json --non-interactive
 ```
 
 After deploy, use `truffile chat` to attach the app to a task and exercise its
-tools with the on-device agent. Use `truffile delete` to remove test apps from
-the connected device.
+tools with the on-device agent. Preview removal with `truffile delete <app>
+--dry-run --json --non-interactive`; only add `--yes` after the user confirms.

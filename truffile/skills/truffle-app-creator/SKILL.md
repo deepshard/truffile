@@ -62,6 +62,10 @@ Reference: see references/auth-patterns.md for the decision tree.
 ### Step 4: Scaffold the app
 
 Create the directory structure, the command truffile create does this, read the docs first:
+```bash
+truffile create my-app --path ./apps --json --non-interactive
+```
+
 ```
 my-app/
 ├── truffile.yaml
@@ -128,8 +132,8 @@ Subclass BackgroundWorkerApp with the 4 required methods. Follow the rules:
 Don't wait until the end. Write tests as you implement:
 
 ```bash
-truffile validate ./my-app                         # yaml + source checks
-python -m pytest ./my-app/tests/ -v                # unit tests
+truffile validate ./apps/my-app --json             # yaml + source checks
+python -m pytest ./apps/my-app/tests/ -v           # unit tests
 ```
 
 Use FakeHttpTransport and AppHarness. See references/testing-guide.md.
@@ -137,9 +141,9 @@ Use FakeHttpTransport and AppHarness. See references/testing-guide.md.
 ### Step 9: Validate and iterate
 
 Run validation:
-- `truffile validate ./my-app` — check manifest, file references, and Python syntax
-- `truffile deploy --dry-run ./my-app` — inspect the deploy plan without changing the device
-- `python -m pytest ./my-app/tests/` — run tests
+- `truffile validate ./apps/my-app --json` — check manifest, file references, and Python syntax
+- `truffile deploy ./apps/my-app --dry-run --json --non-interactive` — inspect the deploy plan without changing the device
+- `python -m pytest ./apps/my-app/tests/` — run tests
 
 Fix any issues. Repeat until everything passes.
 
@@ -147,13 +151,16 @@ Fix any issues. Repeat until everything passes.
 
 If the user has a device connected:
 ```bash
-truffile deploy ./my-app
+truffile deploy ./apps/my-app --json --non-interactive
 ```
+
+Deploy only when the user requested it. If no device is connected, finish the
+local app, tests, validation, and dry-run; then give the exact connection
+blocker instead of abandoning the build.
 
 Then test with the agent:
 ```bash
-truffile chat
-you> [test the app's tools]
+truffile chat --quiet --json --app my-app "test the app's tools"
 ```
 
 ### Step 11: Create skills (optional)
@@ -174,8 +181,8 @@ Common issues during app creation:
 | Script | What it does |
 |--------|-------------|
 | `scripts/fetch_docs.py` | pull docs from docs.truffle.net |
-| `truffile validate <path>` | check truffile.yaml, referenced files, and Python syntax |
-| `truffile deploy --dry-run <path>` | inspect the deploy plan without changing the device |
+| `truffile validate <path> --json` | check truffile.yaml, referenced files, and Python syntax |
+| `truffile deploy <path> --dry-run --json --non-interactive` | inspect the deploy plan without changing the device |
 
 ## Reference docs
 

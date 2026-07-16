@@ -55,24 +55,33 @@ In one-shot mode:
   error diagnostics, and (with `--show-thinking`) the agent's thinking
   summaries. Pass `--quiet` to silence stderr entirely.
 - Exit code is `0` on success, `1` on error, `130` on Ctrl+C.
+- JSON is compact by default. Thinking summaries and tool names are omitted
+  unless requested, and response content is bounded by `--max-output-bytes`.
 
 `--json` payload shape:
 
 ```json
 {
+  "schema_version": "1",
+  "status": "ok",
   "task_id": "uuid-of-the-task",
   "title": "Generated task title",
   "device": "truffle-1234",
   "content": "the agent's final response text",
-  "thinking": ["summary 1", "summary 2"] | null,
-  "tool_calls": ["tool_a", "tool_b"] | null,
+  "content_bytes": 39,
+  "returned_bytes": 39,
+  "truncated": false,
+  "task_status": "ready",
+  "run_state": "TASK_RUN_STATE_READY",
   "pending_user_response": false,
-  "attached_apps": ["Slack", "Gmail"] | null
+  "attached_apps": ["Slack", "Gmail"]
 }
 ```
 
 `pending_user_response: true` means the agent is waiting for a follow-up
 message — call `truffile chat --task-id <id> "answer"` to continue.
+Add `--include-thinking`, `--include-tools`, or `--full` only when that detail
+is needed.
 
 ## Full flag reference
 
@@ -106,8 +115,12 @@ message — call `truffile chat --task-id <id> "answer"` to continue.
 |---|---|
 | `--json` | Emit a structured JSON object on stdout |
 | `--show-thinking` | Include the agent's thinking summaries on stderr |
+| `--include-thinking` | Include thinking summaries in JSON |
+| `--include-tools` | Include tool names in JSON |
+| `--full` | Include both thinking summaries and tool names in JSON |
+| `--max-output-bytes N` | Bound returned UTF-8 content bytes (default 65536) |
 | `--quiet`, `-q` | Suppress all stderr decoration |
-| `--timeout SECONDS` | Reserved: max seconds to wait for the task to settle |
+| `--timeout SECONDS` | Stop waiting and interrupt a known task after this limit |
 
 ## Cookbook
 
@@ -163,7 +176,8 @@ truffile chat --list-tasks 10 --quiet
 
 As JSON:
 ```bash
-truffile chat --list-tasks 5 --json --quiet | jq '.tasks[] | .title'
+truffile chat --list-tasks 5 --json --quiet \
+  | jq '.tasks[] | {task_id, title, status, pending_user_response}'
 ```
 
 ### Resume the most recent task and add a follow-up
@@ -180,6 +194,11 @@ truffile chat --quiet --task-id 0c83cc07-4ee5-410f-8c0a-be8152644f24 \
 ### Peek a task without sending a new message
 ```bash
 truffile chat --quiet --json --task-id <id> | jq .content
+```
+
+Use `--full` only for explicit debugging:
+```bash
+truffile chat --quiet --json --full --task-id <id>
 ```
 
 ### Show what the agent was thinking on stderr
@@ -246,11 +265,11 @@ truffile chat --quiet --app "$APP_NAME" "..."
   all work the same way they do on a LAN client. See the `truffile-cli`
   skill's "Running inside a Truffle app container" section for the full
   contract.
-- **No device connected (LAN) → first-run onboarding fires.** The CLI will
-  ask for a truffle number and user id, then run `truffile connect`
-  automatically. This still requires the user to **physically tap "approve"
-  on the Truffle device screen**. After that, all subsequent commands work
-  without re-prompting.
+- **No device connected in machine mode → structured failure.** Run
+  `truffile doctor --json`, then onboard in Symphony and connect with the
+  non-interactive command in the `truffile-cli` skill. Interactive mode can
+  still walk a human through the same flow. Pairing requires the user to
+  physically approve the session on the Truffle.
 - **App matching is fuzzy.** `slack` matches `Slack`. If two app names overlap,
   the first match wins — use the uuid for absolute precision.
 - **`--task-id` without a prompt does NOT send a message.** It just opens the
