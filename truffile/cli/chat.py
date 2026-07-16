@@ -874,15 +874,16 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
                         timeout=timeout,
                     )
             else:
-                # task is idle — open a fresh stream with the new prompt
-                new_stream = client.open_task_stream(prompt_text, app_uuids=attach_uuids or None)
-                state = TaskState()
-                timed_out = await _stream_task(
-                    client,
-                    new_stream,
-                    state,
-                    quiet=True,
-                    timeout=timeout,
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="task_not_waiting",
+                    message=(
+                        f"Task {target_task_id} is not waiting for user input; "
+                        "omit --task-id to start a new task"
+                    ),
+                    task_id=target_task_id,
+                    next_action="Run truffile chat <prompt> without --task-id",
                 )
         else:
             # new task

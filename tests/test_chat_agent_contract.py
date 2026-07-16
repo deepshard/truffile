@@ -63,6 +63,28 @@ class RejectedTaskClient(FakeTaskClient):
         return False
 
 
+class CompletedTaskClient(FakeTaskClient):
+    def __init__(self, *_args, **_kwargs) -> None:
+        super().__init__()
+        self.new_prompts: list[str] = []
+
+    def open_existing_task_stream(self, task_id: str):
+        async def updates():
+            update = TaskStreamUpdate()
+            update.task_id = task_id
+            update.info.task_title = "Completed task"
+            update.info.run_state = TaskInfo.TASK_RUN_STATE_READY
+            node = update.nodes.add()
+            node.step.results.content = "previous result"
+            yield update
+
+        return updates()
+
+    def open_task_stream(self, prompt: str, *, app_uuids=None):
+        self.new_prompts.append(prompt)
+        return super().open_task_stream(prompt, app_uuids=app_uuids)
+
+
 async def _resolved(_storage, *, quiet=False):
     return "truffle-1234", "192.0.2.10"
 
@@ -232,6 +254,25 @@ def test_chat_json_rejects_an_invalid_saved_session(capsys):
     payload = _json_stdout(capsys)
     assert payload["code"] == "authentication_failed"
     assert "truffile connect" in payload["next_action"]
+
+
+def test_completed_task_follow_up_does_not_silently_create_a_new_task(capsys):
+    client = CompletedTaskClient()
+    with (
+        patch("truffile.cli.chat._resolve_connected_device", _resolved),
+        patch("truffile.cli.chat.TruffleClient", return_value=client),
+    ):
+        result = asyncio.run(_run_oneshot_chat(
+            _chat_args(task_id="task-complete", prompt_words=["follow up"]),
+            FakeStorage(),
+        ))
+
+    assert result == 1
+    payload = _json_stdout(capsys)
+    assert payload["code"] == "task_not_waiting"
+    assert payload["task_id"] == "task-complete"
+    assert "without --task-id" in payload["next_action"]
+    assert client.new_prompts == []
 
 
 def test_chat_full_json_opts_into_thinking_and_tools(capsys):
