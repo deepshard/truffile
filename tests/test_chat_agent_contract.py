@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -248,3 +249,26 @@ def test_task_infos_include_status_and_pending_state():
     assert tasks[1]["status"] == "fatal_error"
     assert tasks[1]["pending_user_response"] is False
     assert tasks[1]["error"] is True
+
+
+def test_task_infos_are_newest_first_and_bounded():
+    response = GetTaskInfosResponse()
+    for task_id, hour in (("task-old", 8), ("task-new", 10), ("task-middle", 9)):
+        entry = response.entries.add()
+        entry.task_id = task_id
+        entry.info.task_title = task_id
+        entry.info.run_state = TaskInfo.TASK_RUN_STATE_READY
+        entry.info.last_updated.FromDatetime(
+            datetime(2026, 7, 15, hour, tzinfo=timezone.utc)
+        )
+
+    class Stub:
+        async def Task_GetTaskInfos(self, _request, metadata=None):
+            return response
+
+    client = TruffleClient("192.0.2.10:80", token="token")
+    client.stub = Stub()
+
+    tasks = asyncio.run(client.get_task_infos(max_before=2))
+
+    assert [task["task_id"] for task in tasks] == ["task-new", "task-middle"]

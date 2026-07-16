@@ -520,7 +520,11 @@ class TruffleClient:
                 "pending_user_response": pending_user_response,
                 "error": status == "fatal_error",
             })
-        return tasks
+        tasks.sort(
+            key=lambda task: task["updated"] or task["created"],
+            reverse=True,
+        )
+        return tasks[:max_before]
 
     async def rename_task(self, task_id: str, new_name: str) -> str:
         if not self.stub:
