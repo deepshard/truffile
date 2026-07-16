@@ -30,6 +30,10 @@ async def cmd_connect(args, storage: StorageService) -> int:
         error(message)
         return 1
 
+    approval_timeout = getattr(args, "approval_timeout", None)
+    if approval_timeout is not None and float(approval_timeout) <= 0:
+        return fail("invalid_args", "--approval-timeout must be greater than zero")
+
     # In-container short-circuit: the runtime already gave us a session
     # token + gRPC address, so there is nothing to pair.
     ic_info = probe_in_container_device()
@@ -176,11 +180,14 @@ async def cmd_connect(args, storage: StorageService) -> int:
         spinner.start()
 
     try:
-        approval_timeout = max(0.1, float(getattr(args, "approval_timeout", 120.0) or 120.0))
-        status, token = await asyncio.wait_for(
-            client.register_new_session(user_id),
-            timeout=approval_timeout,
-        )
+        registration = client.register_new_session(user_id)
+        if approval_timeout is None:
+            status, token = await registration
+        else:
+            status, token = await asyncio.wait_for(
+                registration,
+                timeout=float(approval_timeout),
+            )
     except asyncio.TimeoutError:
         if spinner:
             spinner.fail("Approval timed out")

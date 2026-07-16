@@ -36,6 +36,20 @@ class MemoryStorage:
         pass
 
 
+class WaitingClient:
+    def __init__(self, _address: str, _token: str | None = None, **_kwargs) -> None:
+        pass
+
+    async def connect(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    async def register_new_session(self, _user_id: str):
+        await asyncio.Event().wait()
+
+
 def _json_stdout(capsys) -> dict:
     captured = capsys.readouterr()
     assert captured.err == ""
@@ -60,6 +74,9 @@ def test_machine_flags_parse_without_prompts():
     assert connect.json is True
     assert connect.non_interactive is True
     assert connect.approval_timeout == 10
+
+    default_connect = parser.parse_args(["connect", "truffle-1234"])
+    assert default_connect.approval_timeout is None
 
 
 def test_invalid_machine_arguments_return_one_json_error(capsys):
@@ -129,6 +146,48 @@ def test_connect_json_reports_missing_symphony_user_id(capsys):
     payload = _json_stdout(capsys)
     assert payload["code"] == "user_id_required"
     assert "Symphony Settings" in payload["next_action"]
+
+
+def test_connect_json_rejects_non_positive_approval_timeout_before_discovery(capsys):
+    args = SimpleNamespace(
+        device="truffle-1234",
+        user_id="user-1234",
+        json=True,
+        non_interactive=True,
+        approval_timeout=0,
+    )
+
+    with patch("truffile.cli.connect.resolve_mdns") as resolve:
+        result = asyncio.run(cmd_connect(args, MemoryStorage()))
+
+    assert result == 1
+    resolve.assert_not_called()
+    payload = _json_stdout(capsys)
+    assert payload["code"] == "invalid_args"
+    assert payload["message"] == "--approval-timeout must be greater than zero"
+
+
+def test_connect_enforces_caller_selected_approval_timeout(capsys):
+    args = SimpleNamespace(
+        device="truffle-1234",
+        user_id="user-1234",
+        json=True,
+        non_interactive=True,
+        approval_timeout=0.01,
+    )
+
+    async def resolved(_hostname: str) -> str:
+        return "192.0.2.10"
+
+    with (
+        patch("truffile.cli.connect.resolve_mdns", resolved),
+        patch("truffile.cli.connect.TruffleClient", WaitingClient),
+    ):
+        result = asyncio.run(cmd_connect(args, MemoryStorage()))
+
+    assert result == 1
+    payload = _json_stdout(capsys)
+    assert payload["code"] == "approval_timeout"
 
 
 def test_scan_json_rejects_non_positive_timeout_without_starting_discovery(capsys):

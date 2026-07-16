@@ -133,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     conn_p.add_argument("--user-id", type=str, default=None, dest="user_id", help="user id from Symphony Settings (skips interactive prompt)")
     conn_p.add_argument("--json", action="store_true", help="emit structured json")
     conn_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="fail instead of prompting for a User ID")
-    conn_p.add_argument("--approval-timeout", type=float, default=120.0, dest="approval_timeout", help="max seconds to wait for device approval")
+    conn_p.add_argument("--approval-timeout", type=float, default=None, dest="approval_timeout", help="optional max seconds to wait for device approval")
 
     # disconnect
     disc_p = sub.add_parser("disconnect", help="disconnect from device(s)")
