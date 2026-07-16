@@ -80,6 +80,8 @@ In one-shot mode:
 
 `pending_user_response: true` means the agent is waiting for a follow-up
 message — call `truffile chat --task-id <id> "answer"` to continue.
+If the task is no longer waiting, the same command returns `task_not_waiting`;
+omit `--task-id` to start a new task.
 Add `--include-thinking`, `--include-tools`, or `--full` only when that detail
 is needed.
 
@@ -95,8 +97,8 @@ is needed.
 ### Task targeting
 | Flag | What it does |
 |---|---|
-| `--task-id ID` | Resume a specific task. With a prompt: send follow-up. Without: peek state |
-| `--resume-last` | Resume the most recent task on the device |
+| `--task-id ID` | Read a task, or answer it with a prompt only while it is waiting |
+| `--resume-last` | Target the most recent task; prompted follow-up still requires it to be waiting |
 | `--resume` | (REPL only) Open the interactive task picker |
 
 ### App attachment
@@ -181,6 +183,7 @@ truffile chat --list-tasks 5 --json --quiet \
 ```
 
 ### Resume the most recent task and add a follow-up
+Use this only when the task is waiting for a user response:
 ```bash
 truffile chat --quiet --resume-last "tell me more about the second item"
 ```
@@ -273,8 +276,9 @@ truffile chat --quiet --app "$APP_NAME" "..."
 - **App matching is fuzzy.** `slack` matches `Slack`. If two app names overlap,
   the first match wins — use the uuid for absolute precision.
 - **`--task-id` without a prompt does NOT send a message.** It just opens the
-  task and dumps current state. Combine with `--json` to inspect, or with a
-  prompt to send a follow-up.
+  task and dumps current state. A prompt answers the task only while
+  `pending_user_response` is true. Completed tasks return `task_not_waiting`;
+  omit `--task-id` to start a new task.
 - **`--resume-last` picks the most recently updated task,** which is usually
   the one the user was just looking at — but not always.
 - **`--quiet` suppresses error explanations on stderr too.** Drop it during

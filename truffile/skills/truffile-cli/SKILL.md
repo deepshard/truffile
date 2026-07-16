@@ -46,7 +46,7 @@ Useful checks:
 truffile doctor --json
 truffile scan --json --non-interactive
 truffile connect truffle-1234 --user-id "$TRUFFLE_USER_ID" \
-  --json --non-interactive --approval-timeout 120
+  --json --non-interactive
 truffile list devices --json
 truffile list apps --json
 ```
@@ -62,7 +62,7 @@ on the physical Truffle. Do not ask them to paste a session token.
 ```bash
 truffile scan --json --non-interactive
 truffile connect truffle-1234 --user-id "$TRUFFLE_USER_ID" \
-  --json --non-interactive --approval-timeout 120
+  --json --non-interactive
 truffile list devices --json
 truffile disconnect truffle-1234 --json
 truffile disconnect all --json

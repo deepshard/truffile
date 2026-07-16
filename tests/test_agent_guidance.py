@@ -8,12 +8,16 @@ CHAT_SKILL = (ROOT / "truffile/skills/truffile-chat/SKILL.md").read_text()
 APP_SKILL = (ROOT / "truffile/skills/truffle-app-creator/SKILL.md").read_text()
 
 
+def compact(text: str) -> str:
+    return " ".join(text.split())
+
+
 def test_setup_prompt_is_goal_first_and_names_human_boundaries():
-    single_line = README.replace("\n> ", " ").replace("\n", " ")
-    assert "then **<goal and done condition>**" in single_line
-    assert "Do not stop after setup" in single_line
-    assert "User ID from Symphony Settings" in single_line
-    assert "approval on the physical" in single_line
+    prompt = compact(README)
+    assert "then **<what you want to do with your Truffle>**" in prompt
+    assert "Continue through all work that does not need me" in prompt
+    assert "Symphony onboarding or my User ID" in prompt
+    assert "approval on the physical" in prompt
 
 
 def test_cli_skill_prefers_machine_contract_and_safe_deletion():
@@ -30,11 +34,13 @@ def test_chat_skill_documents_bounded_compact_output():
     assert "--include-thinking" in CHAT_SKILL
     assert "--include-tools" in CHAT_SKILL
     assert "interrupt a known task" in CHAT_SKILL
+    assert "task_not_waiting" in CHAT_SKILL
+    assert "pending_user_response" in CHAT_SKILL
     assert "Reserved:" not in CHAT_SKILL
 
 
 def test_app_creator_keeps_working_before_device_pairing():
-    assert "finish the\nlocal app, tests, validation, and dry-run" in APP_SKILL
+    assert "finish the local app, tests, validation, and dry-run" in compact(APP_SKILL)
     assert "truffile create my-app --path ./apps --json --non-interactive" in APP_SKILL
     assert "Ask the user which approach they prefer" not in APP_SKILL
     assert "Ask the user if they want to add skills" not in APP_SKILL

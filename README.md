@@ -5,17 +5,15 @@ Python SDK/CLI for Truffle devices.
 ## Agent setup
 
 Give this to Codex, Claude Code, or another coding agent from the workspace
-where you want to use Truffile. Replace the final placeholder with the result
-you actually want and how the agent can tell it is done:
+where you want to use Truffile. Replace the placeholder with what you want to
+do with your Truffle:
 
-> Set up the latest Truffile in this workspace, then **<goal and done condition>**. Follow the
-> [installation guide](https://docs.truffle.net/sdk/installation). Use Python
-> 3.12 or newer, prefer `uv` when available, and create a local `.venv`. Run
-> `truffile load all --json`, read the copied skills, then run
-> `truffile doctor --json` and use non-interactive JSON commands. Do not stop
-> after setup; continue to my goal. Ask me only when you need Symphony
-> onboarding, my User ID from Symphony Settings, approval on the physical
-> Truffle, credentials, or confirmation of a deployment or destructive action.
+> Set up the latest Truffile in this workspace, then **<what you want to do with your Truffle>**. Follow the
+> [installation guide](https://docs.truffle.net/sdk/installation). Run
+> `truffile load all --json` and `truffile doctor --json`, then follow the
+> copied skills. Continue through all work that does not need me. Ask only for
+> Symphony onboarding or my User ID, approval on the physical Truffle,
+> credentials, or confirmation before deployment or a destructive action.
 
 How the pieces fit:
 
