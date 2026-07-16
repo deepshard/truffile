@@ -129,6 +129,9 @@ async def _stream_task(
     interrupted = False
     timed_out = False
     orb_stopped = False
+    # The device emits READY once when the stream opens and again when the task
+    # settles, but it may leave the stream open after the final update.
+    ready_seen = state.run_state == "TASK_RUN_STATE_READY"
 
     if orb and not quiet:
         orb.start(ParticleOrb.STATE_ACTIVE)
@@ -136,7 +139,7 @@ async def _stream_task(
     abort_cm: Any = StreamAbortWatcher() if not quiet else _NullAbort()
     with abort_cm as abort:
         async def consume() -> None:
-            nonlocal interrupted, orb_stopped
+            nonlocal interrupted, orb_stopped, ready_seen
             async for update in stream:
                 if abort.aborted():
                     interrupted = True
@@ -153,6 +156,15 @@ async def _stream_task(
                 _print_update(update, state, quiet=quiet)
                 if state.pending_node_id is not None:
                     break
+                current_run_state = ""
+                if update.HasField("info") and update.info.run_state:
+                    current_run_state = update.info.TaskRunState.Name(update.info.run_state)
+                if current_run_state == "TASK_RUN_STATE_FATAL_ERROR":
+                    break
+                if current_run_state == "TASK_RUN_STATE_READY":
+                    if ready_seen:
+                        break
+                    ready_seen = True
 
         try:
             if timeout is not None:

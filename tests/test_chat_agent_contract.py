@@ -112,6 +112,38 @@ def test_replayed_user_response_is_cleared_by_later_user_message():
     assert state.pending_source_node_id is None
 
 
+def test_stream_task_stops_on_second_ready_update_without_waiting_for_stream_close():
+    async def updates():
+        initial = TaskStreamUpdate()
+        initial.task_id = "task-ready"
+        initial.info.run_state = TaskInfo.TASK_RUN_STATE_READY
+        yield initial
+
+        content = TaskStreamUpdate()
+        content.task_id = "task-ready"
+        content.streaming_step_result.partial_content = "done"
+        yield content
+
+        settled = TaskStreamUpdate()
+        settled.task_id = "task-ready"
+        settled.info.run_state = TaskInfo.TASK_RUN_STATE_READY
+        yield settled
+
+        await asyncio.Event().wait()
+
+    state = TaskState()
+    client = FakeTaskClient()
+
+    timed_out = asyncio.run(asyncio.wait_for(
+        _stream_task(client, updates(), state, quiet=True, timeout=None),
+        timeout=0.5,
+    ))
+
+    assert timed_out is False
+    assert state.task_id == "task-ready"
+    assert state.run_state == "TASK_RUN_STATE_READY"
+
+
 def test_completed_step_does_not_report_pending_user_response():
     update = TaskStreamUpdate()
     node = update.nodes.add()
