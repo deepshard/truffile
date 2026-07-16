@@ -16,6 +16,7 @@ def test_setup_prompt_is_goal_first_and_names_human_boundaries():
     prompt = compact(README)
     assert "then **<what you want to do with your Truffle>**" in prompt
     assert "Continue through all work that does not need me" in prompt
+    assert "follow only the copied skills relevant to the task" in prompt
     assert "Symphony onboarding or my User ID" in prompt
     assert "approval on the physical" in prompt
 

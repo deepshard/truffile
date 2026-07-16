@@ -10,9 +10,9 @@ do with your Truffle:
 
 > Set up the latest Truffile in this workspace, then **<what you want to do with your Truffle>**. Follow the
 > [installation guide](https://docs.truffle.net/sdk/installation). Run
-> `truffile load all --json` and `truffile doctor --json`, then follow the
-> copied skills. Continue through all work that does not need me. Ask only for
-> Symphony onboarding or my User ID, approval on the physical Truffle,
+> `truffile load all --json` and `truffile doctor --json`, then follow only the copied skills relevant to the task.
+> Continue through all work that does not need me. Ask only for Symphony onboarding or my User ID,
+> approval on the physical Truffle,
 > credentials, or confirmation before deployment or a destructive action.
 
 How the pieces fit:
