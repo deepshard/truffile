@@ -125,6 +125,7 @@ def test_plan_json_is_compact_for_agents():
         "name": "Smoke",
         "bundle_id": "org.truffle.smoke",
         "mode": "foreground",
+        "type": "foreground",
         "app_dir": "/tmp/smoke",
         "files": [{"source": "./app.py", "destination": "./app.py"}],
         "bash_steps": ["Install"],

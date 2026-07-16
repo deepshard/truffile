@@ -6,6 +6,7 @@ from truffile.storage import StorageService
 from truffile.client import TruffleClient
 
 from .connect import _resolve_connected_device
+from .app_types import canonical_app_type
 from .output import emit_error, emit_json, error_payload, ok_payload
 from .ui import C, DOT, CROSS, CHECK, Spinner, error, warn, success
 
@@ -25,11 +26,13 @@ def _app_slug(name: str) -> str:
 
 
 def _app_summary(app) -> dict[str, str]:
+    kind = _app_kind(app)
     return {
         "name": app.metadata.name,
         "bundle_id": getattr(app.metadata, "bundle_id", ""),
         "uuid": app.uuid,
-        "kind": _app_kind(app),
+        "type": canonical_app_type(kind),
+        "kind": kind,
     }
 
 
@@ -232,7 +235,7 @@ async def cmd_delete(args, storage: StorageService) -> int:
                     return 1
         elif non_interactive:
             apps_payload = [
-                {"name": name, "uuid": uuid, "kind": kind}
+                {"name": name, "uuid": uuid, "type": canonical_app_type(kind), "kind": kind}
                 for kind, uuid, name, _desc in all_apps
             ]
             if json_out:
@@ -254,7 +257,12 @@ async def cmd_delete(args, storage: StorageService) -> int:
             return 0
 
         targets = [
-            {"name": all_apps[idx][2], "uuid": all_apps[idx][1], "kind": all_apps[idx][0]}
+            {
+                "name": all_apps[idx][2],
+                "uuid": all_apps[idx][1],
+                "type": canonical_app_type(all_apps[idx][0]),
+                "kind": all_apps[idx][0],
+            }
             for idx in to_delete
         ]
 
@@ -307,7 +315,12 @@ async def cmd_delete(args, storage: StorageService) -> int:
                 if spinner:
                     spinner.stop(success=True)
                 deleted += 1
-                deleted_apps.append({"name": name, "uuid": uuid, "kind": kind})
+                deleted_apps.append({
+                    "name": name,
+                    "uuid": uuid,
+                    "type": canonical_app_type(kind),
+                    "kind": kind,
+                })
             except Exception as e:
                 if spinner:
                     spinner.fail(f"Failed to delete {name}: {e}")

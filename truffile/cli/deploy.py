@@ -12,6 +12,7 @@ from truffile.schema import validate_app_dir
 from truffile.deploy import build_deploy_plan, deploy_with_builder
 
 from .connect import _resolve_connected_device
+from .app_types import canonical_app_type
 from .output import emit_json, error_payload
 from .ui import C, ARROW, CROSS, DOT, Spinner, ScrollingLog, error, warn, info, success
 
@@ -56,6 +57,7 @@ def _plan_json(plan: dict, app_dir: Path) -> dict:
         "name": plan["name"],
         "bundle_id": plan["bundle_id"],
         "mode": plan["finish_label"],
+        "type": canonical_app_type(plan["finish_label"]),
         "app_dir": str(app_dir),
         "files": files,
         "bash_steps": [name for name, _cmd in plan["bash_commands"]],
@@ -319,6 +321,7 @@ async def cmd_deploy(args, storage: StorageService) -> int:
                     "name": plan["name"],
                     "bundle_id": plan["bundle_id"],
                     "mode": plan["finish_label"],
+                    "type": canonical_app_type(plan["finish_label"]),
                 },
                 "build_session": client.last_app_uuid,
                 "replaced": replaced_app,

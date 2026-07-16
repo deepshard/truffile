@@ -1,4 +1,4 @@
-from truffile.cli.apps import _resolve_delete_selection
+from truffile.cli.apps import _app_summary, _resolve_delete_selection
 
 
 APPS = [
@@ -6,6 +6,28 @@ APPS = [
     ("ambient", "uuid-beta", "Beta Search", ""),
     ("both", "uuid-gamma", "Gamma Search", ""),
 ]
+
+
+class _App:
+    def __init__(self, *, foreground: bool, background: bool) -> None:
+        self.metadata = type("Metadata", (), {"name": "App", "bundle_id": "org.truffle.app"})()
+        self.uuid = "uuid-app"
+        self.fields = {"foreground": foreground, "background": background}
+
+    def HasField(self, name: str) -> bool:
+        return self.fields[name]
+
+
+def test_app_summaries_add_canonical_type_without_removing_legacy_kind():
+    expected = {
+        (True, False): ("foreground", "focus"),
+        (False, True): ("background", "ambient"),
+        (True, True): ("hybrid", "both"),
+    }
+    for fields, (app_type, legacy_kind) in expected.items():
+        summary = _app_summary(_App(foreground=fields[0], background=fields[1]))
+        assert summary["type"] == app_type
+        assert summary["kind"] == legacy_kind
 
 
 def test_resolve_delete_selection_numbers_still_work():

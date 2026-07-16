@@ -191,6 +191,12 @@ def cmd_create(args) -> int:
 
     app_dir = base_dir / app_name
     if app_dir.exists():
+        if json_out:
+            return emit_error(
+                "target_exists",
+                f"Target directory already exists: {app_dir}",
+                next_action="Choose a different app name or base path.",
+            )
         return fail("target_exists", f"Target directory already exists: {app_dir}")
 
     slug = _safe_app_slug(app_name)

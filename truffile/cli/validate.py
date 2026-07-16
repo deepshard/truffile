@@ -2,6 +2,7 @@ from pathlib import Path
 
 from truffile.schema import validate_app_dir
 
+from .app_types import canonical_app_type
 from .output import emit_error, emit_json, ok_payload
 from .ui import C, error, warn, info, success
 
@@ -29,6 +30,7 @@ def cmd_validate(args) -> int:
             )
         emit_json(ok_payload(
             path=str(app_dir),
+            type=canonical_app_type(app_type),
             app_type=app_type,
             warnings=warnings,
         ))

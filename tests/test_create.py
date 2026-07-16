@@ -130,23 +130,29 @@ class TestCmdCreate(unittest.TestCase):
                         name="typed",
                         path=str(Path(tmp) / app_type),
                         app_type=app_type,
-                        json=False,
+                        json=True,
                         non_interactive=True,
                     )
-                    with patch(
-                        "truffile.cli.create._load_stock_icon_bytes",
-                        return_value=(b"fake_png", "memory"),
+                    with (
+                        patch(
+                            "truffile.cli.create._load_stock_icon_bytes",
+                            return_value=(b"fake_png", "memory"),
+                        ),
+                        patch("truffile.cli.create.emit_json") as create_json,
                     ):
                         from truffile.cli.create import cmd_create
 
                         self.assertEqual(cmd_create(args), 0)
+                    self.assertEqual(create_json.call_args.args[0]["app"]["type"], app_type)
 
                     app_dir = Path(tmp) / app_type / "typed"
                     self.assertEqual({path.name for path in app_dir.iterdir()}, files)
-                    self.assertEqual(
-                        cmd_validate(SimpleNamespace(path=str(app_dir), json=False)),
-                        0,
-                    )
+                    with patch("truffile.cli.validate.emit_json") as validate_json:
+                        self.assertEqual(
+                            cmd_validate(SimpleNamespace(path=str(app_dir), json=True)),
+                            0,
+                        )
+                    self.assertEqual(validate_json.call_args.args[0]["type"], app_type)
                     deploy_args = SimpleNamespace(
                         path=str(app_dir),
                         interactive=False,
@@ -160,3 +166,4 @@ class TestCmdCreate(unittest.TestCase):
                     payload = json_print.call_args.args[0]
                     self.assertTrue(payload["dry_run"])
                     self.assertEqual(payload["app"]["mode"], finish_label)
+                    self.assertEqual(payload["app"]["type"], app_type)

@@ -135,6 +135,8 @@ def test_delete_dry_run_does_not_mutate(capsys):
     payload = _json_stdout(capsys)
     assert payload["dry_run"] is True
     assert payload["apps"][0]["uuid"] == "uuid-alpha"
+    assert payload["apps"][0]["type"] == "foreground"
+    assert payload["apps"][0]["kind"] == "focus"
 
 
 def test_delete_json_requires_explicit_confirmation(capsys):
