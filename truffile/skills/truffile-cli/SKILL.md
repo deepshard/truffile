@@ -18,7 +18,7 @@ Use this for Truffle device and app lifecycle work.
    `truffile doctor --json` before guessing about state.
 3. Prefer `--json --non-interactive` for commands that support them. Treat
    stdout as machine output and report the command's `code`, `message`, and
-   `next_action` when it fails.
+   any `next_action` when it fails.
 4. Continue through local create and validation even when no device is paired.
 5. Pause only for a human boundary: Symphony onboarding, User ID, physical
    device approval, credentials, deployment approval, or destructive action
@@ -147,6 +147,7 @@ ToolSpec(
 
 - Use `--json` when available for scripting. Successful payloads contain
   `schema_version` and `status: "ok"`; failures contain `status: "error"` plus
-  stable `code`, `message`, `retryable`, and `next_action` fields.
+  stable `code`, `message`, and `retryable` fields. They include `next_action`
+  when a concrete recovery command or human action is known.
 - Keep stdout clean when feeding another command.
 - Relay important command results to the user; they do not see shell output.

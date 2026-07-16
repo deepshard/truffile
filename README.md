@@ -6,9 +6,9 @@ Python SDK/CLI for Truffle devices.
 
 Give this to Codex, Claude Code, or another coding agent from the workspace
 where you want to use Truffile. Replace the final placeholder with the result
-you actually want:
+you actually want and how the agent can tell it is done:
 
-> Set up the latest Truffile in this workspace, then **<goal>**. Follow the
+> Set up the latest Truffile in this workspace, then **<goal and done condition>**. Follow the
 > [installation guide](https://docs.truffle.net/sdk/installation). Use Python
 > 3.12 or newer, prefer `uv` when available, and create a local `.venv`. Run
 > `truffile load all --json`, read the copied skills, then run

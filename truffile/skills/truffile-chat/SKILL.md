@@ -283,5 +283,5 @@ truffile chat --quiet --app "$APP_NAME" "..."
   `--task-id` or `--resume-last` always starts a fresh task — old conversation
   context is not carried over.
 - **Tool calls are surfaced on stderr** in plain mode. In `--json` mode they
-  appear in the `tool_calls` array. With `--quiet`, you only see them via the
-  JSON payload.
+  are omitted by default; add `--include-tools` or `--full` when you need the
+  `tool_calls` array.

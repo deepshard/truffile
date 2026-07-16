@@ -10,7 +10,7 @@ APP_SKILL = (ROOT / "truffile/skills/truffle-app-creator/SKILL.md").read_text()
 
 def test_setup_prompt_is_goal_first_and_names_human_boundaries():
     single_line = README.replace("\n> ", " ").replace("\n", " ")
-    assert "then **<goal>**" in single_line
+    assert "then **<goal and done condition>**" in single_line
     assert "Do not stop after setup" in single_line
     assert "User ID from Symphony Settings" in single_line
     assert "approval on the physical" in single_line
@@ -36,3 +36,5 @@ def test_chat_skill_documents_bounded_compact_output():
 def test_app_creator_keeps_working_before_device_pairing():
     assert "finish the\nlocal app, tests, validation, and dry-run" in APP_SKILL
     assert "truffile create my-app --path ./apps --json --non-interactive" in APP_SKILL
+    assert "Ask the user which approach they prefer" not in APP_SKILL
+    assert "Ask the user if they want to add skills" not in APP_SKILL

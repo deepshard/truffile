@@ -23,7 +23,8 @@ Activate when the user wants to:
 
 ### Step 1: Understand what the user wants
 
-Interview the user:
+Start from the user's stated goal and infer safe defaults. Ask only for missing
+answers that would materially change behavior, auth, data access, or scope:
 - what service or API do they want to connect?
 - what should the agent be able to DO with it? (foreground tools)
 - what should happen automatically in the background? (background monitoring)
@@ -31,7 +32,7 @@ Interview the user:
 
 Explain the difference between foreground and background clearly:
 - foreground: tools the agent calls during a conversation (search, send, check)
-- background: scheduled jobs that submit context to the background agent running on their Truffle that decides whether submiited context is worth posting or taking an action on or not
+- background: scheduled jobs that submit context to the background agent running on their Truffle, which decides whether submitted context is worth posting or acting on
 - they run in separate containers and cannot talk to each other directly
 - use app variables to share state between them
 
@@ -42,12 +43,14 @@ Before building from scratch, search for:
 - open source libraries or SDKs for the API
 - existing Truffle apps that do something similar
 
-Use web search to find options. Present them to the user with pros/cons:
+Use web search to find options and compare:
 - if an MCP server exists: can we proxy it or wrap it?
 - if an SDK exists: can we build tools on top of it?
 - if nothing exists: we build from scratch using the API docs
 
-Ask the user which approach they prefer.
+Choose the smallest well-supported approach when the tradeoff is reversible.
+Ask the user only when the alternatives materially change product behavior,
+credentials, data exposure, or implementation scope.
 
 ### Step 3: Decide the app architecture
 
@@ -163,9 +166,11 @@ Then test with the agent:
 truffile chat --quiet --json --app my-app "test the app's tools"
 ```
 
-### Step 11: Create skills (optional)
+### Step 11: Create skills when useful
 
-Ask the user if they want to add skills — workflow guides that teach the agent how to use the app's tools effectively. Create SKILL.md files under skills/foreground/ and skills/background/.
+Add workflow skills under `skills/foreground/` or `skills/background/` when
+the app needs repeatable usage guidance. Otherwise mention them as an optional
+follow-up in the handoff instead of stopping implementation to ask.
 
 ## Error handling
 

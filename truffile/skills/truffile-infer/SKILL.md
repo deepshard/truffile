@@ -58,8 +58,9 @@ parseable response on stdout with no preamble.
 
 Before inference, use `truffile doctor --json` to distinguish connection,
 authentication, and IF2 service failures. In `--json` mode, failures keep a
-stable `code`, `message`, `retryable`, and `next_action`, including HTTP 503
-service-unavailable responses.
+stable `code`, `message`, and `retryable`; they include `next_action` when a
+concrete recovery step is known. HTTP 503 responses remain visible as
+service-unavailable errors.
 
 ## Full flag reference
 
