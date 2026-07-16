@@ -36,24 +36,36 @@ def _resource_check() -> dict[str, Any]:
     bundled_skills = resources.files("truffile").joinpath("skills")
     bundled_examples = resources.files("truffile").joinpath("app-store")
     workspace_root = Path.cwd() / "truffile"
+    bundled = {
+        "skills": bundled_skills.is_dir(),
+        "examples": bundled_examples.is_dir(),
+    }
+    workspace = {
+        "skills": {
+            "path": str(workspace_root / "skills"),
+            "present": (workspace_root / "skills").is_dir(),
+        },
+        "examples": {
+            "path": str(workspace_root / "examples"),
+            "present": (workspace_root / "examples").is_dir(),
+        },
+    }
+    missing = [name for name, present in bundled.items() if not present]
+    if missing:
+        return _failed(
+            f"Bundled resources are missing: {', '.join(missing)}",
+            code="bundled_resources_missing",
+            retryable=False,
+            next_action="Reinstall or upgrade Truffile",
+            missing=missing,
+            bundled=bundled,
+            workspace=workspace,
+        )
     return _ok(
-        f"CLI and bundled resources are version {__version__}",
+        "Bundled resources are present",
         cli_version=__version__,
-        resource_version=__version__,
-        bundled={
-            "skills": bundled_skills.is_dir(),
-            "examples": bundled_examples.is_dir(),
-        },
-        workspace={
-            "skills": {
-                "path": str(workspace_root / "skills"),
-                "present": (workspace_root / "skills").is_dir(),
-            },
-            "examples": {
-                "path": str(workspace_root / "examples"),
-                "present": (workspace_root / "examples").is_dir(),
-            },
-        },
+        bundled=bundled,
+        workspace=workspace,
     )
 
 
@@ -253,7 +265,7 @@ def _finish(checks: dict[str, dict[str, Any]], *, json_out: bool) -> int:
             emit_json(error_payload(
                 "health_checks_failed",
                 f"{len(failed)} health check(s) failed",
-                retryable=True,
+                retryable=any(bool(checks[name].get("retryable")) for name in failed),
                 healthy=False,
                 failed_checks=failed,
                 checks=checks,

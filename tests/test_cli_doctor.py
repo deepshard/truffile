@@ -8,7 +8,7 @@ import pytest
 
 from truffile import __version__
 from truffile.cli import _main
-from truffile.cli.doctor import cmd_doctor
+from truffile.cli.doctor import _resource_check, cmd_doctor
 from truffile.storage import StoredState
 
 
@@ -74,6 +74,38 @@ def _json_stdout(capsys) -> dict:
     return json.loads(captured.out)
 
 
+@pytest.mark.parametrize(
+    ("present", "missing"),
+    [
+        ([], ["skills", "examples"]),
+        (["skills"], ["examples"]),
+        (["app-store"], ["skills"]),
+    ],
+)
+def test_resource_check_fails_when_bundled_resources_are_missing(tmp_path, present, missing):
+    for name in present:
+        (tmp_path / name).mkdir()
+
+    with patch("truffile.cli.doctor.resources.files", return_value=tmp_path):
+        result = _resource_check()
+
+    assert result["status"] == "error"
+    assert result["code"] == "bundled_resources_missing"
+    assert result["missing"] == missing
+
+
+def test_resource_check_passes_when_bundled_resources_are_present(tmp_path):
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "app-store").mkdir()
+
+    with patch("truffile.cli.doctor.resources.files", return_value=tmp_path):
+        result = _resource_check()
+
+    assert result["status"] == "ok"
+    assert result["bundled"] == {"skills": True, "examples": True}
+    assert "resource_version" not in result
+
+
 def test_doctor_json_reports_each_service(capsys):
     args = SimpleNamespace(json=True, timeout=5.0, builder=False)
 
@@ -120,6 +152,7 @@ def test_doctor_without_device_returns_actionable_json(capsys):
     assert result == 1
     payload = _json_stdout(capsys)
     assert payload["code"] == "health_checks_failed"
+    assert payload["retryable"] is False
     assert payload["checks"]["saved_session"]["code"] == "device_required"
     assert "Symphony" in payload["checks"]["saved_session"]["next_action"]
 
