@@ -7,7 +7,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from truffile.cli import _main, build_parser
+from truffile.cli import _main, build_parser, main
 from truffile.cli.apps import cmd_list
 from truffile.cli.connect import cmd_connect, cmd_scan
 from truffile.cli.infer import _run_oneshot
@@ -92,6 +92,25 @@ def test_invalid_machine_arguments_return_one_json_error(capsys):
     payload = _json_stdout(capsys)
     assert payload["code"] == "invalid_args"
     assert payload["retryable"] is False
+
+
+def test_global_guard_keeps_unhandled_machine_errors_json(capsys):
+    with (
+        patch.object(sys, "argv", ["truffile", "disconnect", "all", "--json"]),
+        patch("truffile.cli._main", side_effect=OSError("storage unavailable")),
+    ):
+        result = main()
+
+    assert result == 1
+    payload = _json_stdout(capsys)
+    assert payload == {
+        "schema_version": "1",
+        "status": "error",
+        "code": "unexpected_error",
+        "message": "storage unavailable",
+        "retryable": False,
+        "next_action": "Retry with TRUFFILE_DEBUG=1 for a traceback.",
+    }
 
 
 def test_list_devices_json_is_parseable(capsys):

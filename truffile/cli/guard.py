@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 import sys
 
+from .output import emit_error
+
 _RED = "\033[91m"
 _RST = "\033[0m"
 _CLR = "\033[K"
@@ -53,6 +55,14 @@ class CLIGuard:
         if issubclass(exc_type, Exception):
             if self._debug:
                 return False
+            if "--json" in sys.argv[1:]:
+                emit_error(
+                    "unexpected_error",
+                    str(exc_val) or exc_type.__name__,
+                    next_action="Retry with TRUFFILE_DEBUG=1 for a traceback.",
+                )
+                self.code = 1
+                return True
             sys.stderr.write(f"{_RED}✗ Error:{_RST} {exc_val}\n")
             sys.stderr.flush()
             self.code = 1
