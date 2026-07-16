@@ -135,18 +135,38 @@ async def cmd_list_apps(args, storage: StorageService) -> int:
         await client.close()
 
 async def cmd_delete(args, storage: StorageService) -> int:
-    device, ip = await _resolve_connected_device(storage)
+    json_out = bool(getattr(args, "json", False))
+    dry_run = bool(getattr(args, "dry_run", False))
+    confirmed = bool(getattr(args, "yes", False))
+    non_interactive = bool(getattr(args, "non_interactive", False)) or json_out
+
+    device, ip = await _resolve_connected_device(storage, quiet=json_out)
     if not device or not ip:
+        if json_out:
+            return emit_error(
+                "device_unreachable",
+                "The connected Truffle device could not be resolved",
+                retryable=True,
+                next_action="Run truffile scan --json, then reconnect if needed",
+            )
         return 1
 
     token = storage.get_token(device)
     if not token:
+        if json_out:
+            return emit_error(
+                "missing_token",
+                f"No saved session token for {device}",
+                device=device,
+                next_action=f"Run truffile connect {device} --user-id <user-id> --json",
+            )
         error(f"No token for {device}")
         print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return 1
 
-    spinner = Spinner(f"Connecting to {device}")
-    spinner.start()
+    spinner = None if json_out else Spinner(f"Connecting to {device}")
+    if spinner:
+        spinner.start()
 
     address = f"{ip}:80"
     client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
@@ -154,7 +174,8 @@ async def cmd_delete(args, storage: StorageService) -> int:
     try:
         await client.connect()
         apps = await client.get_all_apps()
-        spinner.stop(success=True)
+        if spinner:
+            spinner.stop(success=True)
 
         all_apps = []
         for app in apps:
@@ -163,25 +184,31 @@ async def cmd_delete(args, storage: StorageService) -> int:
             all_apps.append((kind, app.uuid, app.metadata.name, desc))
 
         if not all_apps:
+            if json_out:
+                emit_json(ok_payload(device=device, dry_run=dry_run, apps=[], deleted=[]))
+                return 0
             print(f"  {C.DIM}No apps installed{C.RESET}")
             return 0
 
-        print()
-        print(f"{C.BOLD}Installed Apps:{C.RESET}")
-        print()
-        for i, (kind, uuid, name, desc) in enumerate(all_apps, 1):
-            print(f"  {C.CYAN}{i}.{C.RESET} {name} {C.DIM}({kind}){C.RESET}")
-            if desc:
-                print(f"     {C.DIM}{desc}{C.RESET}")
-        print()
+        if not json_out:
+            print()
+            print(f"{C.BOLD}Installed Apps:{C.RESET}")
+            print()
+            for i, (kind, uuid, name, desc) in enumerate(all_apps, 1):
+                print(f"  {C.CYAN}{i}.{C.RESET} {name} {C.DIM}({kind}){C.RESET}")
+                if desc:
+                    print(f"     {C.DIM}{desc}{C.RESET}")
+            print()
 
         # Resolve selection from CLI args, piped stdin, or interactive prompt.
         selection_args = getattr(args, "selection", []) or []
 
         if selection_args:
             raw = " ".join(selection_args)
-        elif not sys.stdin.isatty():
+        elif not sys.stdin.isatty() and not json_out:
             raw = sys.stdin.read().strip()
+        elif non_interactive:
+            raw = None
         else:
             raw = None
 
@@ -195,33 +222,119 @@ async def cmd_delete(args, storage: StorageService) -> int:
                     warn("Invalid selection, switching to interactive prompt")
                     to_delete = _prompt_delete_interactive(len(all_apps))
                 else:
+                    if json_out:
+                        return emit_error(
+                            "invalid_selection",
+                            selection_error or "Invalid app selection",
+                            device=device,
+                        )
                     error(selection_error or "Invalid selection")
                     return 1
+        elif non_interactive:
+            apps_payload = [
+                {"name": name, "uuid": uuid, "kind": kind}
+                for kind, uuid, name, _desc in all_apps
+            ]
+            if json_out:
+                return emit_error(
+                    "selection_required",
+                    "Choose one or more installed apps to delete",
+                    device=device,
+                    apps=apps_payload,
+                    next_action="Run truffile delete <name-or-uuid> --dry-run --json",
+                )
+            error("An app selection is required in non-interactive mode")
+            return 1
         else:
             to_delete = _prompt_delete_interactive(len(all_apps))
 
         if not to_delete:
+            if json_out:
+                emit_json(ok_payload(device=device, dry_run=dry_run, apps=[], deleted=[]))
+            return 0
+
+        targets = [
+            {"name": all_apps[idx][2], "uuid": all_apps[idx][1], "kind": all_apps[idx][0]}
+            for idx in to_delete
+        ]
+
+        if dry_run:
+            if json_out:
+                emit_json(ok_payload(device=device, dry_run=True, apps=targets))
+            else:
+                print(f"{C.BOLD}Dry Run: Apps To Delete{C.RESET}")
+                for target in targets:
+                    print(f"  {C.CYAN}{DOT}{C.RESET} {target['name']} {C.DIM}({target['kind']}){C.RESET}")
+                print()
+                success("Dry run complete (no device changes made)")
+            return 0
+
+        if not confirmed:
+            if non_interactive or not sys.stdin.isatty():
+                if json_out:
+                    return emit_error(
+                        "confirmation_required",
+                        "Deletion requires explicit confirmation",
+                        device=device,
+                        apps=targets,
+                        next_action="Review the plan, then rerun the command with --yes --json",
+                    )
+                error("Deletion requires --yes in non-interactive mode")
+                return 1
+            names = ", ".join(target["name"] for target in targets)
+            try:
+                answer = input(f"Delete {names}? [y/N]: ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                return 130
+            if answer not in {"y", "yes"}:
+                info = "Deletion cancelled"
+                print(f"  {C.DIM}{info}{C.RESET}")
+                return 0
+
+        if not json_out:
+            print()
+        deleted = 0
+        deleted_apps: list[dict[str, str]] = []
+        failures: list[dict[str, str]] = []
+        for idx in to_delete:
+            kind, uuid, name, _ = all_apps[idx]
+            spinner = None if json_out else Spinner(f"Deleting {name}")
+            if spinner:
+                spinner.start()
+            try:
+                await client.delete_app(uuid)
+                if spinner:
+                    spinner.stop(success=True)
+                deleted += 1
+                deleted_apps.append({"name": name, "uuid": uuid, "kind": kind})
+            except Exception as e:
+                if spinner:
+                    spinner.fail(f"Failed to delete {name}: {e}")
+                failures.append({"name": name, "uuid": uuid, "message": str(e)})
+
+        if json_out:
+            if failures:
+                emit_json(error_payload(
+                    "delete_failed",
+                    "One or more apps could not be deleted",
+                    device=device,
+                    deleted=deleted_apps,
+                    failures=failures,
+                ))
+                return 1
+            emit_json(ok_payload(device=device, deleted=deleted_apps))
             return 0
 
         print()
-        deleted = 0
-        for idx in to_delete:
-            kind, uuid, name, _ = all_apps[idx]
-            spinner = Spinner(f"Deleting {name}")
-            spinner.start()
-            try:
-                await client.delete_app(uuid)
-                spinner.stop(success=True)
-                deleted += 1
-            except Exception as e:
-                spinner.fail(f"Failed to delete {name}: {e}")
-
-        print()
         success(f"Deleted {deleted} app(s)")
-        return 0
+        return 1 if failures else 0
 
     except Exception as e:
-        spinner.fail(str(e))
+        if spinner:
+            spinner.fail(str(e))
+        if json_out:
+            return emit_error("delete_failed", str(e), retryable=True, device=device)
         return 1
     finally:
         await client.close()

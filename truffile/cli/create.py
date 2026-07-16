@@ -3,6 +3,7 @@ import re
 from importlib import resources as importlib_resources
 from pathlib import Path
 
+from .output import emit_error, emit_json, ok_payload
 from .ui import C, ARROW, SCAFFOLD_ICON_RESOURCE_REL, error, success
 
 
@@ -121,23 +122,34 @@ def _load_stock_icon_bytes() -> tuple[bytes | None, str]:
 
 
 def cmd_create(args) -> int:
+    json_out = bool(getattr(args, "json", False))
+    non_interactive = bool(getattr(args, "non_interactive", False)) or json_out
+
+    def fail(code: str, message: str) -> int:
+        if json_out:
+            return emit_error(code, message)
+        error(message)
+        return 1
+
     app_name = (args.name or "").strip()
     if not app_name:
+        if non_interactive:
+            return fail("input_required", "App name is required")
         try:
             app_name = input(f"{C.CYAN}?{C.RESET} App name: ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
             return 0
     if not app_name:
-        error("App name is required")
-        return 1
+        return fail("input_required", "App name is required")
     if "/" in app_name or "\\" in app_name:
-        error("App name cannot contain path separators")
-        return 1
+        return fail("invalid_name", "App name cannot contain path separators")
 
     base_dir: Path
     if args.path:
         base_dir = Path(args.path).expanduser().resolve()
+    elif non_interactive:
+        base_dir = Path.cwd()
     else:
         cwd = Path.cwd()
         try:
@@ -149,19 +161,16 @@ def cmd_create(args) -> int:
 
     app_dir = base_dir / app_name
     if app_dir.exists():
-        error(f"Target directory already exists: {app_dir}")
-        return 1
+        return fail("target_exists", f"Target directory already exists: {app_dir}")
 
     slug = _safe_app_slug(app_name)
     fg_file = f"{slug}_foreground.py"
     bg_file = f"{slug}_background.py"
     stock_icon_bytes, stock_icon_source = _load_stock_icon_bytes()
     if stock_icon_bytes is None:
-        error(f"Stock icon not found: {stock_icon_source}")
-        return 1
+        return fail("stock_icon_missing", f"Stock icon not found: {stock_icon_source}")
     if len(stock_icon_bytes) == 0:
-        error(f"Stock icon is empty: {stock_icon_source}")
-        return 1
+        return fail("stock_icon_empty", f"Stock icon is empty: {stock_icon_source}")
 
     try:
         app_dir.mkdir(parents=True, exist_ok=False)
@@ -170,8 +179,16 @@ def cmd_create(args) -> int:
         (app_dir / bg_file).write_text(_sample_background_py(), encoding="utf-8")
         (app_dir / "icon.png").write_bytes(stock_icon_bytes)
     except Exception as exc:
-        error(f"Failed to scaffold app: {exc}")
-        return 1
+        return fail("create_failed", f"Failed to scaffold app: {exc}")
+
+    files = ["truffile.yaml", fg_file, bg_file, "icon.png"]
+    if json_out:
+        emit_json(ok_payload(
+            app={"name": app_name, "slug": slug, "path": str(app_dir)},
+            files=files,
+            next_action=f"truffile validate {app_dir} --json",
+        ))
+        return 0
 
     # OSC 8 clickable path (supported in iTerm2, VSCode, WezTerm, etc.)
     file_url = app_dir.as_uri()

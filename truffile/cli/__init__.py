@@ -144,10 +144,13 @@ def build_parser() -> argparse.ArgumentParser:
     create_p = sub.add_parser("create", help="scaffold a new app")
     create_p.add_argument("name", nargs="?")
     create_p.add_argument("--path", type=str, default=None, help="base directory for the app")
+    create_p.add_argument("--json", action="store_true", help="emit structured json")
+    create_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="fail instead of prompting for missing input")
 
     # validate
     val_p = sub.add_parser("validate", help="validate app directory")
     val_p.add_argument("path", nargs="?", default=".")
+    val_p.add_argument("--json", action="store_true", help="emit structured json")
 
     # load bundled agent resources into a workspace
     load_p = sub.add_parser("load", help="copy bundled skills and example apps into the current workspace")
@@ -182,6 +185,10 @@ def build_parser() -> argparse.ArgumentParser:
     # delete
     del_p = sub.add_parser("delete", help="delete app from device")
     del_p.add_argument("selection", nargs="*", help="'all', app numbers, names, slugs, or uuids")
+    del_p.add_argument("--dry-run", action="store_true", dest="dry_run", help="show what would be deleted without changing the device")
+    del_p.add_argument("--yes", action="store_true", help="confirm deletion without prompting")
+    del_p.add_argument("--json", action="store_true", help="emit structured json")
+    del_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="fail instead of prompting")
 
     # models
     models_p = sub.add_parser("models", help="list inference models")
