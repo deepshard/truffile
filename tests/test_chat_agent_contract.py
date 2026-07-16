@@ -57,6 +57,11 @@ class FakeTaskClient:
         pass
 
 
+class RejectedTaskClient(FakeTaskClient):
+    async def check_auth(self) -> bool:
+        return False
+
+
 async def _resolved(_storage, *, quiet=False):
     return "truffle-1234", "192.0.2.10"
 
@@ -180,6 +185,20 @@ def test_chat_json_is_compact_and_bounded_by_default(capsys):
     assert payload["task_status"] == "ready"
     assert "thinking" not in payload
     assert "tool_calls" not in payload
+
+
+def test_chat_json_rejects_an_invalid_saved_session(capsys):
+    client = RejectedTaskClient()
+    with (
+        patch("truffile.cli.chat._resolve_connected_device", _resolved),
+        patch("truffile.cli.chat.TruffleClient", return_value=client),
+    ):
+        result = asyncio.run(_run_oneshot_chat(_chat_args(), FakeStorage()))
+
+    assert result == 1
+    payload = _json_stdout(capsys)
+    assert payload["code"] == "authentication_failed"
+    assert "truffile connect" in payload["next_action"]
 
 
 def test_chat_full_json_opts_into_thinking_and_tools(capsys):

@@ -646,7 +646,7 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
     try:
         try:
             await client.connect()
-            await client.check_auth()
+            authenticated = await client.check_auth()
         except Exception as exc:
             return _chat_error(
                 json_out=json_out,
@@ -655,6 +655,15 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
                 message=f"Could not connect to {device}: {exc}",
                 retryable=True,
                 device=device,
+            )
+        if not authenticated:
+            return _chat_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="authentication_failed",
+                message=f"The saved session for {device} was rejected",
+                device=device,
+                next_action=f"Run truffile connect {device} --user-id <user-id> --json",
             )
 
         # --list-apps short circuit
