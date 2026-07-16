@@ -13,6 +13,7 @@ from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns
 from .ui import C, MUSHROOM, DOT, CHECK, CROSS, Spinner, ScrollingLog, StreamAbortWatcher, error, success, info, warn, create_thinking_orb
 from .connect import _resolve_connected_device
+from .output import emit_error, emit_json, ok_payload, truncate_text
 from .picker import pick_from_list
 from .commands import CHAT_COMMANDS, SlashCommand
 from .prompt import TrufflePrompt
@@ -26,7 +27,9 @@ class TaskState:
     task_id: str = ""
     title: str = ""
     run_state: str = ""
+    error_message: str = ""
     pending_node_id: int | None = None
+    pending_source_node_id: int | None = None
     result_text: str = ""
     tool_calls: list[str] = field(default_factory=list)
     thinking_summaries: list[str] = field(default_factory=list)
@@ -50,13 +53,20 @@ def _print_update(update: Any, state: TaskState, *, quiet: bool = False) -> None
 
     if update.HasField("error"):
         msg = update.error.message if hasattr(update.error, "message") else str(update.error)
-        if quiet:
-            sys.stderr.write(f"error: {msg}\n")
-        else:
+        state.error_message = msg
+        if not quiet:
             print(f"\n{C.RED}error: {msg}{C.RESET}")
 
     # render thinking/tools BEFORE streaming content so they appear above the response
-    for node in update.nodes:
+    for node in sorted(update.nodes, key=lambda item: getattr(item, "id", 0)):
+        node_id = int(getattr(node, "id", 0) or 0)
+        if (
+            node.HasField("user_msg")
+            and state.pending_source_node_id is not None
+            and node_id > state.pending_source_node_id
+        ):
+            state.pending_node_id = None
+            state.pending_source_node_id = None
         if not node.HasField("step"):
             continue
 
@@ -70,12 +80,7 @@ def _print_update(update: Any, state: TaskState, *, quiet: bool = False) -> None
             name = tc.tool_name if hasattr(tc, "tool_name") else ""
             tc_summary = tc.summary if hasattr(tc, "summary") else ""
             if name:
-                if quiet:
-                    if tc_summary:
-                        sys.stderr.write(f"{DOT} tool: {name} — {tc_summary}\n")
-                    else:
-                        sys.stderr.write(f"{DOT} tool: {name}\n")
-                else:
+                if not quiet:
                     print(f"{C.CYAN}{DOT} tool: {name}{C.RESET}", end="")
                     if tc_summary:
                         print(f" {C.DIM}— {tc_summary}{C.RESET}")
@@ -90,10 +95,15 @@ def _print_update(update: Any, state: TaskState, *, quiet: bool = False) -> None
             if text:
                 state.result_text = text
 
-        if step.HasField("user_response"):
+        if (
+            step.HasField("user_response")
+            and step.user_response.node_id
+            and step.StepState.Name(step.state) != "STEP_RESULT"
+        ):
             node_id = step.user_response.node_id if hasattr(step.user_response, "node_id") else 0
             if node_id:
                 state.pending_node_id = node_id
+                state.pending_source_node_id = int(getattr(node, "id", 0) or 0)
 
     # stream content after thinking/tools are rendered
     if update.HasField("streaming_step_result"):
@@ -112,10 +122,12 @@ async def _stream_task(
     orb: ParticleOrb | None = None,
     *,
     quiet: bool = False,
-) -> None:
+    timeout: float | None = None,
+) -> bool:
     global _streaming_text
     _streaming_text = []
     interrupted = False
+    timed_out = False
     orb_stopped = False
 
     if orb and not quiet:
@@ -123,7 +135,8 @@ async def _stream_task(
 
     abort_cm: Any = StreamAbortWatcher() if not quiet else _NullAbort()
     with abort_cm as abort:
-        try:
+        async def consume() -> None:
+            nonlocal interrupted, orb_stopped
             async for update in stream:
                 if abort.aborted():
                     interrupted = True
@@ -140,10 +153,20 @@ async def _stream_task(
                 _print_update(update, state, quiet=quiet)
                 if state.pending_node_id is not None:
                     break
+
+        try:
+            if timeout is not None:
+                await asyncio.wait_for(consume(), timeout=max(0.1, timeout))
+            else:
+                await consume()
+        except asyncio.TimeoutError:
+            interrupted = True
+            timed_out = True
         except (asyncio.CancelledError, KeyboardInterrupt):
             interrupted = True
-        except Exception:
+        except Exception as exc:
             interrupted = True
+            state.error_message = str(exc)
 
     if orb and not orb_stopped and not quiet:
         orb.stop()
@@ -155,6 +178,7 @@ async def _stream_task(
             await client.interrupt_task(state.task_id)
         except Exception:
             pass
+    return timed_out
 
 
 class _NullAbort:
@@ -481,6 +505,50 @@ def _eprint_factory_chat(quiet: bool):
     return _eprint
 
 
+def _chat_error(
+    *,
+    json_out: bool,
+    eprint,
+    code: str,
+    message: str,
+    retryable: bool = False,
+    **fields,
+) -> int:
+    if json_out:
+        return emit_error(code, message, retryable=retryable, **fields)
+    eprint(message)
+    return 1
+
+
+async def _read_existing_task(
+    client: TruffleClient,
+    stream: Any,
+    state: TaskState,
+    *,
+    timeout: float | None,
+    stop_on_pending: bool,
+) -> bool:
+    async def consume() -> None:
+        async for update in stream:
+            _print_update(update, state, quiet=True)
+            if (stop_on_pending and state.pending_node_id is not None) or state.run_state:
+                break
+
+    try:
+        if timeout is not None:
+            await asyncio.wait_for(consume(), timeout=max(0.1, timeout))
+        else:
+            await consume()
+        return False
+    except asyncio.TimeoutError:
+        if state.task_id:
+            try:
+                await client.interrupt_task(state.task_id)
+            except Exception:
+                pass
+        return True
+
+
 def _read_chat_prompt(args) -> str:
     parts: list[str] = []
     prompt_words = getattr(args, "prompt_words", None) or []
@@ -550,15 +618,29 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
     quiet = bool(getattr(args, "quiet", False))
     eprint = _eprint_factory_chat(quiet)
     json_out = bool(getattr(args, "json", False))
+    timeout = getattr(args, "timeout", None)
 
-    device, ip = await _resolve_connected_device(storage)
+    device, ip = await _resolve_connected_device(storage, quiet=json_out)
     if not device or not ip:
-        return 1
+        return _chat_error(
+            json_out=json_out,
+            eprint=eprint,
+            code="device_unreachable",
+            message="The connected Truffle device could not be resolved",
+            retryable=True,
+            next_action="Run truffile scan --json, then reconnect if needed",
+        )
 
     token = storage.get_token(device)
     if not token:
-        eprint(f"no token for {device}")
-        return 1
+        return _chat_error(
+            json_out=json_out,
+            eprint=eprint,
+            code="missing_token",
+            message=f"No saved session token for {device}",
+            device=device,
+            next_action=f"Run truffile connect {device} --user-id <user-id> --json",
+        )
 
     client = TruffleClient(f"{ip}:80", token=token, app_id=storage.app_id_for_device(device))
     try:
@@ -566,18 +648,30 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
             await client.connect()
             await client.check_auth()
         except Exception as exc:
-            eprint(f"could not connect to {device}: {exc}")
-            return 1
+            return _chat_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="connection_failed",
+                message=f"Could not connect to {device}: {exc}",
+                retryable=True,
+                device=device,
+            )
 
         # --list-apps short circuit
         if getattr(args, "list_apps", False):
             try:
                 apps_list = await _get_apps_list(client)
             except Exception as exc:
-                eprint(f"failed to list apps: {exc}")
-                return 1
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="list_apps_failed",
+                    message=f"Failed to list apps: {exc}",
+                    retryable=True,
+                    device=device,
+                )
             if json_out:
-                print(json.dumps({"apps": apps_list}, indent=2))
+                emit_json(ok_payload(device=device, apps=apps_list))
             else:
                 for a in apps_list:
                     slug = a.get("name", "").lower().replace(" ", "-")
@@ -590,10 +684,16 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
             try:
                 tasks = await client.get_task_infos(max_before=n)
             except Exception as exc:
-                eprint(f"failed to list tasks: {exc}")
-                return 1
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="list_tasks_failed",
+                    message=f"Failed to list tasks: {exc}",
+                    retryable=True,
+                    device=device,
+                )
             if json_out:
-                print(json.dumps({"tasks": tasks}, indent=2))
+                emit_json(ok_payload(device=device, tasks=tasks))
             else:
                 for t in tasks:
                     tid = t.get("task_id", "")
@@ -610,12 +710,23 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
             try:
                 apps_list = await _get_apps_list(client)
             except Exception as exc:
-                eprint(f"failed to list apps: {exc}")
-                return 1
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="list_apps_failed",
+                    message=f"Failed to list apps: {exc}",
+                    retryable=True,
+                    device=device,
+                )
             matched, unmatched = _resolve_app_refs(app_refs, apps_list)
             if unmatched:
-                eprint(f"unknown app(s): {', '.join(unmatched)}")
-                return 1
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="app_not_found",
+                    message=f"Unknown app(s): {', '.join(unmatched)}",
+                    apps=unmatched,
+                )
             attach_uuids = [a["uuid"] for a in matched]
             attach_names = [a.get("name", "") for a in matched]
             for name in attach_names:
@@ -627,11 +738,21 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
             try:
                 tasks = await client.get_task_infos(max_before=1)
             except Exception as exc:
-                eprint(f"failed to fetch tasks: {exc}")
-                return 1
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="list_tasks_failed",
+                    message=f"Failed to fetch tasks: {exc}",
+                    retryable=True,
+                    device=device,
+                )
             if not tasks:
-                eprint("no previous tasks to resume")
-                return 1
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="task_not_found",
+                    message="No previous tasks to resume",
+                )
             target_task_id = tasks[0].get("task_id")
             eprint(f"resuming task {target_task_id}")
 
@@ -639,8 +760,12 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
         try:
             prompt_text = _read_chat_prompt(args)
         except FileNotFoundError as exc:
-            eprint(str(exc))
-            return 1
+            return _chat_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="file_not_found",
+                message=str(exc),
+            )
 
         state = TaskState()
 
@@ -649,70 +774,169 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
             state.task_id = target_task_id
             stream = client.open_existing_task_stream(target_task_id)
             try:
-                async for update in stream:
-                    _print_update(update, state, quiet=True)
-                    if state.run_state:
-                        break
-            except Exception:
-                pass
+                timed_out = await _read_existing_task(
+                    client,
+                    stream,
+                    state,
+                    timeout=timeout,
+                    stop_on_pending=False,
+                )
+            except Exception as exc:
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="task_read_failed",
+                    message=f"Failed to read task {target_task_id}: {exc}",
+                    retryable=True,
+                    task_id=target_task_id,
+                )
+            if timed_out:
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="timeout",
+                    message=f"Timed out waiting for task {target_task_id}",
+                    retryable=True,
+                    task_id=target_task_id,
+                )
         elif target_task_id and prompt_text:
             # resume + send follow-up
             state.task_id = target_task_id
             stream = client.open_existing_task_stream(target_task_id)
             try:
-                async for update in stream:
-                    _print_update(update, state, quiet=True)
-                    if state.pending_node_id is not None or state.run_state:
-                        break
-            except Exception:
-                pass
+                timed_out = await _read_existing_task(
+                    client,
+                    stream,
+                    state,
+                    timeout=timeout,
+                    stop_on_pending=True,
+                )
+            except Exception as exc:
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="task_read_failed",
+                    message=f"Failed to read task {target_task_id}: {exc}",
+                    retryable=True,
+                    task_id=target_task_id,
+                )
+            if timed_out:
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="timeout",
+                    message=f"Timed out waiting for task {target_task_id}",
+                    retryable=True,
+                    task_id=target_task_id,
+                )
             if attach_uuids:
                 try:
                     await client.set_task_apps(target_task_id, attach_uuids)
                 except Exception as exc:
-                    eprint(f"failed to attach apps: {exc}")
-                    return 1
+                    return _chat_error(
+                        json_out=json_out,
+                        eprint=eprint,
+                        code="app_attach_failed",
+                        message=f"Failed to attach apps: {exc}",
+                        task_id=target_task_id,
+                    )
             if state.pending_node_id is not None:
                 await client.respond_to_task(target_task_id, state.pending_node_id, prompt_text)
                 state.pending_node_id = None
+                state.pending_source_node_id = None
                 if stream is not None:
-                    await _stream_task(client, stream, state, quiet=True)
+                    timed_out = await _stream_task(
+                        client,
+                        stream,
+                        state,
+                        quiet=True,
+                        timeout=timeout,
+                    )
             else:
                 # task is idle — open a fresh stream with the new prompt
                 new_stream = client.open_task_stream(prompt_text, app_uuids=attach_uuids or None)
                 state = TaskState()
-                await _stream_task(client, new_stream, state, quiet=True)
+                timed_out = await _stream_task(
+                    client,
+                    new_stream,
+                    state,
+                    quiet=True,
+                    timeout=timeout,
+                )
         else:
             # new task
             if not prompt_text:
-                eprint("no prompt provided (positional, --prompt-file, --stdin, --task-id, or --resume-last required)")
-                return 1
+                return _chat_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="input_required",
+                    message="No prompt provided (positional, --prompt-file, --stdin, --task-id, or --resume-last required)",
+                )
             stream = client.open_task_stream(prompt_text, app_uuids=attach_uuids or None)
-            await _stream_task(client, stream, state, quiet=True)
+            timed_out = await _stream_task(
+                client,
+                stream,
+                state,
+                quiet=True,
+                timeout=timeout,
+            )
+
+        if timed_out:
+            return _chat_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="timeout",
+                message="Timed out waiting for the task to settle",
+                retryable=True,
+                task_id=state.task_id or None,
+            )
+        if state.error_message:
+            return _chat_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="task_failed",
+                message=state.error_message,
+                task_id=state.task_id or None,
+            )
 
         # build final response from accumulated state
         streamed_text = "".join(_streaming_text).strip()
         final_text = streamed_text or state.result_text or ""
+        max_output_bytes = max(1, int(getattr(args, "max_output_bytes", 65536) or 65536))
+        bounded_text, truncated, original_bytes = truncate_text(final_text, max_output_bytes)
 
         if json_out:
-            payload = {
-                "task_id": state.task_id,
-                "title": state.title,
-                "device": device,
-                "content": final_text,
-                "thinking": state.thinking_summaries or None,
-                "tool_calls": state.tool_calls or None,
-                "pending_user_response": state.pending_node_id is not None,
-                "attached_apps": attach_names or None,
-            }
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            payload = ok_payload(
+                task_id=state.task_id,
+                title=state.title,
+                device=device,
+                content=bounded_text,
+                content_bytes=original_bytes,
+                returned_bytes=len(bounded_text.encode("utf-8")),
+                truncated=truncated,
+                run_state=state.run_state or None,
+                task_status=(
+                    state.run_state.removeprefix("TASK_RUN_STATE_").lower()
+                    if state.run_state
+                    else None
+                ),
+                pending_user_response=state.pending_node_id is not None,
+                attached_apps=attach_names or None,
+            )
+            if bool(getattr(args, "full", False)) or bool(getattr(args, "include_thinking", False)):
+                payload["thinking"] = state.thinking_summaries or None
+            if bool(getattr(args, "full", False)) or bool(getattr(args, "include_tools", False)):
+                payload["tool_calls"] = state.tool_calls or None
+            emit_json(payload)
         else:
             if getattr(args, "show_thinking", False) and state.thinking_summaries:
                 sys.stderr.write("--- thinking ---\n")
                 sys.stderr.write(" ".join(state.thinking_summaries) + "\n")
                 sys.stderr.write("--- end thinking ---\n")
-            if final_text:
-                print(final_text)
+            if bounded_text:
+                print(bounded_text)
+            if truncated:
+                eprint(f"response truncated at {max_output_bytes} bytes (original {original_bytes} bytes)")
         return 0
     finally:
         try:
@@ -845,6 +1069,7 @@ async def cmd_chat(args, storage: StorageService) -> int:
                         error(f"failed to add {attach_app['name']}: {e}")
                 await client.respond_to_task(state.task_id, state.pending_node_id, stripped)
                 state.pending_node_id = None
+                state.pending_source_node_id = None
                 if stream:
                     await _stream_task(client, stream, state, orb=orb)
             elif not state.task_id:

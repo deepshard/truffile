@@ -495,11 +495,30 @@ class TruffleClient:
             title = info.task_title or "(untitled)"
             created = info.created.ToDatetime().isoformat() if info.HasField("created") else ""
             updated = info.last_updated.ToDatetime().isoformat() if info.HasField("last_updated") else ""
+            run_state = (
+                info.TaskRunState.Name(info.run_state)
+                if info.run_state
+                else "TASK_RUN_STATE_INVALID"
+            )
+            status = run_state.removeprefix("TASK_RUN_STATE_").lower()
+            last_step = entry.last_node.step if (
+                entry.HasField("last_node") and entry.last_node.HasField("step")
+            ) else None
+            pending_user_response = bool(
+                last_step is not None
+                and last_step.HasField("user_response")
+                and last_step.user_response.node_id
+                and last_step.StepState.Name(last_step.state) != "STEP_RESULT"
+            )
             tasks.append({
                 "task_id": entry.task_id,
                 "title": title,
                 "created": created,
                 "updated": updated,
+                "status": status,
+                "run_state": run_state,
+                "pending_user_response": pending_user_response,
+                "error": status == "fatal_error",
             })
         return tasks
 

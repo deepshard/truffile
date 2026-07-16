@@ -206,6 +206,10 @@ def build_parser() -> argparse.ArgumentParser:
     # output
     chat_p.add_argument("--json", action="store_true", help="emit structured json result")
     chat_p.add_argument("--show-thinking", action="store_true", dest="show_thinking", help="include thinking summaries on stderr")
+    chat_p.add_argument("--include-thinking", action="store_true", dest="include_thinking", help="include thinking summaries in JSON")
+    chat_p.add_argument("--include-tools", action="store_true", dest="include_tools", help="include tool call names in JSON")
+    chat_p.add_argument("--full", action="store_true", help="include thinking and tool calls in JSON")
+    chat_p.add_argument("--max-output-bytes", type=int, default=65536, dest="max_output_bytes", help="maximum UTF-8 bytes returned in one-shot content")
     chat_p.add_argument("--quiet", "-q", action="store_true", help="suppress decoration on stderr")
     chat_p.add_argument("--timeout", type=float, default=None, help="max seconds to wait for task to settle")
 
