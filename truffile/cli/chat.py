@@ -168,7 +168,7 @@ async def _stream_task(
 
         try:
             if timeout is not None:
-                await asyncio.wait_for(consume(), timeout=max(0.1, timeout))
+                await asyncio.wait_for(consume(), timeout=timeout)
             else:
                 await consume()
         except asyncio.TimeoutError:
@@ -548,7 +548,7 @@ async def _read_existing_task(
 
     try:
         if timeout is not None:
-            await asyncio.wait_for(consume(), timeout=max(0.1, timeout))
+            await asyncio.wait_for(consume(), timeout=timeout)
         else:
             await consume()
         return False
@@ -631,6 +631,22 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
     eprint = _eprint_factory_chat(quiet)
     json_out = bool(getattr(args, "json", False))
     timeout = getattr(args, "timeout", None)
+    max_output_bytes = int(getattr(args, "max_output_bytes", 65536) or 0)
+
+    if timeout is not None and timeout <= 0:
+        return _chat_error(
+            json_out=json_out,
+            eprint=eprint,
+            code="invalid_args",
+            message="--timeout must be greater than zero",
+        )
+    if max_output_bytes <= 0:
+        return _chat_error(
+            json_out=json_out,
+            eprint=eprint,
+            code="invalid_args",
+            message="--max-output-bytes must be greater than zero",
+        )
 
     device, ip = await _resolve_connected_device(storage, quiet=json_out)
     if not device or not ip:
@@ -924,7 +940,6 @@ async def _run_oneshot_chat(args, storage: StorageService) -> int:
         # build final response from accumulated state
         streamed_text = "".join(_streaming_text).strip()
         final_text = streamed_text or state.result_text or ""
-        max_output_bytes = max(1, int(getattr(args, "max_output_bytes", 65536) or 65536))
         bounded_text, truncated, original_bytes = truncate_text(final_text, max_output_bytes)
 
         if json_out:

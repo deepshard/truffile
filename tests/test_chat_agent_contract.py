@@ -242,6 +242,44 @@ def test_chat_json_is_compact_and_bounded_by_default(capsys):
     assert "tool_calls" not in payload
 
 
+def test_chat_rejects_non_positive_timeout_before_device_access(capsys):
+    for timeout in (0, -1):
+        with (
+            patch("truffile.cli.chat._resolve_connected_device") as resolve,
+            patch("truffile.cli.chat.TruffleClient") as client,
+        ):
+            result = asyncio.run(_run_oneshot_chat(
+                _chat_args(timeout=timeout),
+                FakeStorage(),
+            ))
+
+        assert result == 1
+        resolve.assert_not_awaited()
+        client.assert_not_called()
+        payload = _json_stdout(capsys)
+        assert payload["code"] == "invalid_args"
+        assert payload["message"] == "--timeout must be greater than zero"
+
+
+def test_chat_rejects_non_positive_output_limit_before_device_access(capsys):
+    for max_output_bytes in (0, -1):
+        with (
+            patch("truffile.cli.chat._resolve_connected_device") as resolve,
+            patch("truffile.cli.chat.TruffleClient") as client,
+        ):
+            result = asyncio.run(_run_oneshot_chat(
+                _chat_args(max_output_bytes=max_output_bytes),
+                FakeStorage(),
+            ))
+
+        assert result == 1
+        resolve.assert_not_awaited()
+        client.assert_not_called()
+        payload = _json_stdout(capsys)
+        assert payload["code"] == "invalid_args"
+        assert payload["message"] == "--max-output-bytes must be greater than zero"
+
+
 def test_chat_json_rejects_an_invalid_saved_session(capsys):
     client = RejectedTaskClient()
     with (
