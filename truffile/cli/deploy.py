@@ -44,6 +44,14 @@ def _plan_json(plan: dict, app_dir: Path) -> dict:
         {"source": f.get("source", ""), "destination": f.get("destination", "")}
         for f in plan["files_to_upload"]
     ]
+    steps = [
+        {
+            "type": str(step.get("type", "") or ""),
+            "name": str(step.get("name") or step.get("type") or "step"),
+            "requires_input": str(step.get("type", "") or "") in {"text", "oauth"},
+        }
+        for step in plan["ordered_steps"]
+    ]
     return {
         "name": plan["name"],
         "bundle_id": plan["bundle_id"],
@@ -51,6 +59,8 @@ def _plan_json(plan: dict, app_dir: Path) -> dict:
         "app_dir": str(app_dir),
         "files": files,
         "bash_steps": [name for name, _cmd in plan["bash_commands"]],
+        "steps": steps,
+        "input_requirements": _non_interactive_blockers(plan),
     }
 
 
@@ -161,16 +171,6 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     except Exception as e:
         return _deploy_error(json_out, "plan_failed", f"Failed to build deploy plan: {e}")
 
-    if non_interactive:
-        blockers = _non_interactive_blockers(plan)
-        if blockers:
-            return _deploy_error(
-                json_out,
-                "input_required",
-                "Deploy requires interactive input for one or more steps",
-                steps=blockers,
-            )
-
     if dry_run:
         if json_out:
             _json_print({
@@ -219,9 +219,25 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         print(f"  Bash Steps: {len(cmds)}")
         for name, _cmd in cmds:
             print(f"    - {name}")
+        print(f"  Ordered Steps: {len(plan['ordered_steps'])}")
+        for index, step in enumerate(plan["ordered_steps"], start=1):
+            step_type = str(step.get("type", "") or "")
+            step_name = str(step.get("name") or step_type or "step")
+            boundary = " (interactive input required)" if step_type in {"text", "oauth"} else ""
+            print(f"    {index}. {step_name} [{step_type}]{boundary}")
         print()
         success("Dry run complete (no device changes made)")
         return 0
+
+    if non_interactive:
+        blockers = _non_interactive_blockers(plan)
+        if blockers:
+            return _deploy_error(
+                json_out,
+                "input_required",
+                "Deploy requires interactive input for one or more steps",
+                steps=blockers,
+            )
 
     device, ip = await _resolve_connected_device(storage, quiet=json_out)
     if not device or not ip:

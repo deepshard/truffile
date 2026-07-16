@@ -114,6 +114,11 @@ def test_plan_json_is_compact_for_agents():
             {"source": "./app.py", "destination": "./app.py"},
         ],
         "bash_commands": [("Install", "pip install -r requirements.txt")],
+        "ordered_steps": [
+            {"type": "welcome", "name": "Welcome"},
+            {"type": "text", "name": "API key"},
+            {"type": "oauth", "name": "Sign in"},
+        ],
     }
 
     assert _plan_json(plan, Path("/tmp/smoke")) == {
@@ -123,4 +128,55 @@ def test_plan_json_is_compact_for_agents():
         "app_dir": "/tmp/smoke",
         "files": [{"source": "./app.py", "destination": "./app.py"}],
         "bash_steps": ["Install"],
+        "steps": [
+            {"type": "welcome", "name": "Welcome", "requires_input": False},
+            {"type": "text", "name": "API key", "requires_input": True},
+            {"type": "oauth", "name": "Sign in", "requires_input": True},
+        ],
+        "input_requirements": [
+            {"type": "text", "name": "API key"},
+            {"type": "oauth", "name": "Sign in"},
+        ],
     }
+
+
+def test_non_interactive_dry_run_reports_input_boundaries_without_blocking(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / "icon.png").write_bytes(b"icon")
+    config = {"metadata": {"icon_file": "icon.png"}}
+    plan = {
+        "name": "Auth app",
+        "bundle_id": "org.truffle.auth-app",
+        "finish_label": "foreground",
+        "ordered_steps": [
+            {"type": "welcome", "name": "Introduction"},
+            {"type": "oauth", "name": "Connect account"},
+            {"type": "text", "name": "API key"},
+        ],
+        "files_to_upload": [],
+        "bash_commands": [],
+    }
+    args = _deploy_args(tmp_path)
+    args.dry_run = True
+
+    with (
+        patch("truffile.cli.deploy.validate_app_dir", return_value=(True, config, "foreground", [], [])),
+        patch("truffile.cli.deploy.build_deploy_plan", return_value=plan),
+        patch("truffile.cli.deploy._resolve_connected_device") as resolve,
+    ):
+        result = asyncio.run(cmd_deploy(args, _Storage()))
+
+    assert result == 0
+    resolve.assert_not_awaited()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["app"]["steps"] == [
+        {"type": "welcome", "name": "Introduction", "requires_input": False},
+        {"type": "oauth", "name": "Connect account", "requires_input": True},
+        {"type": "text", "name": "API key", "requires_input": True},
+    ]
+    assert payload["app"]["input_requirements"] == [
+        {"type": "oauth", "name": "Connect account"},
+        {"type": "text", "name": "API key"},
+    ]
