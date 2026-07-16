@@ -64,6 +64,20 @@ class TestWheelContract(unittest.TestCase):
             self.assertIn("truffile/app_runtime/__init__.py", missing)
             self.assertIn("truffle/app/app_runtime_pb2.py", missing)
 
+    def test_each_required_package_is_enforced_independently(self):
+        package_roots = (
+            "truffile/app_runtime/__init__.py",
+            "truffle/app/app_runtime_pb2.py",
+        )
+        for omitted in package_roots:
+            with self.subTest(omitted=omitted), tempfile.TemporaryDirectory() as tmp:
+                wheel = Path(tmp) / "truffile.whl"
+                with zipfile.ZipFile(wheel, "w") as archive:
+                    for path in REQUIRED_WHEEL_FILES:
+                        if path != omitted:
+                            archive.writestr(path, "")
+                self.assertEqual(missing_wheel_files(wheel), [omitted])
+
     def test_archive_contract_accepts_all_required_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             wheel = Path(tmp) / "truffile.whl"
