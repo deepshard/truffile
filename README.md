@@ -126,7 +126,7 @@ not become a second source of truth.
 From a clean checkout, stage both packages and verify the finished wheel:
 
 ```bash
-python3.12 -m pip install --upgrade build
+python3.12 -m pip install --upgrade build "grpcio-tools==1.82.1" "protobuf==7.35.1"
 python3.12 scripts/build_package.py --pyfw-path /path/to/pyfw
 python3.12 -m build
 python3.12 scripts/verify_wheel.py dist/*.whl

@@ -8,11 +8,33 @@ from unittest.mock import patch
 from setuptools import Distribution
 from setuptools.errors import SetupError
 
-from scripts.build_package import missing_package_inputs, require_package_inputs, stage_package_inputs
+from scripts.build_package import (
+    missing_package_inputs,
+    require_package_inputs,
+    require_proto_toolchain,
+    stage_package_inputs,
+)
 from scripts.verify_wheel import REQUIRED_WHEEL_FILES, missing_wheel_files
 
 
 class TestPackageInputs(unittest.TestCase):
+    @patch("scripts.build_package.metadata.version")
+    def test_release_proto_toolchain_is_pinned(self, version):
+        version.side_effect = lambda package: {
+            "grpcio-tools": "1.82.1",
+            "protobuf": "7.35.1",
+        }[package]
+        require_proto_toolchain()
+
+    @patch("scripts.build_package.metadata.version")
+    def test_release_proto_toolchain_rejects_drift(self, version):
+        version.side_effect = lambda package: {
+            "grpcio-tools": "1.82.1",
+            "protobuf": "6.33.6",
+        }[package]
+        with self.assertRaisesRegex(RuntimeError, "protobuf==7.35.1"):
+            require_proto_toolchain()
+
     def test_missing_inputs_are_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)

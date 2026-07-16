@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from importlib import metadata
 import os
 import shutil
 import subprocess
@@ -15,6 +16,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_PACKAGE_FILES = (
     Path("truffile/app_runtime/__init__.py"),
     Path("truffle/app/app_runtime_pb2.py"),
+)
+REQUIRED_PROTO_TOOLCHAIN = (
+    ("grpcio-tools", "1.82.1"),
+    ("protobuf", "7.35.1"),
 )
 
 
@@ -31,6 +36,23 @@ def require_package_inputs(repo_root: Path = REPO_ROOT) -> None:
         f"release package inputs are missing: {paths}. "
         "Run `python3.12 scripts/build_package.py --pyfw-path /path/to/pyfw` first."
     )
+
+
+def require_proto_toolchain() -> None:
+    mismatches: list[str] = []
+    for package, expected in REQUIRED_PROTO_TOOLCHAIN:
+        try:
+            actual = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            actual = "missing"
+        if actual != expected:
+            mismatches.append(f"{package}=={expected} (found {actual})")
+    if mismatches:
+        requirements = " ".join(f'"{package}=={version}"' for package, version in REQUIRED_PROTO_TOOLCHAIN)
+        raise RuntimeError(
+            f"release protobuf toolchain mismatch: {', '.join(mismatches)}. "
+            f"Run `python3.12 -m pip install --upgrade {requirements}`."
+        )
 
 
 def resolve_pyfw_path(raw_path: str | None) -> Path:
@@ -89,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pyfw_path = resolve_pyfw_path(args.pyfw_path)
         if not args.skip_proto_build:
+            require_proto_toolchain()
             build_protos(pyfw_path)
         stage_package_inputs(pyfw_path)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
