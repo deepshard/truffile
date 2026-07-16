@@ -20,6 +20,14 @@ def _json_print(payload: dict) -> None:
     emit_json(payload)
 
 
+@contextlib.contextmanager
+def _suppress_deploy_progress():
+    """Keep machine-mode stdout/stderr reserved for the final JSON payload."""
+    with open(os.devnull, "w", encoding="utf-8") as sink:
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            yield
+
+
 def _deploy_error(json_out: bool, code: str, message: str, **extra) -> int:
     if json_out:
         payload = error_payload(code, message)
@@ -284,7 +292,7 @@ async def cmd_deploy(args, storage: StorageService) -> int:
             )
         )
         if json_out:
-            with contextlib.redirect_stdout(sys.stderr):
+            with _suppress_deploy_progress():
                 result = await deploy_task
         else:
             result = await deploy_task
@@ -303,7 +311,7 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         return result
     except asyncio.CancelledError:
         if json_out:
-            with contextlib.redirect_stdout(sys.stderr):
+            with _suppress_deploy_progress():
                 print()
                 spinner = Spinner("Discarding build session")
                 spinner.start()
@@ -332,7 +340,7 @@ async def cmd_deploy(args, storage: StorageService) -> int:
             error(str(e))
         if client.app_uuid:
             if json_out:
-                with contextlib.redirect_stdout(sys.stderr):
+                with _suppress_deploy_progress():
                     spinner = Spinner("Discarding build session")
                     spinner.start()
                     try:
