@@ -258,6 +258,10 @@ async def cmd_doctor(args, storage: StorageService) -> int:
 def _finish(checks: dict[str, dict[str, Any]], *, json_out: bool) -> int:
     failed = [name for name, check in checks.items() if check.get("status") == "error"]
     healthy = not failed
+    next_action = next(
+        (str(checks[name]["next_action"]) for name in failed if checks[name].get("next_action")),
+        None,
+    )
     if json_out:
         if healthy:
             emit_json(ok_payload(healthy=True, checks=checks))
@@ -266,6 +270,7 @@ def _finish(checks: dict[str, dict[str, Any]], *, json_out: bool) -> int:
                 "health_checks_failed",
                 f"{len(failed)} health check(s) failed",
                 retryable=any(bool(checks[name].get("retryable")) for name in failed),
+                next_action=next_action,
                 healthy=False,
                 failed_checks=failed,
                 checks=checks,

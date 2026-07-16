@@ -155,6 +155,7 @@ def test_doctor_without_device_returns_actionable_json(capsys):
     assert payload["retryable"] is False
     assert payload["checks"]["saved_session"]["code"] == "device_required"
     assert "Symphony" in payload["checks"]["saved_session"]["next_action"]
+    assert payload["next_action"] == payload["checks"]["saved_session"]["next_action"]
 
 
 def test_help_command_matches_help_flag(capsys):
