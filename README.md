@@ -117,13 +117,23 @@ CLI wrappers:
 - `truffile models`
 - `truffile chat` (streaming by default)
 
-## Proto Sync
+## Release Packaging
 
-Refresh vendored protos from firmware repo:
+The app runtime and generated proto packages are owned by the private `pyfw`
+source tree. They are intentionally ignored here so generated release inputs do
+not become a second source of truth.
+
+From a clean checkout, stage both packages and verify the finished wheel:
 
 ```bash
-./scripts/sync_protos.sh
+python3.12 scripts/build_package.py --pyfw-path /path/to/pyfw
+python3.12 -m build
+python3.12 scripts/verify_wheel.py dist/*.whl
 ```
+
+The build fails if either package was not staged. `verify_wheel.py` then installs
+the wheel in a fresh virtual environment, imports `truffile.sdk` and
+`truffile.app_runtime`, and imports a newly generated foreground app.
 
 ## Development Loop
 
