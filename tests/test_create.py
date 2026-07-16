@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,6 +64,21 @@ class TestTemplateGeneration(unittest.TestCase):
         self.assertIn("foreground", meta)
         self.assertIn("background", meta)
 
+    def test_generated_yaml_matches_selected_type(self):
+        import yaml as pyyaml
+
+        expected = {
+            "foreground": ({"foreground"}, ["typed_foreground.py"]),
+            "background": ({"background"}, ["typed_background.py"]),
+            "hybrid": ({"foreground", "background"}, ["typed_foreground.py", "typed_background.py"]),
+        }
+        for app_type, (processes, files) in expected.items():
+            with self.subTest(app_type=app_type):
+                parsed = pyyaml.safe_load(_sample_truffile_yaml("Typed", "typed", app_type))
+                metadata = parsed["metadata"]
+                self.assertEqual(processes, {name for name in ("foreground", "background") if name in metadata})
+                self.assertEqual(files, [Path(entry["source"]).name for entry in parsed["steps"][0]["files"]])
+
 
 class TestCmdCreate(unittest.TestCase):
     def test_creates_directory_with_files(self):
@@ -92,3 +108,55 @@ class TestCmdCreate(unittest.TestCase):
                 from truffile.schema.app_config import validate_app_dir
                 valid, config, app_type, warnings, errors = validate_app_dir(app_dir)
                 self.assertTrue(valid, f"scaffolded app failed validation: {errors}")
+
+    def test_each_app_type_passes_cli_validate_and_deploy_dry_run(self):
+        from types import SimpleNamespace
+
+        from truffile.cli.deploy import cmd_deploy
+        from truffile.cli.validate import cmd_validate
+
+        expected = {
+            "foreground": ("foreground", {"typed_foreground.py", "icon.png", "truffile.yaml"}),
+            "background": ("background", {"typed_background.py", "icon.png", "truffile.yaml"}),
+            "hybrid": (
+                "foreground+background",
+                {"typed_foreground.py", "typed_background.py", "icon.png", "truffile.yaml"},
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for app_type, (finish_label, files) in expected.items():
+                with self.subTest(app_type=app_type):
+                    args = SimpleNamespace(
+                        name="typed",
+                        path=str(Path(tmp) / app_type),
+                        app_type=app_type,
+                        json=False,
+                        non_interactive=True,
+                    )
+                    with patch(
+                        "truffile.cli.create._load_stock_icon_bytes",
+                        return_value=(b"fake_png", "memory"),
+                    ):
+                        from truffile.cli.create import cmd_create
+
+                        self.assertEqual(cmd_create(args), 0)
+
+                    app_dir = Path(tmp) / app_type / "typed"
+                    self.assertEqual({path.name for path in app_dir.iterdir()}, files)
+                    self.assertEqual(
+                        cmd_validate(SimpleNamespace(path=str(app_dir), json=False)),
+                        0,
+                    )
+                    deploy_args = SimpleNamespace(
+                        path=str(app_dir),
+                        interactive=False,
+                        dry_run=True,
+                        json=True,
+                        non_interactive=True,
+                        replace=False,
+                    )
+                    with patch("truffile.cli.deploy._json_print") as json_print:
+                        self.assertEqual(asyncio.run(cmd_deploy(deploy_args, object())), 0)
+                    payload = json_print.call_args.args[0]
+                    self.assertTrue(payload["dry_run"])
+                    self.assertEqual(payload["app"]["mode"], finish_label)

@@ -51,7 +51,7 @@ In practice:
 ```bash
 truffile scan
 truffile connect <device>
-truffile create [app_name]
+truffile create [app_name] --type foreground
 truffile load all
 truffile validate [app_dir]
 truffile deploy [app_dir]
@@ -62,9 +62,10 @@ truffile models
 truffile chat
 ```
 
-`truffile create` scaffolds a hybrid app starter with:
-- `truffile.yaml` (foreground + background process config)
-- copy-file steps for generated `*_foreground.py` and `*_background.py`
+`truffile create` defaults to a hybrid app for compatibility. Use `--type` to
+create a foreground-only, background-only, or hybrid starter with:
+- `truffile.yaml` containing only the selected process config
+- matching entrypoints and copy-file steps
 - `icon.png` copied from `docs/Truffle.png` (deploy requires an icon)
 
 `truffile load all` copies bundled agent-readable resources into your current
@@ -130,7 +131,7 @@ Refresh vendored protos from firmware repo:
 The supported app development loop is CLI-first:
 
 ```bash
-truffile create my-app --path ./apps
+truffile create my-app --type foreground --path ./apps
 truffile validate ./apps/my-app
 truffile deploy --dry-run ./apps/my-app
 truffile deploy ./apps/my-app

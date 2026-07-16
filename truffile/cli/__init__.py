@@ -141,9 +141,18 @@ def build_parser() -> argparse.ArgumentParser:
     disc_p.add_argument("--json", action="store_true", help="emit structured json")
 
     # create
+    from .create import APP_TYPES
+
     create_p = sub.add_parser("create", help="scaffold a new app")
     create_p.add_argument("name", nargs="?")
     create_p.add_argument("--path", type=str, default=None, help="base directory for the app")
+    create_p.add_argument(
+        "--type",
+        choices=APP_TYPES,
+        default="hybrid",
+        dest="app_type",
+        help="app shape (default: hybrid)",
+    )
     create_p.add_argument("--json", action="store_true", help="emit structured json")
     create_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="fail instead of prompting for missing input")
 

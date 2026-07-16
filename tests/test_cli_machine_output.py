@@ -68,12 +68,14 @@ def test_machine_flags_parse_without_prompts():
         "--approval-timeout",
         "10",
     ])
+    create = parser.parse_args(["create", "my-app", "--type", "foreground", "--json"])
 
     assert scan.json is True
     assert scan.non_interactive is True
     assert connect.json is True
     assert connect.non_interactive is True
     assert connect.approval_timeout == 10
+    assert create.app_type == "foreground"
 
     default_connect = parser.parse_args(["connect", "truffle-1234"])
     assert default_connect.approval_timeout is None
@@ -111,6 +113,29 @@ def test_global_guard_keeps_unhandled_machine_errors_json(capsys):
         "retryable": False,
         "next_action": "Retry with TRUFFILE_DEBUG=1 for a traceback.",
     }
+
+
+def test_invalid_create_type_is_structured_and_creates_nothing(tmp_path, capsys):
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "truffile",
+            "create",
+            "bad-app",
+            "--path",
+            str(tmp_path),
+            "--type",
+            "other",
+            "--json",
+        ],
+    ):
+        with pytest.raises(SystemExit) as exc:
+            _main()
+
+    assert exc.value.code == 2
+    assert _json_stdout(capsys)["code"] == "invalid_args"
+    assert not (tmp_path / "bad-app").exists()
 
 
 def test_list_devices_json_is_parseable(capsys):

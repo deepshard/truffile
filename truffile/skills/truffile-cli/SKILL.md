@@ -54,9 +54,12 @@ session comes from env.
 
 ```bash
 truffile load all
-truffile create my-app --path ./apps
+truffile create my-app --type foreground --path ./apps --json --non-interactive
 truffile validate ./apps/my-app
 ```
+
+Use `--type background` or `--type hybrid` when the app needs those
+processes. Omitting `--type` keeps the compatibility default: `hybrid`.
 
 `truffile load all` copies bundled skills and example apps into
 `./truffile/skills` and `./truffile/examples` so the agent can inspect them

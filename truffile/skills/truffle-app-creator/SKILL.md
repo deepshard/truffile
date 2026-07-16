@@ -61,23 +61,27 @@ Reference: see references/auth-patterns.md for the decision tree.
 
 ### Step 4: Scaffold the app
 
-Create the directory structure, the command truffile create does this, read the docs first:
+Create the matching starter, then extend it with client code and tests:
+
+```bash
+truffile create my-app --type foreground --path ./apps --json --non-interactive
+```
+
+Use `--type background` or `--type hybrid` when Step 3 calls for it. Omitting
+`--type` keeps the compatibility default: `hybrid`.
+
+The command generates only the selected entrypoints:
 ```
 my-app/
 ├── truffile.yaml
 ├── icon.png
 ├── my_app_foreground.py    (if FG)
-├── my_app_background.py    (if BG)
-├── bg_worker.py            (if BG)
-├── client.py
-├── config.py
-└── tests/
-    ├── conftest.py
-    ├── test_my_app_unit.py
-    └── test_my_app_app_shells.py
+└── my_app_background.py    (if BG)
 ```
 
-Generate truffile.yaml with the correct steps for the chosen auth type. Reference: see references/truffile-yaml.md.
+Add client, config, worker, and test files as needed. Generate `truffile.yaml`
+with the correct steps for the chosen auth type. Reference: see
+references/truffile-yaml.md.
 
 Use the app patterns from references/app-patterns.md for the code structure.
 

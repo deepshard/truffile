@@ -7,6 +7,9 @@ from .output import emit_error, emit_json, ok_payload
 from .ui import C, ARROW, SCAFFOLD_ICON_RESOURCE_REL, error, success
 
 
+APP_TYPES = ("foreground", "background", "hybrid")
+
+
 def _safe_app_slug(app_name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", app_name.lower()).strip("_")
     if not slug:
@@ -16,15 +19,13 @@ def _safe_app_slug(app_name: str) -> str:
     return slug
 
 
-def _sample_truffile_yaml(app_name: str, slug: str) -> str:
+def _sample_truffile_yaml(app_name: str, slug: str, app_type: str = "hybrid") -> str:
+    if app_type not in APP_TYPES:
+        raise ValueError(f"Unsupported app type: {app_type}")
     quoted_name = json.dumps(app_name)
-    return (
-        "metadata:\n"
-        f"  name: {quoted_name}\n"
-        f"  bundle_id: org.truffle.{slug.replace('_', '.')}\n"
-        "  description: |\n"
-        "    Describe what this app does.\n"
-        "  icon_file: ./icon.png\n"
+    has_foreground = app_type != "background"
+    has_background = app_type != "foreground"
+    foreground = (
         "  foreground:\n"
         "    process:\n"
         "      cmd:\n"
@@ -33,6 +34,10 @@ def _sample_truffile_yaml(app_name: str, slug: str) -> str:
         "      working_directory: /\n"
         "      environment:\n"
         '        PYTHONUNBUFFERED: "1"\n'
+        if has_foreground
+        else ""
+    )
+    background = (
         "  background:\n"
         "    process:\n"
         "      cmd:\n"
@@ -47,15 +52,34 @@ def _sample_truffile_yaml(app_name: str, slug: str) -> str:
         "        duration: 30m\n"
         "        schedule:\n"
         '          daily_window: "00:00-23:59"\n'
+        if has_background
+        else ""
+    )
+    app_files = []
+    if has_foreground:
+        app_files.append(f"{slug}_foreground.py")
+    if has_background:
+        app_files.append(f"{slug}_background.py")
+    file_steps = "".join(
+        f"      - source: ./{filename}\n"
+        f"        destination: ./{filename}\n"
+        for filename in app_files
+    )
+    return (
+        "metadata:\n"
+        f"  name: {quoted_name}\n"
+        f"  bundle_id: org.truffle.{slug.replace('_', '.')}\n"
+        "  description: |\n"
+        "    Describe what this app does.\n"
+        "  icon_file: ./icon.png\n"
+        f"{foreground}"
+        f"{background}"
         "\n"
         "steps:\n"
         "  - name: Copy application files\n"
         "    type: files\n"
         "    files:\n"
-        f"      - source: ./{slug}_foreground.py\n"
-        f"        destination: ./{slug}_foreground.py\n"
-        f"      - source: ./{slug}_background.py\n"
-        f"        destination: ./{slug}_background.py\n"
+        f"{file_steps}"
     )
 
 
@@ -131,6 +155,12 @@ def cmd_create(args) -> int:
         error(message)
         return 1
 
+    app_type = getattr(args, "app_type", "hybrid")
+    if app_type not in APP_TYPES:
+        return fail("invalid_type", f"App type must be one of: {', '.join(APP_TYPES)}")
+    has_foreground = app_type != "background"
+    has_background = app_type != "foreground"
+
     app_name = (args.name or "").strip()
     if not app_name:
         if non_interactive:
@@ -174,17 +204,27 @@ def cmd_create(args) -> int:
 
     try:
         app_dir.mkdir(parents=True, exist_ok=False)
-        (app_dir / "truffile.yaml").write_text(_sample_truffile_yaml(app_name, slug), encoding="utf-8")
-        (app_dir / fg_file).write_text(_sample_foreground_py(app_name, slug), encoding="utf-8")
-        (app_dir / bg_file).write_text(_sample_background_py(), encoding="utf-8")
+        (app_dir / "truffile.yaml").write_text(
+            _sample_truffile_yaml(app_name, slug, app_type),
+            encoding="utf-8",
+        )
+        if has_foreground:
+            (app_dir / fg_file).write_text(_sample_foreground_py(app_name, slug), encoding="utf-8")
+        if has_background:
+            (app_dir / bg_file).write_text(_sample_background_py(), encoding="utf-8")
         (app_dir / "icon.png").write_bytes(stock_icon_bytes)
     except Exception as exc:
         return fail("create_failed", f"Failed to scaffold app: {exc}")
 
-    files = ["truffile.yaml", fg_file, bg_file, "icon.png"]
+    files = ["truffile.yaml"]
+    if has_foreground:
+        files.append(fg_file)
+    if has_background:
+        files.append(bg_file)
+    files.append("icon.png")
     if json_out:
         emit_json(ok_payload(
-            app={"name": app_name, "slug": slug, "path": str(app_dir)},
+            app={"name": app_name, "slug": slug, "type": app_type, "path": str(app_dir)},
             files=files,
             next_action=f"truffile validate {app_dir} --json",
         ))
@@ -195,10 +235,8 @@ def cmd_create(args) -> int:
     link = f"\x1b]8;;{file_url}\a{app_dir}\x1b]8;;\a"
     success(f"Created app scaffold: {link}")
     print(f"  {C.DIM}Files:{C.RESET}")
-    print(f"  {C.DIM}{ARROW} truffile.yaml{C.RESET}")
-    print(f"  {C.DIM}{ARROW} {fg_file}{C.RESET}")
-    print(f"  {C.DIM}{ARROW} {bg_file}{C.RESET}")
-    print(f"  {C.DIM}{ARROW} icon.png{C.RESET}")
+    for filename in files:
+        print(f"  {C.DIM}{ARROW} {filename}{C.RESET}")
     print()
     print(f"  {C.DIM}Next:{C.RESET} truffile validate {app_dir}")
     return 0

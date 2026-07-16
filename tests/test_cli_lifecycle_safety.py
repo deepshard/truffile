@@ -78,6 +78,7 @@ def test_create_json_returns_paths_and_next_action(tmp_path, capsys):
         path=str(tmp_path),
         json=True,
         non_interactive=True,
+        app_type="foreground",
     )
 
     with patch("truffile.cli.create._load_stock_icon_bytes", return_value=(b"png", "memory")):
@@ -87,10 +88,10 @@ def test_create_json_returns_paths_and_next_action(tmp_path, capsys):
     payload = _json_stdout(capsys)
     assert payload["status"] == "ok"
     assert payload["app"]["name"] == "agent-app"
+    assert payload["app"]["type"] == "foreground"
     assert set(payload["files"]) == {
         "truffile.yaml",
         "agent_app_foreground.py",
-        "agent_app_background.py",
         "icon.png",
     }
     assert payload["next_action"].endswith("--json")
