@@ -106,7 +106,7 @@ def _run_onboarding(storage) -> int:
     return run_async(cmd_connect(connect_args, storage))
 
 
-def _main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="truffile")
     parser.add_argument("--resume", action="store_true", help="resume a previous task")
     sub = parser.add_subparsers(dest="command")
@@ -114,15 +114,21 @@ def _main() -> int:
     # scan
     scan_p = sub.add_parser("scan", help="scan for truffle devices")
     scan_p.add_argument("--timeout", type=int, default=5)
+    scan_p.add_argument("--json", action="store_true", help="emit structured json and do not prompt")
+    scan_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="list devices without prompting")
 
     # connect
     conn_p = sub.add_parser("connect", help="connect to a truffle")
     conn_p.add_argument("device", help="device name (e.g. truffle-1234)")
-    conn_p.add_argument("--user-id", type=str, default=None, dest="user_id", help="user id from recovery codes (skips interactive prompt)")
+    conn_p.add_argument("--user-id", type=str, default=None, dest="user_id", help="user id from Symphony Settings (skips interactive prompt)")
+    conn_p.add_argument("--json", action="store_true", help="emit structured json")
+    conn_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="fail instead of prompting for a User ID")
+    conn_p.add_argument("--approval-timeout", type=float, default=120.0, dest="approval_timeout", help="max seconds to wait for device approval")
 
     # disconnect
     disc_p = sub.add_parser("disconnect", help="disconnect from device(s)")
     disc_p.add_argument("device", nargs="?", default="all")
+    disc_p.add_argument("--json", action="store_true", help="emit structured json")
 
     # create
     create_p = sub.add_parser("create", help="scaffold a new app")
@@ -168,7 +174,9 @@ def _main() -> int:
     del_p.add_argument("selection", nargs="*", help="'all', app numbers, names, slugs, or uuids")
 
     # models
-    sub.add_parser("models", help="list inference models")
+    models_p = sub.add_parser("models", help="list inference models")
+    models_p.add_argument("--json", action="store_true", help="emit structured json")
+    models_p.add_argument("--timeout", type=float, default=15.0, help="request timeout in seconds")
 
     # chat (agent runtime with apps)
     chat_p = sub.add_parser("chat", help="agent chat with apps")
@@ -258,6 +266,12 @@ def _main() -> int:
     # easter egg
     sub.add_parser("glow")
 
+    return parser
+
+
+def _main() -> int:
+    parser = build_parser()
+
     args = parser.parse_args()
 
     if args.command == "help":
@@ -291,6 +305,14 @@ def _main() -> int:
     # first-run onboarding: if a device-requiring command was issued and there
     # is no connected device, walk the user through `truffile connect` first.
     if _command_needs_device(args) and not storage.state.last_used_device:
+        if bool(getattr(args, "json", False)) or bool(getattr(args, "non_interactive", False)):
+            from .output import emit_error
+
+            return emit_error(
+                "device_required",
+                "No Truffle device is connected",
+                next_action="Onboard in Symphony, then run truffile connect <device> --user-id <user-id>",
+            )
         rc = _run_onboarding(storage)
         if rc != 0:
             return rc
@@ -358,7 +380,7 @@ def _main() -> int:
         return run_async(cmd_delete(args, storage))
     elif args.command == "models":
         from .models import cmd_models
-        return run_async(cmd_models(storage))
+        return run_async(cmd_models(args, storage))
     elif args.command == "chat":
         from .chat import cmd_chat
         return run_async(cmd_chat(args, storage))

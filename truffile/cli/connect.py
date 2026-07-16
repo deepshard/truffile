@@ -4,14 +4,46 @@ from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
 
 from .in_container import probe_in_container_device
+from .output import emit_error, emit_json, ok_payload
 from .ui import C, DOT, Spinner, error, success, info
 
 
 async def cmd_connect(args, storage: StorageService) -> int:
+    json_out = bool(getattr(args, "json", False))
+    non_interactive = bool(getattr(args, "non_interactive", False)) or json_out
+
+    def fail(
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        next_action: str | None = None,
+    ) -> int:
+        if json_out:
+            return emit_error(
+                code,
+                message,
+                retryable=retryable,
+                next_action=next_action,
+                device=getattr(args, "device", None),
+            )
+        error(message)
+        return 1
+
     # In-container short-circuit: the runtime already gave us a session
     # token + gRPC address, so there is nothing to pair.
     ic_info = probe_in_container_device()
     if ic_info is not None:
+        if json_out:
+            emit_json(ok_payload(
+                state="paired",
+                device=ic_info.device_name,
+                address=ic_info.grpc_address,
+                execution_context="truffle_container",
+                firmware_version=ic_info.firmware_version or None,
+                probe_incomplete=bool(ic_info.probe_failed),
+            ))
+            return 0
         success(f"Already connected to {C.BOLD}{ic_info.device_name}{C.RESET} via in-container session")
         print(f"  {C.DIM}address:  {ic_info.grpc_address}{C.RESET}")
         if ic_info.firmware_version:
@@ -22,14 +54,24 @@ async def cmd_connect(args, storage: StorageService) -> int:
 
     device_name = args.device
 
-    spinner = Spinner(f"Resolving {device_name}.local")
-    spinner.start()
+    spinner = None if json_out else Spinner(f"Resolving {device_name}.local")
+    if spinner:
+        spinner.start()
 
     hostname = f"{device_name}.local"
     try:
         ip = await resolve_mdns(hostname)
-        spinner.stop(success=True)
+        if spinner:
+            spinner.stop(success=True)
     except RuntimeError:
+        if json_out:
+            return fail(
+                "device_not_found",
+                f"Could not resolve {device_name}.local",
+                retryable=True,
+                next_action="Confirm the device is powered on and on the same network, then run truffile scan --json",
+            )
+        assert spinner is not None
         spinner.fail(f"Could not resolve {device_name}.local")
         print()
         print(f"  {C.DIM}Try running:{C.RESET}")
@@ -46,20 +88,31 @@ async def cmd_connect(args, storage: StorageService) -> int:
     existing_token = storage.get_token(device_name)
 
     if existing_token:
-        spinner = Spinner("Validating existing token")
-        spinner.start()
+        spinner = None if json_out else Spinner("Validating existing token")
+        if spinner:
+            spinner.start()
         client = TruffleClient(address, existing_token)
         try:
             await client.connect()
             if await client.check_auth():
-                spinner.stop(success=True)
+                if spinner:
+                    spinner.stop(success=True)
                 storage.set_last_used(device_name)
+                if json_out:
+                    emit_json(ok_payload(
+                        state="paired",
+                        device=device_name,
+                        address=address,
+                        reused_session=True,
+                    ))
+                    return 0
                 success(f"Already connected to {C.BOLD}{device_name}{C.RESET}")
-                await client.close()
                 return 0
-            spinner.fail("Token invalid, re-authenticating")
+            if spinner:
+                spinner.fail("Token invalid, re-authenticating")
         except Exception:
-            spinner.fail("Token validation failed")
+            if spinner:
+                spinner.fail("Token validation failed")
         finally:
             await client.close()
 
@@ -67,10 +120,16 @@ async def cmd_connect(args, storage: StorageService) -> int:
     stored_uid = (storage.state.client_user_id or "").strip()
 
     if not user_id:
+        if non_interactive:
+            return fail(
+                "user_id_required",
+                "A Symphony User ID is required to connect",
+                next_action=f"Get the User ID from Symphony Settings, then run truffile connect {device_name} --user-id <user-id> --json",
+            )
         print()
         print(f"  {C.DIM}Make sure you have:{C.RESET}")
         print(f"  {C.DIM}{DOT} Onboarded with the Truffle app{C.RESET}")
-        print(f"  {C.DIM}{DOT} Your User ID from the recovery codes{C.RESET}")
+        print(f"  {C.DIM}{DOT} Your User ID from Symphony Settings{C.RESET}")
         print()
         try:
             default_hint = f" [{stored_uid}]" if stored_uid else ""
@@ -81,85 +140,159 @@ async def cmd_connect(args, storage: StorageService) -> int:
         user_id = entered or stored_uid
 
     if not user_id:
-        error("User ID is required")
-        return 1
+        return fail(
+            "user_id_required",
+            "A Symphony User ID is required to connect",
+            next_action=f"Get the User ID from Symphony Settings, then run truffile connect {device_name} --user-id <user-id>",
+        )
 
     # persist for future runs and onboarding default
     if user_id != stored_uid:
         storage.state.client_user_id = user_id
         storage.save()
 
-    spinner = Spinner("Connecting to device")
-    spinner.start()
+    spinner = None if json_out else Spinner("Connecting to device")
+    if spinner:
+        spinner.start()
 
     client = TruffleClient(address, token="")
     try:
         await client.connect()
-        spinner.stop(success=True)
+        if spinner:
+            spinner.stop(success=True)
     except Exception as e:
-        spinner.fail(f"Failed to connect: {e}")
-        return 1
+        if spinner:
+            spinner.fail(f"Failed to connect: {e}")
+        await client.close()
+        return fail("connection_failed", f"Failed to connect: {e}", retryable=True)
 
-    print()
-    info("Requesting authorization...")
-    print(f"  {C.DIM}Please approve on your Truffle device{C.RESET}")
+    if not json_out:
+        print()
+        info("Requesting authorization...")
+        print(f"  {C.DIM}Please approve on your Truffle device{C.RESET}")
 
-    spinner = Spinner("Waiting for approval")
-    spinner.start()
+    spinner = None if json_out else Spinner("Waiting for approval")
+    if spinner:
+        spinner.start()
 
     try:
-        status, token = await client.register_new_session(user_id)
-    except Exception as e:
-        spinner.fail(f"Failed to register: {e}")
+        approval_timeout = max(0.1, float(getattr(args, "approval_timeout", 120.0) or 120.0))
+        status, token = await asyncio.wait_for(
+            client.register_new_session(user_id),
+            timeout=approval_timeout,
+        )
+    except asyncio.TimeoutError:
+        if spinner:
+            spinner.fail("Approval timed out")
         await client.close()
-        return 1
+        return fail(
+            "approval_timeout",
+            "Timed out waiting for approval on the Truffle device",
+            retryable=True,
+            next_action="Run connect again and approve the new session on the Truffle device",
+        )
+    except Exception as e:
+        if spinner:
+            spinner.fail(f"Failed to register: {e}")
+        await client.close()
+        return fail("registration_failed", f"Failed to register: {e}", retryable=True)
 
     await client.close()
 
     if status.error == NewSessionStatus.NEW_SESSION_SUCCESS and token:
-        spinner.stop(success=True)
+        if spinner:
+            spinner.stop(success=True)
         storage.set_token(device_name, token)
         storage.set_last_used(device_name)
+        if json_out:
+            emit_json(ok_payload(
+                state="paired",
+                device=device_name,
+                address=address,
+                reused_session=False,
+            ))
+            return 0
         print()
         success(f"Connected to {C.BOLD}{device_name}{C.RESET}")
         return 0
     elif status.error == NewSessionStatus.NEW_SESSION_TIMEOUT:
-        spinner.fail("Approval timed out")
-        return 1
+        if spinner:
+            spinner.fail("Approval timed out")
+        return fail(
+            "approval_timeout",
+            "Approval timed out",
+            retryable=True,
+            next_action="Run connect again and approve the new session on the Truffle device",
+        )
     elif status.error == NewSessionStatus.NEW_SESSION_REJECTED:
-        spinner.fail("Request was rejected")
-        return 1
+        if spinner:
+            spinner.fail("Request was rejected")
+        return fail("approval_rejected", "The connection request was rejected on the Truffle device")
     else:
-        spinner.fail(f"Authentication failed: {status.error}")
-        return 1
+        if spinner:
+            spinner.fail(f"Authentication failed: {status.error}")
+        return fail("authentication_failed", f"Authentication failed: {status.error}")
 
 
 def cmd_disconnect(args, storage: StorageService) -> int:
+    json_out = bool(getattr(args, "json", False))
     # In-container: the session token is provided by the runtime, not by us.
     # We can't revoke it from here, so disconnect is a no-op.
     if probe_in_container_device() is not None:
+        if json_out:
+            emit_json(ok_payload(
+                state="unchanged",
+                execution_context="truffle_container",
+                message="The runtime owns the in-container session",
+            ))
+            return 0
         info("disconnect is a no-op inside a Truffle app container")
         print(f"  {C.DIM}the session token comes from the runtime and lives for the container lifetime.{C.RESET}")
         return 0
 
     target = getattr(args, "device", "all")
     if target == "all":
+        removed = storage.list_devices()
         storage.clear_all()
+        if json_out:
+            emit_json(ok_payload(disconnected=removed))
+            return 0
         success("All device credentials cleared")
     else:
         if storage.remove_device(target):
+            if json_out:
+                emit_json(ok_payload(disconnected=[target]))
+                return 0
             success(f"Disconnected from {C.BOLD}{target}{C.RESET}")
         else:
+            if json_out:
+                return emit_error("device_not_found", f"No credentials found for {target}", device=target)
             error(f"No credentials found for {target}")
+            return 1
     return 0
 
 
 async def cmd_scan(args, storage: StorageService) -> int:
+    json_out = bool(getattr(args, "json", False))
+    non_interactive = bool(getattr(args, "non_interactive", False)) or json_out
     # In-container short-circuit: the host firmware is the only "device" we
     # can possibly reach from inside a CNI-isolated app container, and we
     # already know how to reach it. Skip mDNS entirely.
     ic_info = probe_in_container_device()
     if ic_info is not None:
+        if json_out:
+            emit_json(ok_payload(
+                execution_context="truffle_container",
+                devices=[{
+                    "name": ic_info.device_name,
+                    "addresses": [ic_info.ip_address] if ic_info.ip_address else [],
+                    "port": 80,
+                    "connected": True,
+                    "grpc_address": ic_info.grpc_address,
+                    "firmware_version": ic_info.firmware_version or None,
+                }],
+            ))
+            return 0
         print(f"{C.DIM}[in-container mode] skipping mDNS scan{C.RESET}")
         print()
         print(f"{C.BOLD}DEVICES{C.RESET}")
@@ -190,6 +323,12 @@ async def cmd_scan(args, storage: StorageService) -> int:
     try:
         from zeroconf import ServiceBrowser, ServiceListener, Zeroconf, IPVersion
     except ImportError:
+        if json_out:
+            return emit_error(
+                "dependency_missing",
+                "zeroconf package required for scanning",
+                next_action="pip install zeroconf",
+            )
         error("zeroconf package required for scanning")
         print(f"  {C.DIM}pip install zeroconf{C.RESET}")
         return 1
@@ -218,8 +357,9 @@ async def cmd_scan(args, storage: StorageService) -> int:
 
     timeout = args.timeout if hasattr(args, 'timeout') else 5
 
-    spinner = Spinner(f"Scanning for Truffle devices ({timeout}s)")
-    spinner.start()
+    spinner = None if json_out else Spinner(f"Scanning for Truffle devices ({timeout}s)")
+    if spinner:
+        spinner.start()
 
     try:
         zc = Zeroconf(ip_version=IPVersion.V4Only)
@@ -236,12 +376,24 @@ async def cmd_scan(args, storage: StorageService) -> int:
         zc.close()
 
     except Exception as e:
-        spinner.fail(f"Scan failed: {e}")
+        if spinner:
+            spinner.fail(f"Scan failed: {e}")
+        if json_out:
+            return emit_error("scan_failed", f"Scan failed: {e}", retryable=True)
         return 1
 
-    spinner.stop(success=True)
+    if spinner:
+        spinner.stop(success=True)
 
     if not devices:
+        if json_out:
+            return emit_error(
+                "device_not_found",
+                "No Truffle devices found on the network",
+                retryable=True,
+                devices=[],
+                next_action="Confirm the Truffle is powered on and connected to the same network",
+            )
         print()
         print(f"  {C.DIM}No Truffle devices found on the network{C.RESET}")
         print()
@@ -251,22 +403,32 @@ async def cmd_scan(args, storage: StorageService) -> int:
         print()
         return 1
 
+    device_list = sorted(devices.values(), key=lambda item: item["name"])
+    for device in device_list:
+        device["connected"] = storage.get_token(device["name"]) is not None
+
+    if json_out:
+        emit_json(ok_payload(devices=device_list))
+        return 0
+
     print()
     print(f"{C.BOLD}Found {len(devices)} Truffle device(s):{C.RESET}")
     print()
 
-    device_list = list(devices.values())
     for i, device in enumerate(device_list, 1):
         name = device["name"]
         addrs = ", ".join(device["addresses"]) if device["addresses"] else "unknown"
 
-        already_connected = storage.get_token(name) is not None
+        already_connected = bool(device["connected"])
         if already_connected:
             print(f"  {C.GREEN}{i}.{C.RESET} {C.BOLD}{name}{C.RESET} {C.DIM}({addrs}){C.RESET} {C.GREEN}[connected]{C.RESET}")
         else:
             print(f"  {C.CYAN}{i}.{C.RESET} {C.BOLD}{name}{C.RESET} {C.DIM}({addrs}){C.RESET}")
 
     print()
+
+    if non_interactive:
+        return 0
 
     try:
         choice = input(f"Select device to connect (1-{len(device_list)}) or press Enter to cancel: ").strip()
@@ -295,7 +457,11 @@ async def cmd_scan(args, storage: StorageService) -> int:
         return 1
 
 
-async def _resolve_connected_device(storage: StorageService) -> tuple[str, str] | tuple[None, None]:
+async def _resolve_connected_device(
+    storage: StorageService,
+    *,
+    quiet: bool = False,
+) -> tuple[str, str] | tuple[None, None]:
     # In-container short-circuit: skip mDNS, return the env-provided host
     # for the synthetic device that the CLI startup injected into storage.
     ic_info = getattr(storage, "_in_container_info", None)
@@ -304,12 +470,14 @@ async def _resolve_connected_device(storage: StorageService) -> tuple[str, str] 
 
     device = storage.state.last_used_device
     if not device:
-        error("No device connected")
-        print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
+        if not quiet:
+            error("No device connected")
+            print(f"  {C.DIM}Run: truffile connect <device>{C.RESET}")
         return None, None
     try:
         ip = await resolve_mdns(f"{device}.local")
     except RuntimeError:
-        error(f"Could not resolve {device}.local")
+        if not quiet:
+            error(f"Could not resolve {device}.local")
         return None, None
     return device, ip

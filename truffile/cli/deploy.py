@@ -12,16 +12,18 @@ from truffile.schema import validate_app_dir
 from truffile.deploy import build_deploy_plan, deploy_with_builder
 
 from .connect import _resolve_connected_device
+from .output import emit_json, error_payload
 from .ui import C, ARROW, CROSS, DOT, Spinner, ScrollingLog, error, warn, info, success
 
 
 def _json_print(payload: dict) -> None:
-    print(json.dumps(payload, indent=2))
+    emit_json(payload)
 
 
 def _deploy_error(json_out: bool, code: str, message: str, **extra) -> int:
     if json_out:
-        payload = {"status": "error", "error": code, "message": message}
+        payload = error_payload(code, message)
+        payload["error"] = code  # compatibility with the initial deploy JSON contract
         payload.update({k: v for k, v in extra.items() if v not in (None, "", [], {})})
         _json_print(payload)
     else:
@@ -213,8 +215,16 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         success("Dry run complete (no device changes made)")
         return 0
 
-    device, ip = await _resolve_connected_device(storage)
+    device, ip = await _resolve_connected_device(storage, quiet=json_out)
     if not device or not ip:
+        if json_out:
+            return _deploy_error(
+                json_out,
+                "device_unreachable",
+                "The connected Truffle device could not be resolved",
+                retryable=True,
+                next_action="Run truffile scan --json, then reconnect if needed",
+            )
         return 1
 
     token = storage.get_token(device)

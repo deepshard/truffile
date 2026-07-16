@@ -8,6 +8,7 @@ from truffile.client import resolve_mdns
 
 from .connect import _resolve_connected_device
 from .in_container import in_container_http_headers
+from .output import emit_error, emit_json, exception_details, ok_payload
 from .ui import C, CHECK, MUSHROOM, WARN, Spinner, error, warn
 
 try:
@@ -18,30 +19,58 @@ except Exception:
     tty = None  # type: ignore[assignment]
 
 
-async def cmd_models(storage: StorageService) -> int:
+async def cmd_models(args, storage: StorageService) -> int:
     """List models on your Truffle."""
-    device, ip = await _resolve_connected_device(storage)
+    json_out = bool(getattr(args, "json", False))
+    timeout = float(getattr(args, "timeout", 15.0) or 15.0)
+    device, ip = await _resolve_connected_device(storage, quiet=json_out)
     if not device or not ip:
+        if json_out:
+            return emit_error(
+                "device_unreachable",
+                "The connected Truffle device could not be resolved",
+                retryable=True,
+                next_action="Run truffile scan --json, then reconnect if needed",
+            )
         return 1
 
-    spinner = Spinner(f"Connecting to {device}")
-    spinner.start()
+    spinner = None if json_out else Spinner(f"Connecting to {device}")
+    if spinner:
+        spinner.start()
 
     try:
         url = f"http://{ip}/if2/v1/models"
-        with httpx.Client(timeout=15.0) as client:
+        with httpx.Client(timeout=timeout) as client:
             resp = client.get(url, headers=in_container_http_headers())
             resp.raise_for_status()
             payload = resp.json()
-        spinner.stop(success=True)
+        if spinner:
+            spinner.stop(success=True)
     except Exception as e:
-        spinner.fail(f"Failed to get IF2 models: {e}")
+        if spinner:
+            spinner.fail(f"Failed to get IF2 models: {e}")
+        if json_out:
+            details = exception_details(e, default_code="model_list_failed")
+            return emit_error(
+                details.pop("code"),
+                details.pop("message"),
+                service="if2",
+                device=device,
+                **details,
+            )
         return 1
 
     models = payload.get("data", [])
     if not isinstance(models, list):
-        spinner.fail("Invalid response: missing 'data' list")
+        if spinner:
+            spinner.fail("Invalid response: missing 'data' list")
+        if json_out:
+            return emit_error("invalid_response", "Invalid response: missing 'data' list", service="if2")
         return 1
+
+    if json_out:
+        emit_json(ok_payload(device=device, service="if2", models=models))
+        return 0
 
     print()
     print(f"{MUSHROOM} {C.BOLD}IF2 Models on {device}{C.RESET}")

@@ -6,6 +6,7 @@ from truffile.storage import StorageService
 from truffile.client import TruffleClient
 
 from .connect import _resolve_connected_device
+from .output import emit_error, emit_json, error_payload, ok_payload
 from .ui import C, DOT, CROSS, CHECK, Spinner, error, warn, success
 
 
@@ -26,18 +27,34 @@ def _app_slug(name: str) -> str:
 def _app_summary(app) -> dict[str, str]:
     return {
         "name": app.metadata.name,
+        "bundle_id": getattr(app.metadata, "bundle_id", ""),
         "uuid": app.uuid,
+        "kind": _app_kind(app),
     }
 
 
 async def cmd_list_apps(args, storage: StorageService) -> int:
     json_out = bool(getattr(args, "json", False))
-    device, ip = await _resolve_connected_device(storage)
+    device, ip = await _resolve_connected_device(storage, quiet=json_out)
     if not device or not ip:
+        if json_out:
+            return emit_error(
+                "device_unreachable",
+                "The connected Truffle device could not be resolved",
+                retryable=True,
+                next_action="Run truffile scan --json, then reconnect if needed",
+            )
         return 1
 
     token = storage.get_token(device)
     if not token:
+        if json_out:
+            return emit_error(
+                "missing_token",
+                f"No saved session token for {device}",
+                device=device,
+                next_action=f"Run truffile connect {device} --user-id <user-id> --json",
+            )
         error(f"No token for {device}")
         print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return 1
@@ -57,7 +74,7 @@ async def cmd_list_apps(args, storage: StorageService) -> int:
             spinner.stop(success=True)
 
         if json_out:
-            print(json.dumps({"apps": [_app_summary(app) for app in apps]}, indent=2))
+            emit_json(ok_payload(device=device, apps=[_app_summary(app) for app in apps]))
             return 0
 
         if not apps:
@@ -112,7 +129,7 @@ async def cmd_list_apps(args, storage: StorageService) -> int:
         if spinner:
             spinner.fail(str(e))
         else:
-            error(str(e))
+            return emit_error("list_apps_failed", str(e), retryable=True, device=device)
         return 1
     finally:
         await client.close()
@@ -315,6 +332,14 @@ def cmd_list(args, storage: StorageService) -> int:
         return _run_async(cmd_list_apps(args, storage))
     elif what == "devices":
         devices = storage.list_devices()
+        if bool(getattr(args, "json", False)):
+            emit_json(ok_payload(
+                devices=[
+                    {"name": device, "active": device == storage.state.last_used_device}
+                    for device in devices
+                ],
+            ))
+            return 0
         if not devices:
             print(f"  {C.DIM}No connected devices{C.RESET}")
         else:

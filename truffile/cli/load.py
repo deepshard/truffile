@@ -6,6 +6,9 @@ from importlib import resources
 from pathlib import Path
 from typing import Iterable
 
+from truffile import __version__
+
+from .output import emit_json, error_payload, ok_payload
 from .ui import C, ARROW, error, success, warn
 
 
@@ -20,7 +23,7 @@ def _ignore_generated(_dir: str, names: list[str]) -> set[str]:
     return {name for name in names if name in ignored or name.endswith(".pyc")}
 
 
-def _copy_resource_tree(resource_name: str, destination: Path, *, force: bool) -> int:
+def _copy_resource_tree(resource_name: str, destination: Path, *, force: bool, quiet: bool = False) -> int:
     source = resources.files("truffile").joinpath(resource_name)
     if not source.is_dir():
         raise FileNotFoundError(f"bundled resource not found: truffile/{resource_name}")
@@ -28,7 +31,8 @@ def _copy_resource_tree(resource_name: str, destination: Path, *, force: bool) -
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
         if not force:
-            warn(f"Skipping existing {destination}; pass --force to replace it")
+            if not quiet:
+                warn(f"Skipping existing {destination}; pass --force to replace it")
             return 0
         if destination.is_dir():
             shutil.rmtree(destination)
@@ -59,7 +63,7 @@ def cmd_load(args) -> int:
     try:
         for label, resource_name, rel_dest in _targets(selection):
             dest = base / rel_dest
-            copied = bool(_copy_resource_tree(resource_name, dest, force=force))
+            copied = bool(_copy_resource_tree(resource_name, dest, force=force, quiet=json_out))
             results.append({
                 "name": label,
                 "path": str(dest),
@@ -67,13 +71,17 @@ def cmd_load(args) -> int:
             })
     except Exception as exc:
         if json_out:
-            print(json.dumps({"status": "error", "message": str(exc)}, indent=2))
+            emit_json(error_payload("load_failed", str(exc)))
         else:
             error(str(exc))
         return 1
 
     if json_out:
-        print(json.dumps({"status": "ok", "resources": results}, indent=2))
+        emit_json(ok_payload(
+            cli_version=__version__,
+            resource_version=__version__,
+            resources=results,
+        ))
         return 0
 
     for result in results:

@@ -20,6 +20,7 @@ import httpx
 from .ui import C, MUSHROOM, CHECK, HAMMER, WARN, SUPPORTED_SERVER_MIME_TYPES, Spinner, StreamAbortWatcher, error, success, info, warn, create_thinking_orb
 from .connect import _resolve_connected_device
 from .models import _fetch_models_payload, _pick_model_interactive, _default_model
+from .output import emit_error, emit_json, exception_details, ok_payload
 from .commands import INFER_COMMANDS
 from .prompt import TrufflePrompt
 from .markdown import has_markdown, render_markdown, count_terminal_lines
@@ -586,7 +587,7 @@ def _run_single_chat_request(
         return msg, usage, interrupted
 
     try:
-        resp = client.post(url, headers=headers, json=payload, timeout=120.0)
+        resp = client.post(url, headers=headers, json=payload)
         resp.raise_for_status()
         body = resp.json()
     finally:
@@ -674,20 +675,14 @@ async def _run_chat_turn(
             if name in {"web_search", "web_fetch"}:
                 if not quiet:
                     print(f"{C.CYAN}{HAMMER} tool{C.RESET} {name}")
-                else:
-                    sys.stderr.write(f"{HAMMER} tool {name}\n")
                 tool_result = _execute_default_tool(name, parsed_args)
             elif mcp_client.has_tool(name):
                 if not quiet:
                     print(f"{C.CYAN}{HAMMER} mcp{C.RESET} {name}")
-                else:
-                    sys.stderr.write(f"{HAMMER} mcp {name}\n")
                 tool_result = await mcp_client.call_tool(name, parsed_args)
             else:
                 if not quiet:
                     print(f"{C.YELLOW}{WARN} unknown tool{C.RESET} {name}")
-                else:
-                    sys.stderr.write(f"{WARN} unknown tool {name}\n")
                 tool_result = {"error": f"unknown tool '{name}'"}
             messages.append(
                 {
@@ -697,9 +692,7 @@ async def _run_chat_turn(
                 }
             )
 
-    if quiet:
-        sys.stderr.write("Reached max tool rounds without a final assistant response\n")
-    else:
+    if not quiet:
         warn("Reached max tool rounds without a final assistant response")
     return 1
 
@@ -731,6 +724,21 @@ def _eprint_factory(quiet: bool) -> Callable[[str], None]:
         sys.stderr.write(msg + "\n")
         sys.stderr.flush()
     return _eprint
+
+
+def _oneshot_error(
+    *,
+    json_out: bool,
+    eprint: Callable[[str], None],
+    code: str,
+    message: str,
+    retryable: bool = False,
+    **fields: Any,
+) -> int:
+    if json_out:
+        return emit_error(code, message, retryable=retryable, **fields)
+    eprint(message)
+    return 1
 
 
 def _read_prompt_from_args(args) -> str:
@@ -888,9 +896,16 @@ async def _run_oneshot(args, storage: StorageService) -> int:
     json_out = bool(getattr(args, "json", False))
 
     # device + IP
-    device, ip = await _resolve_connected_device(storage)
+    device, ip = await _resolve_connected_device(storage, quiet=json_out)
     if not device or not ip:
-        return 1
+        return _oneshot_error(
+            json_out=json_out,
+            eprint=eprint,
+            code="device_unreachable",
+            message="The connected Truffle device could not be resolved",
+            retryable=True,
+            next_action="Run truffile scan --json, then reconnect if needed",
+        )
 
     # --list-models: short circuit, no model resolution
     if getattr(args, "list_models", False):
@@ -898,10 +913,18 @@ async def _run_oneshot(args, storage: StorageService) -> int:
             try:
                 models = _fetch_models_payload(http, ip)
             except Exception as exc:
-                eprint(f"failed to list models: {exc}")
-                return 1
+                details = exception_details(exc, default_code="model_list_failed")
+                return _oneshot_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code=details.pop("code"),
+                    message=details.pop("message"),
+                    service="if2",
+                    device=device,
+                    **details,
+                )
         if json_out:
-            print(json.dumps({"models": models}, indent=2))
+            emit_json(ok_payload(device=device, service="if2", models=models))
         else:
             for m in models:
                 name = m.get("name") or m.get("id") or "<unnamed>"
@@ -916,8 +939,15 @@ async def _run_oneshot(args, storage: StorageService) -> int:
         eprint(f"resolving default model on {device}")
         model = await _default_model(ip)
         if not model:
-            eprint("failed to resolve default model from IF2")
-            return 1
+            return _oneshot_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="service_unavailable",
+                message="Failed to resolve a default model from IF2",
+                retryable=True,
+                service="if2",
+                device=device,
+            )
 
     settings = ChatSettings(model=model)
     # in one-shot mode, default to non-streaming for clean stdout capture.
@@ -936,15 +966,19 @@ async def _run_oneshot(args, storage: StorageService) -> int:
         try:
             mcp_client = await _connect_oneshot_mcp(args, eprint)
         except Exception as exc:
-            eprint(f"mcp connect failed: {exc}")
-            return 1
+            return _oneshot_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="mcp_connect_failed",
+                message=f"MCP connect failed: {exc}",
+            )
 
         # --list-tools: print built-ins + any MCP tools, exit
         if getattr(args, "list_tools", False):
             built_ins = ["web_search", "web_fetch"] if settings.default_tools else []
             mcp_tools = mcp_client.list_tool_names()
             if json_out:
-                print(json.dumps({"built_in": built_ins, "mcp": mcp_tools}, indent=2))
+                emit_json(ok_payload(built_in=built_ins, mcp=mcp_tools))
             else:
                 for name in built_ins:
                     print(f"built-in:{name}")
@@ -959,63 +993,121 @@ async def _run_oneshot(args, storage: StorageService) -> int:
             try:
                 parsed_args = json.loads(raw_args)
             except json.JSONDecodeError as exc:
-                eprint(f"--tool-args is not valid JSON: {exc}")
-                return 1
+                return _oneshot_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="invalid_args",
+                    message=f"--tool-args is not valid JSON: {exc}",
+                )
             if not isinstance(parsed_args, dict):
-                eprint("--tool-args must be a JSON object")
-                return 1
+                return _oneshot_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="invalid_args",
+                    message="--tool-args must be a JSON object",
+                )
             if call_tool in {"web_search", "web_fetch"} and settings.default_tools:
                 result = _execute_default_tool(call_tool, parsed_args)
             elif mcp_client.has_tool(call_tool):
                 result = await mcp_client.call_tool(call_tool, parsed_args)
             else:
-                eprint(f"unknown tool: {call_tool} (use --list-tools to see available)")
-                return 1
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return 0 if not (isinstance(result, dict) and (result.get("error") or result.get("is_error"))) else 1
+                return _oneshot_error(
+                    json_out=json_out,
+                    eprint=eprint,
+                    code="tool_not_found",
+                    message=f"Unknown tool: {call_tool} (use --list-tools to see available)",
+                )
+            result_failed = isinstance(result, dict) and bool(result.get("error") or result.get("is_error"))
+            if json_out:
+                if result_failed:
+                    return emit_error(
+                        "tool_call_failed",
+                        f"Tool call failed: {call_tool}",
+                        tool=call_tool,
+                        result=result,
+                    )
+                emit_json(ok_payload(result=result))
+            else:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 1 if result_failed else 0
 
         # prompt path
         try:
             prompt = _read_prompt_from_args(args)
         except FileNotFoundError as exc:
-            eprint(str(exc))
-            return 1
+            return _oneshot_error(json_out=json_out, eprint=eprint, code="file_not_found", message=str(exc))
         if not prompt:
-            eprint("no prompt provided (positional, --prompt-file, or stdin required)")
-            return 1
+            return _oneshot_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="input_required",
+                message="No prompt provided (positional, --prompt-file, or stdin required)",
+            )
 
         try:
             image_urls = _resolve_oneshot_images(args, eprint)
         except FileNotFoundError as exc:
-            eprint(str(exc))
-            return 1
+            return _oneshot_error(json_out=json_out, eprint=eprint, code="file_not_found", message=str(exc))
         except Exception as exc:
-            eprint(f"failed to attach image: {exc}")
-            return 1
+            return _oneshot_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="image_attach_failed",
+                message=f"Failed to attach image: {exc}",
+            )
 
         messages: list[dict[str, Any]] = []
         if settings.system_prompt:
             messages.append({"role": "system", "content": settings.system_prompt})
 
         # we always run quiet inside the helpers and format ourselves below
-        with httpx.Client(timeout=http_timeout) as http:
-            user_message = _make_user_message_multi(prompt, image_urls)
-            rc = await _run_chat_turn(
-                client=http,
-                url=url,
-                headers=headers,
-                model=settings.model,
-                settings=settings,
-                mcp_client=mcp_client,
-                messages=messages,
-                user_message=user_message,
-                quiet=True,
+        try:
+            with httpx.Client(timeout=http_timeout) as http:
+                user_message = _make_user_message_multi(prompt, image_urls)
+                rc = await _run_chat_turn(
+                    client=http,
+                    url=url,
+                    headers=headers,
+                    model=settings.model,
+                    settings=settings,
+                    mcp_client=mcp_client,
+                    messages=messages,
+                    user_message=user_message,
+                    quiet=True,
+                )
+        except Exception as exc:
+            details = exception_details(exc, default_code="inference_failed")
+            return _oneshot_error(
+                json_out=json_out,
+                eprint=eprint,
+                code=details.pop("code"),
+                message=details.pop("message"),
+                service="if2",
+                device=device,
+                **details,
             )
         if rc == 130:
-            eprint("interrupted")
+            if json_out:
+                emit_json({
+                    "status": "error",
+                    "code": "interrupted",
+                    "message": "Inference was interrupted",
+                    "retryable": True,
+                    "service": "if2",
+                    "device": device,
+                })
+            else:
+                eprint("interrupted")
             return 130
         if rc != 0:
-            return rc
+            return _oneshot_error(
+                json_out=json_out,
+                eprint=eprint,
+                code="inference_failed",
+                message="Inference ended without a final assistant response",
+                service="if2",
+                device=device,
+            )
 
         # find the final assistant message
         final_assistant: dict[str, Any] | None = None
@@ -1029,15 +1121,14 @@ async def _run_oneshot(args, storage: StorageService) -> int:
         tool_calls = (final_assistant or {}).get("tool_calls") or []
 
         if json_out:
-            payload = {
-                "model": settings.model,
-                "device": device,
-                "content": content,
-                "reasoning": reasoning or None,
-                "tool_calls": tool_calls or None,
-                "messages": messages,
-            }
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            emit_json(ok_payload(
+                model=settings.model,
+                device=device,
+                content=content,
+                reasoning=reasoning or None,
+                tool_calls=tool_calls or None,
+                messages=messages,
+            ))
         else:
             if getattr(args, "show_reasoning", False) and reasoning:
                 sys.stderr.write("--- reasoning ---\n")
