@@ -22,8 +22,8 @@ Symphony desktop client:
 
 https://docs.truffle.net/client/overview
 
-After onboarding, ask the user for the User ID from Symphony **Settings >
-About** if they have not already provided it. `truffile connect` uses that User
+After onboarding, ask the user for the User ID from **Symphony > Settings** if
+they have not already provided it. `truffile connect` uses that User
 ID and then the user must approve the new session on the Truffle device.
 Stored credentials are reused after the first approval.
 
@@ -89,6 +89,25 @@ truffile delete all
 
 Prefer deleting by app name, slug, or uuid. Numeric indices still work, but
 they are less safe for agent workflows because app ordering can change.
+
+### Manage Users And Convo
+
+```bash
+truffile users clear-other
+truffile users clear-other --force --json
+truffile convo reset
+truffile convo reset --hard
+truffile convo reset --hard --force
+```
+
+`users clear-other` deletes old users that are not associated with the current
+authenticated account. Without `--force`, it prompts and shows the current
+account's user ID and username first.
+
+`convo reset` is a soft reset: it restarts the agent/runtime path and keeps
+Convo history. `convo reset --hard` clears persisted Convo nodes, threads, and
+runtime state, then recreates core threads. Use `--force` only when the user
+has already explicitly approved the hard reset.
 
 ### Obsidian
 

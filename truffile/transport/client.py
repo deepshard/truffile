@@ -21,8 +21,14 @@ from truffle.os.client_session_pb2 import (
     RegisterNewSessionResponse,
     NewSessionStatus,
 )
+from truffle.os.client_user_pb2 import UserIDForTokenRequest, UserIDForTokenResponse
+from truffle.os.convo_pb2 import ConvoResetRequest, ConvoResetResponse
 from truffle.os.client_metadata_pb2 import ClientMetadata
 from truffle.os.app_queries_pb2 import GetAllAppsRequest, GetAllAppsResponse, DeleteAppRequest, DeleteAppResponse
+from truffle.os.system_actions_pb2 import (
+    SystemClearOtherUsersDataRequest,
+    SystemClearOtherUsersDataResponse,
+)
 from truffle.app.app_pb2 import App
 from truffle.app.background_pb2 import BackgroundApp, BackgroundAppRuntimePolicy
 from truffle.os.task_actions_pb2 import (
@@ -159,6 +165,32 @@ class TruffleClient:
         req = DeleteAppRequest()
         req.app_uuid = app_uuid
         resp: DeleteAppResponse = await self.stub.Apps_DeleteApp(req, metadata=self._metadata)
+        return resp
+
+    async def get_current_user_identity(self) -> UserIDForTokenResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = UserIDForTokenRequest()
+        resp: UserIDForTokenResponse = await self.stub.Client_UserIDForToken(
+            req, metadata=self._metadata
+        )
+        return resp
+
+    async def clear_other_users_data(self) -> SystemClearOtherUsersDataResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = SystemClearOtherUsersDataRequest()
+        resp: SystemClearOtherUsersDataResponse = await self.stub.System_ClearOtherUsersData(
+            req, metadata=self._metadata
+        )
+        return resp
+
+    async def reset_convo(self, *, hard: bool = False) -> ConvoResetResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = ConvoResetRequest()
+        req.hard_reset = bool(hard)
+        resp: ConvoResetResponse = await self.stub.Convo_Reset(req, metadata=self._metadata)
         return resp
 
     async def start_build(self) -> StartBuildSessionResponse:
