@@ -11,6 +11,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from truffile.path_safety import resolve_path_within
+
 
 logger = logging.getLogger("truffile.obsidian_bridge")
 
@@ -72,19 +74,12 @@ def normalize_relative_path(raw_path: str, *, allow_root: bool = False) -> Path:
     return Path(*parts)
 
 
-def resolve_path_inside_vault(root: Path, raw_path: str, *, allow_root: bool = False, allow_missing: bool = False) -> Path:
+def resolve_path_inside_vault(root: Path, raw_path: str, *, allow_root: bool = False) -> Path:
     rel = normalize_relative_path(raw_path, allow_root=allow_root)
-    candidate = root / rel
-    if allow_missing:
-        parent = candidate.parent.resolve()
-        if parent != root and root not in parent.parents:
-            raise ValueError("Path escapes the vault root")
-        return parent / candidate.name
-
-    resolved = candidate.resolve()
-    if resolved != root and root not in resolved.parents:
-        raise ValueError("Path escapes the vault root")
-    return resolved
+    try:
+        return resolve_path_within(root, str(rel), label="Path")
+    except ValueError as exc:
+        raise ValueError("Path escapes the vault root") from exc
 
 
 class VaultBridge:
@@ -129,7 +124,7 @@ class VaultBridge:
         }
 
     def write_note(self, file_path: str, content: str, *, append: bool = False) -> dict[str, Any]:
-        full = resolve_path_inside_vault(self.root, file_path, allow_missing=True)
+        full = resolve_path_inside_vault(self.root, file_path)
         full.parent.mkdir(parents=True, exist_ok=True)
         if append:
             with full.open("a", encoding="utf-8") as handle:
@@ -157,8 +152,9 @@ class VaultBridge:
             if any(part.startswith(".") for part in rel.parts):
                 continue
             try:
-                text = md_file.read_text(encoding="utf-8")
-            except Exception:
+                safe_file = resolve_path_inside_vault(self.root, rel.as_posix())
+                text = safe_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeError, ValueError):
                 continue
             text_lower = text.lower()
             idx = text_lower.find(query_lower)

@@ -153,6 +153,78 @@ steps:
             has_missing = any("not found" in m.lower() or "missing" in m.lower() or "does not exist" in m.lower() for m in all_messages)
             self.assertTrue(has_missing, f"expected missing file message in: {all_messages}")
 
+    def test_source_outside_app_is_rejected(self):
+        yaml = """
+metadata:
+  name: External Source
+  bundle_id: org.test.external
+  foreground:
+    process:
+      cmd: [python, app.py]
+steps:
+  - name: Copy
+    type: files
+    files:
+      - source: ../secret.txt
+        destination: ./secret.txt
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "secret.txt").write_text("secret")
+            app_dir = self._make_app(tmp, yaml, {"app.py": "pass"})
+            valid, _config, _app_type, _warnings, errors = validate_app_dir(app_dir)
+
+            self.assertFalse(valid)
+            self.assertTrue(any("source file must stay within" in error.lower() for error in errors))
+
+    def test_external_icon_is_rejected(self):
+        yaml = """
+metadata:
+  name: External Icon
+  bundle_id: org.test.external-icon
+  icon_file: ../icon.png
+  foreground:
+    process:
+      cmd: [python, app.py]
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "icon.png").write_text("not an app icon")
+            app_dir = self._make_app(tmp, yaml, {"app.py": "pass"})
+            valid, _config, _app_type, _warnings, errors = validate_app_dir(app_dir)
+
+            self.assertFalse(valid)
+            self.assertTrue(any("icon file must stay within" in error.lower() for error in errors))
+
+    def test_source_directory_with_external_symlink_is_rejected(self):
+        yaml = """
+metadata:
+  name: Linked Source
+  bundle_id: org.test.linked-source
+  foreground:
+    process:
+      cmd: [python, app.py]
+steps:
+  - name: Copy
+    type: files
+    files:
+      - source: ./files
+        destination: ./files
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            app_dir = self._make_app(tmp, yaml, {"app.py": "pass"})
+            source_dir = app_dir / "files"
+            source_dir.mkdir()
+            outside = Path(tmp, "secret.txt")
+            outside.write_text("secret", encoding="utf-8")
+            try:
+                (source_dir / "linked.txt").symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+
+            valid, _config, _app_type, _warnings, errors = validate_app_dir(app_dir)
+
+            self.assertFalse(valid)
+            self.assertTrue(any("source file must stay within" in error.lower() for error in errors))
+
     def test_vnc_step_is_rejected_before_deploy(self):
         for step_type in ("vnc",):
             yaml = f"""

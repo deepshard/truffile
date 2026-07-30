@@ -10,6 +10,7 @@ from truffile.deploy.plan import (
     _bundle_id_from_name,
     _env_map_to_list,
 )
+from truffile.deploy.steps.files import handle_files
 
 
 class TestNormalizeCmd(unittest.TestCase):
@@ -197,3 +198,41 @@ class TestDeployWithBuilder(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(client.discarded)
         self.assertIsNone(client.app_uuid)
+
+
+class TestFileSteps(unittest.IsolatedAsyncioTestCase):
+    async def test_directory_upload_rejects_external_symlink(self):
+        class FakeClient:
+            async def upload(self, _src, _dest):
+                raise AssertionError("external symlink should not be uploaded")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            app_dir = base / "test-app"
+            source_dir = app_dir / "files"
+            source_dir.mkdir(parents=True)
+            outside = base / "outside.txt"
+            outside.write_text("secret", encoding="utf-8")
+            link = source_dir / "linked.txt"
+            try:
+                link.symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+
+            with self.assertRaisesRegex(ValueError, "Source file must stay within"):
+                await handle_files(
+                    {
+                        "files": [
+                            {
+                                "source": "./files",
+                                "destination": "./files",
+                            }
+                        ]
+                    },
+                    client=FakeClient(),
+                    app_dir=app_dir,
+                    spinner_cls=_NoopSpinner,
+                    arrow="->",
+                    color_dim="",
+                    color_reset="",
+                )
