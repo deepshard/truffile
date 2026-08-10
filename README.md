@@ -8,7 +8,7 @@ Python SDK/CLI for Truffle devices.
 - copies bundled agent resources into your workspace (`load`)
 - validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
 - manages installed apps (`list apps`, `delete`)
-- talks to inference directly (`models`, `chat`)
+- talks to the on-device agent (`convo`) or inference directly (`models`, `infer`)
 
 ## Start making your Own Apps
 
@@ -59,7 +59,7 @@ truffile deploy --dry-run [app_dir]
 truffile list apps --json
 truffile delete <app-name>
 truffile models
-truffile chat
+truffile convo
 ```
 
 `truffile create` scaffolds a hybrid app starter with:
@@ -93,19 +93,51 @@ bundled app uses that token to read, write, list, and search notes in the
 configured vault.
 
 
-In `truffile chat`, runtime controls are slash commands (not launch flags):
+## Convo chat
 
-- `/help` for all chat commands
-- `/config` to show current chat config
-- `/reasoning on|off`
-- `/stream on|off`
-- `/json on|off`
-- `/tools on|off`
-- `/max_tokens <int>`, `/temperature <float|off>`, `/top_p <float|off>`, `/max_rounds <int>`
-- `/models` to switch model
-- `/attach <path-or-url>` to attach an image for the next user message (local path or `http(s)` URL)
-- `/system <text|clear>`
-- `/mcp connect <http(s)://...>`, `/mcp tools`, `/mcp status`, `/mcp disconnect`
+`truffile convo` opens an interactive REPL backed only by the authenticated
+user's Convo. It defaults to an unsent new side thread; the first message
+creates that thread. Use `truffile convo --main` or `/main` to opt into Main.
+`/new` always starts another unsent side thread.
+
+Useful REPL commands include `/threads`, `/history`, `/rename <name>`,
+`/interrupt`, `/hide`, `/restore`, `/main`, and `/new`. Main is thread `0`.
+System/Bulletin threads, including thread `-1`, are not shown and cannot be
+selected for chat.
+
+The same command is first-class for scripts and agents:
+
+```bash
+# New side thread, wait for the completion fence, print JSON, then exit.
+truffile convo --new --rename "QA debug" --json --timeout 120 \
+  "Reply with a short device status summary"
+
+# Follow up by exact thread name or decimal id.
+truffile convo --thread "QA debug" --json "continue"
+truffile convo --thread-id 123 --json "continue"
+
+# Inspect/list/rename/interrupt without entering the REPL.
+truffile convo --list-chats --json
+truffile convo --thread-id 123 --history --json
+truffile convo --thread-id 123 --rename "Release notes"
+truffile convo --thread-id 123 --interrupt
+```
+
+One-shot mode writes the final text (or one JSON document with `--json`) to
+stdout and exits nonzero for invalid selection, runtime/agent failure,
+interaction-required state, interruption, lost completion fence, or timeout.
+`--timeout` is opt-in; expiry interrupts the selected thread and exits `124`.
+JSON includes canonical `thread_id` and `backend: "convo"`, plus the
+one-release `task_id` compatibility key. The `--task-id`, `--list-tasks`, and
+`/tasks` spellings remain aliases for one release and accept decimal Convo
+thread IDs—not legacy Task UUIDs.
+
+Old Task histories are intentionally not listed or migrated. Local hide is
+reversible and device/user scoped: it never deletes a server thread. Per-chat
+app restrictions do not exist in the Convo protocol, so `--app` and dynamic
+`/<app>` sends are rejected explicitly; `/apps` and `--list-apps` remain
+available. Setup/OAuth/action cards are reported as interaction required and
+must be completed in a supported client in v1.
 
 ## Inference Interfaces
 
@@ -115,11 +147,12 @@ Direct IF2:
 
 CLI wrappers:
 - `truffile models`
-- `truffile chat` (streaming by default)
+- `truffile infer` (streaming by default)
 
 ## Proto Sync
 
-Refresh vendored protos from firmware repo:
+The tracked `truffle.*_pb2` packages are pinned by `truffle/PROTOCOL_SHA`.
+Refresh them from the generated Python tree and protocol repo:
 
 ```bash
 ./scripts/sync_protos.sh
@@ -136,6 +169,28 @@ truffile deploy --dry-run ./apps/my-app
 truffile deploy ./apps/my-app
 ```
 
-After deploy, use `truffile chat` to attach the app to a task and exercise its
-tools with the on-device agent. Use `truffile delete` to remove test apps from
-the connected device.
+After deploy, use `truffile convo` to exercise the on-device agent. Convo v1
+cannot enforce a per-thread app allowlist; inspect installed apps with
+`truffile convo --list-apps`. Use `truffile delete` to remove test apps from the
+connected device.
+
+## Clean package verification
+
+```bash
+python3.12 -m venv /tmp/truffile-convo-clean
+/tmp/truffile-convo-clean/bin/python -m pip install -e .
+/tmp/truffile-convo-clean/bin/python -c \
+  'from truffile.transport.client import TruffleClient; print("ok")'
+/tmp/truffile-convo-clean/bin/truffile convo --help
+
+/tmp/truffile-convo-clean/bin/python -m pip wheel --no-deps -w /tmp/truffile-wheel .
+python3.12 -m venv /tmp/truffile-convo-wheel
+/tmp/truffile-convo-wheel/bin/python -m pip install /tmp/truffile-wheel/truffile-*.whl
+/tmp/truffile-convo-wheel/bin/truffile convo --help
+```
+
+For the owner device acceptance sequence, run
+`scripts/smoke_convo_6272.sh` after connecting an already approved
+`truffle-6272` session. The script uses safe text-only prompts and covers
+list/new/rename/history/one-shot/interrupt; finish with the printed manual REPL
+check for streaming interruption.

@@ -25,6 +25,7 @@ class StoredState:
     last_used_device: str | None = None
     client_user_id: str | None = None
     obsidian_bridge: StoredObsidianBridge | None = None
+    hidden_convo_threads: dict[str, list[int]] = field(default_factory=dict)
 
 
 def get_storage_dir() -> Path:
@@ -41,10 +42,21 @@ class StorageService:
 
     def _load_state(self) -> StoredState:
         if not self.state_file.exists():
+            self._unknown_state = {}
             return StoredState()
         try:
             with open(self.state_file, "r") as f:
                 data = json.load(f)
+            known_keys = {
+                "devices",
+                "last_used_device",
+                "client_user_id",
+                "obsidian_bridge",
+                "hidden_convo_threads",
+            }
+            self._unknown_state = {
+                key: value for key, value in data.items() if key not in known_keys
+            }
             devices = [StoredDevice(**d) for d in data.get("devices", [])]
             bridge_data = data.get("obsidian_bridge")
             obsidian_bridge = None
@@ -58,12 +70,36 @@ class StorageService:
                 last_used_device=data.get("last_used_device"),
                 client_user_id=data.get("client_user_id"),
                 obsidian_bridge=obsidian_bridge,
+                hidden_convo_threads=self._parse_hidden_convo_threads(
+                    data.get("hidden_convo_threads", {})
+                ),
             )
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, TypeError):
+            self._unknown_state = {}
             return StoredState()
 
+    @staticmethod
+    def _parse_hidden_convo_threads(value) -> dict[str, list[int]]:
+        if not isinstance(value, dict):
+            return {}
+        parsed: dict[str, list[int]] = {}
+        for key, thread_ids in value.items():
+            if not isinstance(key, str) or not isinstance(thread_ids, list):
+                continue
+            safe_ids: list[int] = []
+            for thread_id in thread_ids:
+                try:
+                    normalized = int(thread_id)
+                except (TypeError, ValueError):
+                    continue
+                if normalized not in (0, -1) and normalized not in safe_ids:
+                    safe_ids.append(normalized)
+            parsed[key] = sorted(safe_ids)
+        return parsed
+
     def save(self) -> None:
-        state_dict = {
+        state_dict = dict(getattr(self, "_unknown_state", {}))
+        state_dict.update({
             "devices": [{"name": d.name, "token": d.token} for d in self.state.devices],
             "last_used_device": self.state.last_used_device,
             "client_user_id": self.state.client_user_id,
@@ -78,7 +114,8 @@ class StorageService:
                 if self.state.obsidian_bridge is not None
                 else None
             ),
-        }
+            "hidden_convo_threads": self.state.hidden_convo_threads,
+        })
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.state_file, "w") as f:
             json.dump(state_dict, f, indent=4)
@@ -132,6 +169,39 @@ class StorageService:
 
     def clear_obsidian_bridge(self) -> None:
         self.state.obsidian_bridge = None
+        self.save()
+
+    @staticmethod
+    def _convo_hide_key(device_name: str, user_id: str) -> str:
+        device = device_name.strip()
+        user = user_id.strip()
+        if not device or not user:
+            raise ValueError("device name and authenticated user id are required")
+        return f"{device}::{user}"
+
+    def hidden_convo_thread_ids(self, device_name: str, user_id: str) -> set[int]:
+        key = self._convo_hide_key(device_name, user_id)
+        return {int(value) for value in self.state.hidden_convo_threads.get(key, [])}
+
+    def hide_convo_thread(self, device_name: str, user_id: str, thread_id: int) -> None:
+        normalized = int(thread_id)
+        if normalized in (0, -1):
+            raise ValueError("Main and system threads cannot be hidden")
+        key = self._convo_hide_key(device_name, user_id)
+        hidden = self.hidden_convo_thread_ids(device_name, user_id)
+        hidden.add(normalized)
+        self.state.hidden_convo_threads[key] = sorted(hidden)
+        self.save()
+
+    def restore_convo_thread(self, device_name: str, user_id: str, thread_id: int) -> None:
+        normalized = int(thread_id)
+        key = self._convo_hide_key(device_name, user_id)
+        hidden = self.hidden_convo_thread_ids(device_name, user_id)
+        hidden.discard(normalized)
+        if hidden:
+            self.state.hidden_convo_threads[key] = sorted(hidden)
+        else:
+            self.state.hidden_convo_threads.pop(key, None)
         self.save()
 
     def app_id_for_device(self, name: str) -> str | None:

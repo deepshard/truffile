@@ -26,8 +26,7 @@ def main() -> int:
 
 
 _DEVICE_REQUIRING_COMMANDS = {
-    None,  # default → chat
-    "chat",
+    None,  # default → Convo REPL
     "convo",
     "infer",
     "deploy",
@@ -39,6 +38,8 @@ _DEVICE_REQUIRING_COMMANDS = {
 
 def _command_needs_device(args) -> bool:
     cmd = getattr(args, "command", None)
+    if cmd == "convo" and getattr(args, "app", None):
+        return False
     if cmd == "deploy":
         return not bool(getattr(args, "dry_run", False))
     if cmd == "obsidian":
@@ -110,8 +111,12 @@ def _run_onboarding(storage) -> int:
 
 
 def _main() -> int:
+    argv = list(sys.argv[1:])
+    if len(argv) >= 2 and argv[:2] == ["convo", "reset"]:
+        argv = ["convo", "--reset-internal", *argv[2:]]
+
     parser = argparse.ArgumentParser(prog="truffile")
-    parser.add_argument("--resume", action="store_true", help="resume a previous task")
+    parser.add_argument("--resume", action="store_true", help="open the Convo thread picker")
     sub = parser.add_subparsers(dest="command")
 
     # scan
@@ -184,51 +189,74 @@ def _main() -> int:
     users_clear.add_argument("--force", action="store_true", help="skip confirmation prompt")
     users_clear.add_argument("--json", action="store_true", help="emit structured json")
 
-    # convo
-    convo_p = sub.add_parser("convo", help="manage Convo on the connected device")
-    convo_sub = convo_p.add_subparsers(dest="convo_command")
-    convo_reset = convo_sub.add_parser(
-        "reset",
-        help="reset the current user's Convo agent",
-        description="Reset the current user's Convo agent.",
+    # convo chat (interactive by default, agent-drivable when given an action/prompt)
+    convo_p = sub.add_parser(
+        "convo",
+        help="chat with the device agent using Convo threads",
+        description=(
+            "Chat through the authenticated user's Convo. New conversations default "
+            "to a side thread; use --main to opt into Main. Supplying a prompt or "
+            "action flag runs non-interactively."
+        ),
         epilog=(
-            "Soft reset restarts the agent/runtime path and keeps Convo history.\n"
-            "Hard reset clears persisted Convo nodes, threads, and runtime state, "
-            "then recreates core threads.\n\n"
             "Examples:\n"
-            "  truffile convo reset\n"
-            "  truffile convo reset --hard\n"
-            "  truffile convo reset --hard --force"
+            "  truffile convo\n"
+            "  truffile convo --main\n"
+            "  truffile convo --json --timeout 120 'summarize my day'\n"
+            "  truffile convo --thread 'Trip research' --json 'continue'\n"
+            "  truffile convo --new --rename 'QA debug' --json 'run a safe check'\n"
+            "  truffile convo --list-chats --json\n"
+            "  truffile convo --thread-id 123 --rename 'Release notes'\n"
+            "  truffile convo reset"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    convo_reset.add_argument("--hard", action="store_true", help="clear persisted Convo state before restart")
-    convo_reset.add_argument("--force", action="store_true", help="skip hard-reset confirmation prompt")
-    convo_reset.add_argument("--json", action="store_true", help="emit structured json")
+    convo_p.add_argument("prompt_words", nargs="*", help="message text; omission opens the REPL")
+    convo_p.add_argument("--resume", action="store_true", help="open the interactive thread picker")
+    convo_p.add_argument("--prompt-file", type=str, default=None, help="read a one-shot message from a file")
+    convo_p.add_argument("--stdin", action="store_true", help="read a one-shot message from stdin")
+    target = convo_p.add_mutually_exclusive_group()
+    target.add_argument("--main", action="store_true", help="select Main instead of a new side thread")
+    target.add_argument("--thread", type=str, help="select an existing thread by exact name or decimal id")
+    target.add_argument(
+        "--thread-id",
+        "--task-id",
+        dest="thread_id",
+        type=str,
+        help="select an existing thread by decimal id (--task-id is a one-release alias)",
+    )
+    target.add_argument("--resume-last", action="store_true", dest="resume_last", help="select the thread with the newest node")
+    target.add_argument("--new", action="store_true", help="explicitly start a new side thread")
+    convo_p.add_argument("--rename", metavar="NAME", help="rename the selected/new thread (after send for new threads)")
+    convo_p.add_argument("--history", action="store_true", help="print selected thread history and exit")
+    convo_p.add_argument("--interrupt", action="store_true", help="interrupt work in the selected thread and exit")
+    convo_p.add_argument("--hide", metavar="THREAD", help="hide a thread locally and exit")
+    convo_p.add_argument("--restore", metavar="THREAD", help="restore a locally hidden thread and exit")
+    convo_p.add_argument("--include-hidden", action="store_true", dest="include_hidden", help="include locally hidden threads in list/selection")
+    convo_p.add_argument("--app", action="append", default=None, help="unsupported in Convo v1; retained for an explicit error")
+    convo_p.add_argument("--list-apps", action="store_true", dest="list_apps", help="list installed apps and exit")
+    convo_p.add_argument(
+        "--list-chats",
+        "--list-threads",
+        "--list-tasks",
+        nargs="?",
+        const=15,
+        type=int,
+        default=None,
+        dest="list_threads",
+        metavar="N",
+        help="list Convo threads and exit (default 15; --list-tasks is a one-release alias)",
+    )
+    convo_p.add_argument("--json", action="store_true", help="emit one machine-readable JSON document")
+    convo_p.add_argument("--show-thinking", action="store_true", dest="show_thinking", help="include durable thinking summaries on stderr")
+    convo_p.add_argument("--quiet", "-q", action="store_true", help="suppress non-result diagnostics")
+    convo_p.add_argument("--timeout", type=float, default=None, help="opt-in one-shot settlement timeout in seconds")
+    convo_p.add_argument("--reset-internal", action="store_true", help=argparse.SUPPRESS)
+    convo_p.add_argument("--hard", action="store_true", help=argparse.SUPPRESS)
+    convo_p.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
 
     # models
     sub.add_parser("models", help="list inference models")
-
-    # chat (agent runtime with apps)
-    chat_p = sub.add_parser("chat", help="agent chat with apps")
-    chat_p.add_argument("prompt_words", nargs="*", help="prompt text (joined). if omitted, drops into REPL")
-    chat_p.add_argument("--resume", action="store_true", help="resume a previous task (interactive picker)")
-    # one-shot prompt sources
-    chat_p.add_argument("--prompt-file", type=str, default=None, help="read prompt from file")
-    chat_p.add_argument("--stdin", action="store_true", help="force read prompt from stdin")
-    # task targeting
-    chat_p.add_argument("--task-id", type=str, default=None, dest="task_id", help="resume a specific task by id")
-    chat_p.add_argument("--resume-last", action="store_true", dest="resume_last", help="resume the most recent task")
-    # app attachment
-    chat_p.add_argument("--app", action="append", default=None, help="attach app by name, slug, or uuid (repeatable)")
-    # discovery
-    chat_p.add_argument("--list-apps", action="store_true", dest="list_apps", help="list installed apps and exit")
-    chat_p.add_argument("--list-tasks", nargs="?", const=15, type=int, default=None, dest="list_tasks", help="list recent tasks and exit (optional N, default 15)")
-    # output
-    chat_p.add_argument("--json", action="store_true", help="emit structured json result")
-    chat_p.add_argument("--show-thinking", action="store_true", dest="show_thinking", help="include thinking summaries on stderr")
-    chat_p.add_argument("--quiet", "-q", action="store_true", help="suppress decoration on stderr")
-    chat_p.add_argument("--timeout", type=float, default=None, help="max seconds to wait for task to settle")
 
     # infer (raw model inference)
     infer_p = sub.add_parser("infer", help="raw model inference")
@@ -297,7 +325,7 @@ def _main() -> int:
     # easter egg
     sub.add_parser("glow")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command == "help":
         from .welcome import show_help_welcome
@@ -335,9 +363,9 @@ def _main() -> int:
             return rc
 
     if args.command is None:
-        from .chat import cmd_chat
+        from .chat import cmd_convo
         from types import SimpleNamespace
-        return run_async(cmd_chat(
+        return run_async(cmd_convo(
             SimpleNamespace(resume=args.resume, prompt_words=[]),
             storage,
         ))
@@ -400,17 +428,15 @@ def _main() -> int:
             from .users import cmd_users_clear_other
             return run_async(cmd_users_clear_other(args, storage))
         parser.error("users requires a subcommand")
-    elif args.command == "convo":
-        if args.convo_command == "reset":
-            from .convo import cmd_convo_reset
-            return run_async(cmd_convo_reset(args, storage))
-        parser.error("convo requires a subcommand")
     elif args.command == "models":
         from .models import cmd_models
         return run_async(cmd_models(storage))
-    elif args.command == "chat":
-        from .chat import cmd_chat
-        return run_async(cmd_chat(args, storage))
+    elif args.command == "convo":
+        if getattr(args, "reset_internal", False):
+            from .convo import cmd_convo_reset
+            return run_async(cmd_convo_reset(args, storage))
+        from .chat import cmd_convo
+        return run_async(cmd_convo(args, storage))
     elif args.command == "infer":
         from .infer import cmd_infer
         return run_async(cmd_infer(args, storage))

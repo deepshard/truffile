@@ -152,7 +152,7 @@ truffile deploy ./my-app
 
 Then test with the agent:
 ```bash
-truffile chat
+truffile convo
 you> [test the app's tools]
 ```
 
