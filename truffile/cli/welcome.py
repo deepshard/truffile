@@ -76,7 +76,6 @@ def show_chat_welcome(*, device: str = "", apps: list[str] | None = None) -> Non
         ("/main", "switch to Main"),
         ("/history", "show history"),
         ("/rename <name>", "rename thread"),
-        ("/apps", "list installed apps"),
         ("/exit", "exit Convo"),
     ]
     for name, desc in cmds:

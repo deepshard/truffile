@@ -23,7 +23,6 @@ CHAT_COMMANDS: list[SlashCommand] = [
     SlashCommand("/interrupt", "interrupt work in current thread"),
     SlashCommand("/hide", "hide a thread on this machine", has_arg=True, arg_hint="[name|id]"),
     SlashCommand("/restore", "restore a locally hidden thread", has_arg=True, arg_hint="[name|id]"),
-    SlashCommand("/apps", "list installed apps"),
     SlashCommand("/deploy", "deploy an app to device", has_arg=True, arg_hint="<path>"),
     SlashCommand("/delete", "delete app or locally hide task alias", has_arg=True, arg_hint="app|task"),
     SlashCommand("/create", "scaffold a new app", has_arg=True, arg_hint="<name>"),

@@ -828,13 +828,6 @@ async def _run_interactive_chat(args, storage: StorageService) -> int:
                     except Exception as exc:
                         error(str(exc))
                     continue
-                if command == "/apps":
-                    apps = await _get_apps_list(client)
-                    print(f"\n{C.BOLD}installed apps:{C.RESET}")
-                    for app in apps:
-                        print(f"  {C.CYAN}{app['name']}{C.RESET} {C.DIM}({app['bundle_id']}){C.RESET}")
-                    print(f"{C.DIM}Per-chat app restrictions are unavailable in Convo v1.{C.RESET}\n")
-                    continue
                 if command == "/deploy":
                     try:
                         if await _interactive_deploy(arg, client, storage):
