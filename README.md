@@ -15,7 +15,7 @@ Python SDK/CLI for Truffle devices.
 - app schema and validation: `truffile/truffile/schema/app_config.py`
 - schedule parsing: `truffile/truffile/schedule.py`
 - deploy planning + builder flow: `truffile/truffile/deploy/builder.py`
-- generated TruffleOS protos vendored in: `truffile/truffle/`
+- generated TruffleOS protos staged locally in the gitignored repo-root `truffle/`
 - bundled example apps live under `truffile/app-store/`
 - bundled Codex skills live under `truffile/skills/`
 
@@ -30,7 +30,7 @@ Python SDK/CLI for Truffle devices.
 
 Apps can be:
 
-- foreground (`fg`): exposes MCP tools that tasks/agents can call during active execution
+- foreground (`fg`): exposes MCP tools the agent can call during requests and conversations
 - background (`bg`): runs on schedule and emits context for proactivity, enabling the device to trigger actions and write/update memory
 - both (`fg` + `bg`): one app package can provide MCP tools and scheduled context emission
 
@@ -42,7 +42,7 @@ How to think about it:
 
 In practice:
 
-- use `fg` when you need direct tool invocation from tasks
+- use `fg` when you need direct tool invocation from agent requests
 - use `bg` when you need periodic monitoring, summaries, or event-driven context
 - use `both` when the same app should both expose tools and continuously feed proactivity/memory
 
@@ -70,7 +70,7 @@ truffile convo
 `truffile load all` copies bundled agent-readable resources into your current
 workspace:
 
-- `./truffile/skills/` for CLI/chat/infer/app-creation skills
+- `./truffile/skills/` for CLI/Convo/infer/app-creation skills
 - `./truffile/examples/` for bundled example apps such as ArXiv, Exa, Notion,
   Obsidian, Viator, WHOOP, and Home Assistant
 
@@ -135,9 +135,10 @@ thread IDs—not legacy Task UUIDs.
 Old Task histories are intentionally not listed or migrated. Local hide is
 reversible and device/user scoped: it never deletes a server thread. Per-chat
 app restrictions do not exist in the Convo protocol, so `--app` and dynamic
-`/<app>` sends are rejected explicitly; `/apps` and `--list-apps` remain
-available. Setup/OAuth/action cards are reported as interaction required and
-must be completed in a supported client in v1.
+`/<app>` sends and interactive `/apps` are unavailable. Use
+`truffile convo --list-apps` or `truffile list apps` for discovery only. No app
+is attached to or restricted for a chat. Setup/OAuth/action cards are reported
+as interaction required and must be completed in a supported client in v1.
 
 ## Inference Interfaces
 
@@ -149,13 +150,38 @@ CLI wrappers:
 - `truffile models`
 - `truffile infer` (streaming by default)
 
-## Proto Sync
+## Generated proto staging
 
-The tracked `truffle.*_pb2` packages are pinned by `truffle/PROTOCOL_SHA`.
-Refresh them from the generated Python tree and protocol repo:
+The repo-root `truffle/` generated package and `scripts/` directory are
+deliberately gitignored and are not vendored in Git. A published `truffile`
+wheel already contains its generated bindings, so normal users only need:
 
 ```bash
-./scripts/sync_protos.sh
+python3.12 -m venv .venv
+.venv/bin/python -m pip install truffile
+.venv/bin/python -c \
+  'from truffile.transport.client import TruffleClient; print("ok")'
+.venv/bin/truffile convo --help
+```
+
+For an editable install or local wheel build from a source checkout, first
+copy the matching generated Python package from `pyfw`. Set `PYFW_CHECKOUT` to
+that checkout's absolute path; in the standard workspace layout it is the
+directory two levels above this repository.
+
+```bash
+PYFW_CHECKOUT=/absolute/path/to/pyfw
+test -f "$PYFW_CHECKOUT/python/truffle/os/convo_pb2.py"
+test -f "$PYFW_CHECKOUT/python/truffle/os/notification_pb2.py"
+cp -a "$PYFW_CHECKOUT/python/truffle" ./truffle
+```
+
+The staged `truffle/` tree stays ignored. Do not add it to Git. When producing
+a distributable wheel, record the exact source revision used to generate the
+bindings:
+
+```bash
+git -C "$PYFW_CHECKOUT" rev-parse HEAD > truffle/PROTOCOL_SHA
 ```
 
 ## Development Loop
@@ -174,7 +200,10 @@ cannot enforce a per-thread app allowlist; inspect installed apps with
 `truffile convo --list-apps`. Use `truffile delete` to remove test apps from the
 connected device.
 
-## Clean package verification
+## Editable install and wheel verification
+
+Start from a clean source clone and stage the generated package as described
+above. An editable install imports that ignored tree in place:
 
 ```bash
 python3.12 -m venv /tmp/truffile-convo-clean
@@ -182,15 +211,47 @@ python3.12 -m venv /tmp/truffile-convo-clean
 /tmp/truffile-convo-clean/bin/python -c \
   'from truffile.transport.client import TruffleClient; print("ok")'
 /tmp/truffile-convo-clean/bin/truffile convo --help
+```
 
+For a distributable wheel, first write `truffle/PROTOCOL_SHA`, then build and
+inspect the wheel. The wheel embeds the staged `truffle` package, including
+`.pyi` files and `PROTOCOL_SHA`, and is self-contained after installation.
+
+```bash
+git -C "$PYFW_CHECKOUT" rev-parse HEAD > truffle/PROTOCOL_SHA
 /tmp/truffile-convo-clean/bin/python -m pip wheel --no-deps -w /tmp/truffile-wheel .
+TRUFFILE_WHEEL="$(find /tmp/truffile-wheel -maxdepth 1 -name 'truffile-*.whl' -print -quit)"
+/tmp/truffile-convo-clean/bin/python -m zipfile -l "$TRUFFILE_WHEEL" \
+  | grep -E 'truffle/os/(convo|notification)_pb2\.(py|pyi)|truffle/PROTOCOL_SHA'
+
 python3.12 -m venv /tmp/truffile-convo-wheel
-/tmp/truffile-convo-wheel/bin/python -m pip install /tmp/truffile-wheel/truffile-*.whl
+/tmp/truffile-convo-wheel/bin/python -m pip install "$TRUFFILE_WHEEL"
+/tmp/truffile-convo-wheel/bin/python -c \
+  'from truffile.transport.client import TruffleClient; print("ok")'
 /tmp/truffile-convo-wheel/bin/truffile convo --help
 ```
 
-For the owner device acceptance sequence, run
-`scripts/smoke_convo_6272.sh` after connecting an already approved
-`truffle-6272` session. The script uses safe text-only prompts and covers
-list/new/rename/history/one-shot/interrupt; finish with the printed manual REPL
-check for streaming interruption.
+## Convo acceptance sequence
+
+With an already approved device session, use this text-only sequence. It does
+not create a new pairing or print credentials:
+
+```bash
+truffile convo --list-threads 5 --json --quiet
+
+OPENING="$(truffile convo --new --rename "Convo acceptance" \
+  --json --quiet --timeout 120 "Reply with the single word ready")"
+THREAD_ID="$(printf '%s' "$OPENING" | python -c \
+  'import json, sys; print(json.load(sys.stdin)["thread_id"])')"
+
+truffile convo --thread-id "$THREAD_ID" --history --json --quiet
+truffile convo --thread-id "$THREAD_ID" --json --quiet --timeout 120 \
+  "Follow up with the single word complete"
+truffile convo --thread-id "$THREAD_ID" --interrupt --json --quiet
+```
+
+Run each later command only if the opening command exits successfully. For the
+manual streaming-interruption check, run `truffile convo --resume`, choose the
+acceptance thread, send a request that takes long enough to stream, and press
+**Esc** or **Ctrl+C**. Confirm the request is interrupted and the REPL remains
+usable.
