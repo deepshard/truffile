@@ -66,17 +66,17 @@ def _build_panel(
 
 
 def show_chat_welcome(*, device: str = "", apps: list[str] | None = None) -> None:
-    """Welcome panel for truffile chat."""
+    """Welcome panel for truffile convo."""
     right: list[str] = []
     right.append(f"\033[1m\033[96mCommands\033[0m")
     cmds = [
         ("/help", "show commands"),
-        ("/tasks", "pick a task"),
-        ("/new", "new conversation"),
-        ("/apps", "list installed apps"),
-        ("/deploy <path>", "deploy an app"),
-        ("/create <name>", "scaffold new app"),
-        ("/exit", "exit chat"),
+        ("/threads", "pick a thread"),
+        ("/new", "new side thread"),
+        ("/main", "switch to Main"),
+        ("/history", "show history"),
+        ("/rename <name>", "rename thread"),
+        ("/exit", "exit Convo"),
     ]
     for name, desc in cmds:
         right.append(f"  \033[96m{name:<18}\033[0m \033[2m{desc}\033[0m")
@@ -85,7 +85,7 @@ def show_chat_welcome(*, device: str = "", apps: list[str] | None = None) -> Non
     right.append(f"\033[1m\033[96mKeys\033[0m")
     right.append(f"  \033[96m{'alt+enter':<18}\033[0m \033[2mnew line\033[0m")
     right.append(f"  \033[96m{'tab':<18}\033[0m \033[2mcomplete command\033[0m")
-    right.append(f"  \033[96m{'esc':<18}\033[0m \033[2minterrupt stream\033[0m")
+    right.append(f"  \033[96m{'esc/ctrl+c':<18}\033[0m \033[2minterrupt stream\033[0m")
     right.append(f"  \033[96m{'ctrl+d':<18}\033[0m \033[2mexit\033[0m")
 
     if apps:
@@ -97,7 +97,7 @@ def show_chat_welcome(*, device: str = "", apps: list[str] | None = None) -> Non
             right.append(f"  \033[2m...and {len(apps) - 6} more\033[0m")
 
     subtitle = f"connected to {device}" if device else ""
-    _console.print(_build_panel(right_lines=right, title="Truffile Chat", subtitle=subtitle))
+    _console.print(_build_panel(right_lines=right, title="Truffile Convo", subtitle=subtitle))
 
 
 def show_infer_welcome(*, model: str = "", device: str = "") -> None:
@@ -149,7 +149,7 @@ def show_help_welcome() -> None:
         ("users clear-other", "clear old users"),
         ("convo reset", "reset Convo"),
         ("models", "list models"),
-        ("chat", "agent chat"),
+        ("convo", "agent conversation"),
         ("infer", "raw inference"),
         ("help", "show this"),
     ]
@@ -163,7 +163,7 @@ def show_help_welcome() -> None:
         "truffile connect truffle-1234",
         "truffile create my-app",
         "truffile deploy ./my-app",
-        "truffile chat",
+        "truffile convo",
     ]
     for ex in examples:
         right.append(f"  \033[2m{ex}\033[0m")

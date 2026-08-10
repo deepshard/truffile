@@ -145,16 +145,16 @@ def _make_run_dir(base: Path) -> Path:
 
 
 def _list_apps(truffile: str, *, timeout: float | None) -> tuple[list[dict[str, Any]] | None, str | None]:
-    result = _run([truffile, "chat", "--quiet", "--json", "--list-apps"], timeout=timeout)
+    result = _run([truffile, "convo", "--quiet", "--json", "--list-apps"], timeout=timeout)
     if result.returncode != 0:
         detail = result.error or result.stderr.strip() or result.stdout.strip() or "unknown error"
-        return None, f"`truffile chat --list-apps` failed: {detail}"
+        return None, f"`truffile convo --list-apps` failed: {detail}"
     payload, error = _load_json(result.stdout)
     if error:
-        return None, f"`truffile chat --list-apps` returned invalid JSON: {error}"
+        return None, f"`truffile convo --list-apps` returned invalid JSON: {error}"
     apps = payload.get("apps") if payload else None
     if not isinstance(apps, list):
-        return None, "`truffile chat --list-apps` JSON did not include an apps list"
+        return None, "`truffile convo --list-apps` JSON did not include an apps list"
     return [app for app in apps if isinstance(app, dict)], None
 
 
@@ -164,7 +164,7 @@ def _peek_task(
     task_id: str,
     timeout: float | None,
 ) -> tuple[CommandResult, dict[str, Any] | None, str | None]:
-    command = [truffile, "chat", "--quiet", "--json", "--task-id", task_id]
+    command = [truffile, "convo", "--quiet", "--json", "--thread-id", task_id]
     result = _run(command, timeout=timeout)
     if result.returncode != 0:
         detail = result.error or result.stderr.strip() or result.stdout.strip() or "unknown error"
@@ -231,11 +231,10 @@ def _run_prompt(
             prompt_path = Path(handle.name)
         command = [
             truffile,
-            "chat",
+            "convo",
             "--quiet",
             "--json",
-            "--app",
-            app_ref,
+            "--new",
             "--prompt-file",
             str(prompt_path),
         ]
@@ -354,7 +353,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PROMPTS,
         help=f"prompt file to run; blocks are separated by lines containing only --- (default: {DEFAULT_PROMPTS})",
     )
-    parser.add_argument("--app", default="whoop", help="Truffle app name, slug, or uuid to attach")
+    parser.add_argument("--app", default="whoop", help="installed Truffle app name/slug/uuid to verify (Convo cannot attach it per thread)")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"artifact root (default: {DEFAULT_OUT})")
     parser.add_argument("--truffile", default="truffile", help="truffile executable path (default: truffile)")
     parser.add_argument(
@@ -367,7 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--settle-checks",
         type=int,
         default=1,
-        help="number of --task-id polls after a pending or empty response before starting the next prompt (default: 1)",
+        help="number of --thread-id checks after a pending or empty response before starting the next prompt (default: 1)",
     )
     parser.add_argument(
         "--settle-delay",

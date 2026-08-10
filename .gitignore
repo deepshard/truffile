@@ -7,8 +7,13 @@ whatsapp/
 docs-repo/
 .env
 truffile/app_runtime/
-truffle/
 docs/
 dev/
 app-store/builder
 temp/
+
+# generated proto bindings (copy from pyfw, never commit)
+truffle/
+
+# local helper scripts
+scripts/

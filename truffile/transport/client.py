@@ -22,7 +22,24 @@ from truffle.os.client_session_pb2 import (
     NewSessionStatus,
 )
 from truffle.os.client_user_pb2 import UserIDForTokenRequest, UserIDForTokenResponse
-from truffle.os.convo_pb2 import ConvoResetRequest, ConvoResetResponse
+from truffle.os.convo_pb2 import (
+    ConvoInterruptRequest,
+    ConvoInterruptResponse,
+    ConvoOpenStreamRequest,
+    ConvoResetRequest,
+    ConvoResetResponse,
+    ConvoUserResponseRequest,
+    ConvoUserResponseResponse,
+    GetConvoNodesRequest,
+    GetConvoNodesResponse,
+    GetConvoThreadsRequest,
+    GetConvoThreadsResponse,
+    MarkConvoThreadReadRequest,
+    MarkConvoThreadReadResponse,
+    RenameConvoThreadRequest,
+    RenameConvoThreadResponse,
+)
+from truffle.os.notification_pb2 import SubscribeToNotificationsRequest
 from truffle.os.client_metadata_pb2 import ClientMetadata
 from truffle.os.app_queries_pb2 import GetAllAppsRequest, GetAllAppsResponse, DeleteAppRequest, DeleteAppResponse
 from truffle.os.system_actions_pb2 import (
@@ -31,15 +48,6 @@ from truffle.os.system_actions_pb2 import (
 )
 from truffle.app.app_pb2 import App
 from truffle.app.background_pb2 import BackgroundApp, BackgroundAppRuntimePolicy
-from truffle.os.task_actions_pb2 import (
-    OpenTaskRequest,
-    InterruptTaskRequest,
-    TaskRenameRequest,
-    TaskDeleteRequest,
-    TaskSetAvailableAppsRequest,
-)
-from truffle.os.task_user_response_pb2 import RespondToTaskRequest
-from truffle.os.task_queries_pb2 import GetTaskInfosRequest
 from truffile.schedule import parse_runtime_policy
 
 GRPC_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
@@ -192,6 +200,98 @@ class TruffleClient:
         req.hard_reset = bool(hard)
         resp: ConvoResetResponse = await self.stub.Convo_Reset(req, metadata=self._metadata)
         return resp
+
+    async def get_convo_threads(
+        self,
+        *,
+        include_system_threads: bool = False,
+        include_latest_nodes: bool = True,
+        include_anchor_nodes: bool = True,
+    ) -> GetConvoThreadsResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = GetConvoThreadsRequest(
+            include_system_threads=include_system_threads,
+            include_latest_nodes=include_latest_nodes,
+            include_anchor_nodes=include_anchor_nodes,
+        )
+        return await self.stub.Convo_GetThreads(req, metadata=self._metadata)
+
+    async def get_convo_nodes(
+        self,
+        thread_id: int,
+        *,
+        target_node_id: int = 0,
+        max_before: int = 50,
+        max_after: int = 0,
+    ) -> GetConvoNodesResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = GetConvoNodesRequest(
+            thread_id=int(thread_id),
+            target_node_id=int(target_node_id),
+            max_before=int(max_before),
+            max_after=int(max_after),
+        )
+        return await self.stub.Convo_GetNodes(req, metadata=self._metadata)
+
+    def open_convo_stream(self):
+        if not self.stub:
+            raise RuntimeError("not connected")
+        return self.stub.Convo_OpenStream(
+            ConvoOpenStreamRequest(), metadata=self._metadata
+        )
+
+    def subscribe_to_notifications(self):
+        if not self.stub:
+            raise RuntimeError("not connected")
+        return self.stub.SubscribeToNotifications(
+            SubscribeToNotificationsRequest(), metadata=self._metadata
+        )
+
+    async def send_convo_user_response(
+        self,
+        message: str,
+        *,
+        target_thread_id: int,
+        agent_should_respond_in_subthread: bool,
+        request_id: str,
+    ) -> ConvoUserResponseResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = ConvoUserResponseRequest(
+            target_thread_id=int(target_thread_id),
+            agent_should_respond_in_subthread=bool(agent_should_respond_in_subthread),
+            request_id=request_id,
+        )
+        req.user.content = message
+        return await self.stub.Convo_UserResponse(req, metadata=self._metadata)
+
+    async def rename_convo_thread(
+        self, thread_id: int, display_name: str
+    ) -> RenameConvoThreadResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = RenameConvoThreadRequest(
+            thread_id=int(thread_id), display_name=display_name
+        )
+        return await self.stub.Convo_RenameThread(req, metadata=self._metadata)
+
+    async def mark_convo_thread_read(
+        self, thread_id: int, *, through_node_id: int = 0
+    ) -> MarkConvoThreadReadResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = MarkConvoThreadReadRequest(
+            thread_id=int(thread_id), through_node_id=int(through_node_id)
+        )
+        return await self.stub.Convo_MarkThreadRead(req, metadata=self._metadata)
+
+    async def interrupt_convo(self, thread_id: int) -> ConvoInterruptResponse:
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = ConvoInterruptRequest(target_thread_id=int(thread_id))
+        return await self.stub.Convo_Interrupt(req, metadata=self._metadata)
 
     async def start_build(self) -> StartBuildSessionResponse:
         if not self.stub:
@@ -480,84 +580,6 @@ class TruffleClient:
             await self.channel.close()
             self.channel = None
             self.stub = None
-
-    # task methods
-
-    def open_task_stream(self, prompt: str, *, app_uuids: list[str] | None = None):
-        if not self.stub:
-            raise RuntimeError("not connected")
-        req = OpenTaskRequest()
-        req.new_task.user_message.content = prompt
-        if app_uuids:
-            req.new_task.app_uuids.extend(app_uuids)
-        return self.stub.Task_OpenTask(req, metadata=self._metadata)
-
-    async def respond_to_task(self, task_id: str, node_id: int, message: str) -> None:
-        if not self.stub:
-            raise RuntimeError("not connected")
-        req = RespondToTaskRequest()
-        req.task_id = task_id
-        req.node_id = node_id
-        req.message.content = message
-        await self.stub.Task_RespondToTask(req, metadata=self._metadata)
-
-    async def interrupt_task(self, task_id: str) -> None:
-        if not self.stub:
-            raise RuntimeError("not connected")
-        req = InterruptTaskRequest()
-        req.target.task_id = task_id
-        await self.stub.Task_InterruptTask(req, metadata=self._metadata)
-
-    def open_existing_task_stream(self, task_id: str):
-        if not self.stub:
-            raise RuntimeError("not connected")
-        req = OpenTaskRequest()
-        req.existing_task.task_id = task_id
-        return self.stub.Task_OpenTask(req, metadata=self._metadata)
-
-    async def get_task_infos(self, *, max_before: int = 20) -> list[dict]:
-        if not self.stub:
-            raise RuntimeError("not connected")
-        req = GetTaskInfosRequest()
-        req.max_before = max_before
-        resp = await self.stub.Task_GetTaskInfos(req, metadata=self._metadata)
-        tasks = []
-        for entry in resp.entries:
-            info = entry.info
-            title = info.task_title or "(untitled)"
-            created = info.created.ToDatetime().isoformat() if info.HasField("created") else ""
-            updated = info.last_updated.ToDatetime().isoformat() if info.HasField("last_updated") else ""
-            tasks.append({
-                "task_id": entry.task_id,
-                "title": title,
-                "created": created,
-                "updated": updated,
-            })
-        return tasks
-
-    async def rename_task(self, task_id: str, new_name: str) -> str:
-        if not self.stub:
-            raise RuntimeError("not connected")
-        req = TaskRenameRequest()
-        req.task_id = task_id
-        req.new_name = new_name
-        resp = await self.stub.Task_Rename(req, metadata=self._metadata)
-        return resp.new_name
-
-    async def delete_task(self, task_id: str) -> None:
-        if not self.stub:
-            raise RuntimeError("not connected")
-        req = TaskDeleteRequest()
-        req.task_id = task_id
-        await self.stub.Task_Delete(req, metadata=self._metadata)
-
-    async def set_task_apps(self, task_id: str, app_uuids: list[str]) -> None:
-        if not self.stub:
-            raise RuntimeError("not connected")
-        req = TaskSetAvailableAppsRequest()
-        req.task_id = task_id
-        req.app_uuids.extend(app_uuids)
-        await self.stub.Task_SetAvailableApps(req, metadata=self._metadata)
 
     async def __aenter__(self):
         await self.connect()

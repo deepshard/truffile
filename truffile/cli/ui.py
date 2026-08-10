@@ -142,6 +142,9 @@ class StreamAbortWatcher:
             self._fd = sys.stdin.fileno()
             self._old_attrs = termios.tcgetattr(self._fd)
             tty.setcbreak(self._fd)
+            current_attrs = termios.tcgetattr(self._fd)
+            current_attrs[3] &= ~termios.ISIG
+            termios.tcsetattr(self._fd, termios.TCSADRAIN, current_attrs)
         except Exception:
             self.enabled = False
             return self
@@ -163,7 +166,7 @@ class StreamAbortWatcher:
                 ch = os.read(self._fd, 1)
             except Exception:
                 continue
-            if ch == b"\x1b":
+            if ch in (b"\x1b", b"\x03"):
                 self._aborted = True
                 self._stop.set()
                 return
@@ -213,9 +216,10 @@ def print_help():
   {C.CYAN}list{C.RESET} <apps|devices>      list installed apps or connected devices
   {C.CYAN}delete{C.RESET} [app]             delete app from device
   {C.CYAN}users{C.RESET} clear-other        clear old users except current account
+  {C.CYAN}convo{C.RESET}                   agent conversation (threads)
   {C.CYAN}convo{C.RESET} reset              reset the current user's Convo agent
   {C.CYAN}models{C.RESET}                   list inference models on device
-  {C.CYAN}chat{C.RESET}                     interactive chat with device
+  {C.CYAN}infer{C.RESET}                    direct model inference
   {C.CYAN}help{C.RESET}                     show this help
 
 {C.BOLD}Examples:{C.RESET}
@@ -225,5 +229,5 @@ def print_help():
   truffile deploy ./my-app
   truffile list apps
   truffile convo reset --hard
-  truffile chat
+  truffile convo
 """)

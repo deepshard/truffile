@@ -96,6 +96,40 @@ class TestStorageRoundTrip(unittest.TestCase):
             self.assertEqual(state.obsidian_bridge.token, "secret-token")
             self.assertEqual(state.obsidian_bridge.advertise_host, "192.168.1.10")
 
+    def test_hidden_convo_threads_are_user_and_device_scoped_and_reversible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s = self._make_storage(tmp)
+            s.hide_convo_thread("truffle-6272", "user-a", 42)
+            self.assertEqual(s.hidden_convo_thread_ids("truffle-6272", "user-a"), {42})
+            self.assertEqual(s.hidden_convo_thread_ids("truffle-6272", "user-b"), set())
+            self.assertEqual(s.hidden_convo_thread_ids("truffle-9999", "user-a"), set())
+
+            loaded = s._load_state()
+            self.assertEqual(loaded.hidden_convo_threads["truffle-6272::user-a"], [42])
+
+            s.restore_convo_thread("truffle-6272", "user-a", 42)
+            self.assertEqual(s.hidden_convo_thread_ids("truffle-6272", "user-a"), set())
+
+    def test_main_and_system_threads_cannot_be_hidden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s = self._make_storage(tmp)
+            with self.assertRaises(ValueError):
+                s.hide_convo_thread("truffle-6272", "user-a", 0)
+            with self.assertRaises(ValueError):
+                s.hide_convo_thread("truffle-6272", "user-a", -1)
+
+    def test_unknown_storage_keys_survive_save(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "state.json"
+            state_file.write_text(json.dumps({"future_key": {"keep": True}}))
+            s = StorageService()
+            s.storage_dir = Path(tmp)
+            s.state_file = state_file
+            s.state = s._load_state()
+            s.set_last_used("truffle-6272")
+            saved = json.loads(state_file.read_text())
+            self.assertEqual(saved["future_key"], {"keep": True})
+
 
 class TestStorageFilePermissions(unittest.TestCase):
     def test_token_file_created(self):

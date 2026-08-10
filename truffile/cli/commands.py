@@ -13,17 +13,21 @@ class SlashCommand:
 
 CHAT_COMMANDS: list[SlashCommand] = [
     SlashCommand("/help", "show available commands"),
-    SlashCommand("/tasks", "list recent tasks"),
-    SlashCommand("/rename", "rename current task", has_arg=True, arg_hint="<name>"),
-    SlashCommand("/title", "show current task title"),
-    SlashCommand("/resume", "switch to a previous task"),
-    SlashCommand("/new", "start a new task"),
-    SlashCommand("/apps", "list installed apps"),
+    SlashCommand("/threads", "list and switch Convo threads"),
+    SlashCommand("/tasks", "thread picker (one-release alias)"),
+    SlashCommand("/rename", "rename current thread", has_arg=True, arg_hint="<name>"),
+    SlashCommand("/title", "show current thread title"),
+    SlashCommand("/history", "show current thread history"),
+    SlashCommand("/main", "switch explicitly to Main"),
+    SlashCommand("/new", "start a new side thread"),
+    SlashCommand("/interrupt", "interrupt work in current thread"),
+    SlashCommand("/hide", "hide a thread on this machine", has_arg=True, arg_hint="[name|id]"),
+    SlashCommand("/restore", "restore a locally hidden thread", has_arg=True, arg_hint="[name|id]"),
     SlashCommand("/deploy", "deploy an app to device", has_arg=True, arg_hint="<path>"),
-    SlashCommand("/delete", "delete app or task", has_arg=True, arg_hint="app|task"),
+    SlashCommand("/delete", "delete app or locally hide task alias", has_arg=True, arg_hint="app|task"),
     SlashCommand("/create", "scaffold a new app", has_arg=True, arg_hint="<name>"),
     SlashCommand("/devices", "list connected devices"),
-    SlashCommand("/exit", "exit chat"),
+    SlashCommand("/exit", "exit Convo"),
 ]
 
 
