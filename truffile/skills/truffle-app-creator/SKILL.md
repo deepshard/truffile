@@ -150,11 +150,18 @@ If the user has a device connected:
 truffile deploy ./my-app
 ```
 
-Then test with the agent:
+Then test normal agent tool discovery with one-shot Convo:
 ```bash
-truffile convo
-you> [test the app's tools]
+truffile convo --new --json --quiet --timeout 120 \
+  "Use <specific tool behavior> and summarize the result"
 ```
+
+Inspect `tool_calls` in the JSON result. Chain a follow-up with the returned
+`thread_id` only after the first command exits successfully. Convo v1 has no
+per-thread app allowlist, so this validates ordinary tool discovery/routing;
+it cannot attach or force the newly deployed app. When direct tool selection
+is required, keep `truffile infer --mcp <url>` as the deterministic local MCP
+test before deployment.
 
 ### Step 11: Create skills (optional)
 
