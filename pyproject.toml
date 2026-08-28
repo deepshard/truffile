@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "truffile"
 version = "0.2.0"
-description = "truffile the TruffleOS SDK - Connect and deploy apps to Truffle devices"
+description = "truffile the TruffleOS SDK - build, connect, and deploy Truffle apps, with fleet-standard time rendering (timekit) and error healing built in"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
