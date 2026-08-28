@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from truffile.path_safety import resolve_path_within
+
 
 def _check_python_syntax(file_path: Path) -> tuple[bool, str]:
     try:
@@ -147,9 +149,13 @@ def validate_app_dir(app_dir: Path) -> tuple[bool, dict[str, Any] | None, str | 
 
     icon_file = meta.get("icon_file")
     if icon_file:
-        icon_path = app_dir / str(icon_file)
-        if not icon_path.exists():
-            warnings.append(f"Icon file not found: {icon_file}")
+        try:
+            icon_path = resolve_path_within(app_dir, str(icon_file), label="Icon file")
+        except ValueError as exc:
+            errors.append(str(exc))
+        else:
+            if not icon_path.exists():
+                warnings.append(f"Icon file not found: {icon_file}")
     else:
         warnings.append("No icon specified in truffile.yaml")
 
@@ -188,14 +194,29 @@ def validate_app_dir(app_dir: Path) -> tuple[bool, dict[str, Any] | None, str | 
 
     for f in files_to_check:
         source = f.get("source")
-        if not isinstance(source, str):
-            errors.append("files entries must include a string 'source'")
+        if not isinstance(source, str) or not source.strip():
+            errors.append("files entries must include a non-empty string 'source'")
             continue
 
-        src = app_dir / source
+        try:
+            src = resolve_path_within(app_dir, source, label="Source file")
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
         if not src.exists():
             errors.append(f"Source file not found: {src}")
             continue
+
+        if src.is_dir():
+            for child in src.rglob("*"):
+                try:
+                    resolve_path_within(
+                        app_dir,
+                        str(child.relative_to(app_dir)),
+                        label="Source file",
+                    )
+                except ValueError as exc:
+                    errors.append(str(exc))
 
         if src.suffix == ".py":
             ok, err = _check_python_syntax(src)

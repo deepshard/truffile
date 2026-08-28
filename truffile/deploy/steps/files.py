@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from truffile.path_safety import resolve_path_within
 from truffile.transport.client import TruffleClient
 
 
@@ -34,15 +35,20 @@ async def handle_files(
     **_kw: Any,
 ) -> None:
     for f in step.get("files", []):
-        src = app_dir / f["source"]
+        src = resolve_path_within(app_dir, f["source"], label="Source file")
         dest = f["destination"]
 
         if src.is_dir():
             for child in sorted(src.rglob("*")):
                 if child.is_file() and "__pycache__" not in str(child):
+                    safe_child = resolve_path_within(
+                        app_dir,
+                        str(child.relative_to(app_dir)),
+                        label="Source file",
+                    )
                     rel = child.relative_to(src)
                     child_dest = f"{dest.rstrip('/')}/{rel}"
-                    await _upload_file(client, child, child_dest, spinner_cls, arrow, color_dim, color_reset)
+                    await _upload_file(client, safe_child, child_dest, spinner_cls, arrow, color_dim, color_reset)
         elif src.is_file():
             await _upload_file(client, src, dest, spinner_cls, arrow, color_dim, color_reset)
         else:
