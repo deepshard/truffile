@@ -1,0 +1,61 @@
+truffile_version: 2
+metadata:
+  name: Turkish Airlines
+  bundle_id: org.deepshard.turkish-airlines
+  description: Turkish Airlines flight search, booking, and Miles&Smiles via MCP
+  icon_file: ./icon.png
+  foreground:
+    process:
+      cmd:
+        - python
+        - turkish_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+        TURKISH_AIRLINES_MCP_BASE: https://mcp.turkishtechlab.com/mcp
+
+steps:
+  - name: Copy app files
+    type: files
+    update_policy: run_on_update
+    files:
+      - source: ./auth.py
+        destination: ./auth.py
+      - source: ./config.py
+        destination: ./config.py
+      - source: ./remote_mcp_compat.py
+        destination: ./remote_mcp_compat.py
+      - source: ./turkish_client.py
+        destination: ./turkish_client.py
+      - source: ./turkish_foreground.py
+        destination: ./turkish_foreground.py
+      - source: ./tools.py
+        destination: ./tools.py
+      - source: ./icon.png
+        destination: ./icon.png
+
+  - name: Turkish Airlines OAuth Sign-In
+    type: oauth
+    update_policy: run_on_update
+    update_check: python ./turkish_foreground.py --verify
+    provider: remote_mcp
+    description: Sign in to Turkish Airlines to connect flights, bookings, and Miles&Smiles via MCP.
+    redirect_uri: https://truffle.net/api/oauth/callback
+    scopes: []
+    dynamic_client_registration: true
+    registration_endpoint: https://mcp.turkishtechlab.com/register
+    resource_metadata_endpoint: https://mcp.turkishtechlab.com/.well-known/oauth-authorization-server
+    oauth_resource: https://mcp.turkishtechlab.com
+    client_name: Truffle
+    auth_endpoint: https://mcp.turkishtechlab.com/authorize
+    token_endpoint: https://mcp.turkishtechlab.com/token
+    client_id_env: TURKISH_AIRLINES_CLIENT_ID
+    client_secret_env: null
+    token_output_file: /root/.turkish-airlines-oauth/tokens.json
+    token_file_env_name: TURKISH_AIRLINES_OAUTH_TOKEN_FILE
+    app_var_key: turkish_airlines_oauth_state
+
+  - name: Verify token
+    type: bash
+    update_policy: run_on_update
+    run: python ./turkish_foreground.py --verify
