@@ -1,7 +1,9 @@
 import asyncio
+import ipaddress
 import json
 import platform
 import socket
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
@@ -62,6 +64,33 @@ def get_client_metadata() -> ClientMetadata:
     return metadata
 
 
+def _resolve_macos_mdns(hostname: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["/usr/bin/dscacheutil", "-q", "host", "-a", "name", hostname],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() != "ip_address":
+            continue
+        try:
+            address = ipaddress.ip_address(value.strip())
+        except ValueError:
+            continue
+        if isinstance(address, ipaddress.IPv4Address):
+            return str(address)
+    return None
+
+
 async def resolve_mdns(hostname: str) -> str:
     if ".local" not in hostname:
         return hostname
@@ -70,6 +99,10 @@ async def resolve_mdns(hostname: str) -> str:
         resolved = await loop.run_in_executor(None, socket.gethostbyname, hostname)
         return resolved
     except socket.gaierror as e:
+        if platform.system() == "Darwin":
+            resolved = await loop.run_in_executor(None, _resolve_macos_mdns, hostname)
+            if resolved is not None:
+                return resolved
         raise RuntimeError(f"Failed to resolve {hostname} - is the device on the same network? ({e})")
 
 
