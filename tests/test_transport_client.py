@@ -1,16 +1,43 @@
 import asyncio
+import platform
+import socket
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import truffile
-from truffile.transport.client import GRPC_MAX_MESSAGE_BYTES, TruffleClient
+from truffile.transport.client import GRPC_MAX_MESSAGE_BYTES, TruffleClient, resolve_mdns
 
 
 class _ReadyChannel:
     async def channel_ready(self) -> None:
         return None
+
+
+def test_resolve_mdns_falls_back_to_macos_system_resolver(monkeypatch):
+    def fail_python_lookup(_hostname):
+        raise socket.gaierror(8, "nodename nor servname provided")
+
+    def macos_lookup(*_args, **_kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "name: truffle-5795.local\n"
+                "ipv6_address: fe80::1\n\n"
+                "name: truffle-5795.local\n"
+                "ip_address: 192.0.2.92\n"
+            ),
+        )
+
+    monkeypatch.setattr(socket, "gethostbyname", fail_python_lookup)
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(subprocess, "run", macos_lookup)
+
+    resolved = asyncio.run(resolve_mdns("truffle-5795.local"))
+
+    assert resolved == "192.0.2.92"
 
 
 def test_connect_sets_grpc_message_size_limits(monkeypatch):
