@@ -114,7 +114,9 @@ provider approval code. URL callbacks must match the pending state. On POSIX,
 firmware-provided localhost callbacks can complete automatically; pasting is
 also available when the browser is on another computer or the port is busy.
 Browser/VNC setup cards show the device setup URL and follow the card's completion
-behavior. Provider-specific consent, token refresh and custom setup still run
+behavior. Native device-code approval displays the link and waits for the
+provider process to finish without asking for a callback paste.
+Provider-specific consent, token refresh and custom setup still run
 through the firmware install plan, not through a new CLI token store.
 
 Interactive authorization is not silently completed in JSON/noninteractive

@@ -39,6 +39,13 @@ class InstallPrompts:
             raise InteractionRequired("OAuth needs browser sign-in; rerun interactively to complete authorization")
         if urlparse(value.auth_url).scheme not in {"http", "https"}:
             raise ValueError("Installer returned an invalid authorization URL")
+        if not value.state and not value.HasField("loopback_callback"):
+            # Native device-code steps finish in their provider process. Keep
+            # reading the installer stream instead of waiting for a paste.
+            print(value.instructions or f"Sign in to {value.provider}", file=sys.stderr)
+            print(value.auth_url, file=sys.stderr)
+            print("Complete approval in your browser; waiting for the provider…", file=sys.stderr)
+            return None
         # A local callback is optional: a user signing in on another computer
         # can still paste the callback URL or the provider's approval code.
         callback = asyncio.get_running_loop().create_future()
@@ -109,7 +116,8 @@ class InstallPrompts:
             if not route.startswith("/") or route.startswith("//") or "\\" in route:
                 raise ValueError("Installer returned an invalid browser setup path")
             print(value.instructions, file=sys.stderr)
-            print(f"http://{self.address}{route}", file=sys.stderr)
+            base = self.address if "://" in self.address else f"http://{self.address}"
+            print(base.rstrip("/") + route, file=sys.stderr)
             if value.closes_on_complete:
                 return None
             await prompt("Complete browser setup, then press Enter: ")

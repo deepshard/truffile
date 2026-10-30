@@ -238,6 +238,22 @@ def test_loopback_oauth_rejects_wrong_state_then_completes(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_device_code_approval_keeps_reading_until_provider_finishes(monkeypatch):
+    monkeypatch.setattr("truffile.cli.native.interactive", lambda _: True)
+    paste = AsyncMock(side_effect=AssertionError("device code must not ask for a callback"))
+    monkeypatch.setattr("truffile.cli.native.prompt", paste)
+    approval = AppInstallResponse()
+    approval.install_modal.oauth_modal.auth_url = "https://provider.example/device"
+    finish = AppInstallResponse()
+    finish.install_modal.finish_modal.app_uuid = "app"
+    stream = Stream([approval, finish])
+    result = asyncio.run(install_native(client(stream), mode="add", app_uuid="app",
+        handle_modal=InstallPrompts(SimpleNamespace(), "device:80")))
+    assert result["app_uuid"] == "app"
+    assert len(stream.writes) == 1
+    paste.assert_not_called()
+
+
 @pytest.mark.parametrize("argv,attribute,expected", [
     (["rename", "Google", "Work"], "alias", "Work"),
     (["permissions", "Google", "read-only"], "mode", "read-only"),
