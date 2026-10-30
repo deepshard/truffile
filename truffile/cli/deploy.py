@@ -112,6 +112,12 @@ async def cmd_deploy(args, storage: StorageService) -> int:
 
         return await cmd_obsidian_deploy(args, storage)
 
+    if not getattr(args, "legacy_builder", False) and not getattr(args, "interactive", False):
+        from .native import cmd_native_deploy
+        return await cmd_native_deploy(args, storage)
+    if getattr(args, "update", False) or getattr(args, "replace", False):
+        return _deploy_error(getattr(args, "json", False), "invalid_args", "Use native deployment for --update/--replace; omit --legacy-builder and --interactive")
+
     app_dir = Path(app_path).resolve()
     interactive = args.interactive
     dry_run = bool(getattr(args, "dry_run", False))

@@ -9,6 +9,7 @@ import grpc
 from truffile.client import TruffleClient
 from .apps import _app_slug, _app_summary
 from .connect import _resolve_connected_device
+from .prompts import choose, confirm
 
 PERMISSIONS = {"default": 0, "read-only": 1, "read-write": 3, "auto-review": 11}
 
@@ -36,6 +37,28 @@ def select_connection(app, ref):
     return matches[0]
 
 
+async def choose_app(apps, ref, args):
+    if ref:
+        try:
+            return select_app(apps, ref)
+        except ValueError:
+            apps = [app for app in apps if ref == app.uuid or ref == app.metadata.bundle_id
+                    or ref.casefold() in (app.metadata.name.casefold(), _app_slug(app.metadata.name))]
+    return await choose(apps, question="Which app?", label=lambda app: f"{app.metadata.name} ({app.uuid})", args=args)
+
+
+async def choose_connection(app, ref, args):
+    if ref:
+        try:
+            return select_connection(app, ref)
+        except ValueError:
+            accounts = [c for c in app.connections if c.alias.casefold() == ref.casefold()]
+    else:
+        accounts = list(app.connections)
+    return await choose(accounts, question=f"Which account for {app.metadata.name}?",
+                        label=lambda c: f"{c.alias or 'Unnamed account'} ({c.connection_id})", args=args)
+
+
 async def cmd_connections(args, storage):
     client = None
     try:
@@ -48,10 +71,19 @@ async def cmd_connections(args, storage):
             raise ValueError("No saved session for the selected device")
         client = TruffleClient(f"{ip}:80", token, app_id=storage.app_id_for_device(device))
         await client.connect()
-        app = select_app(await client.get_all_apps(), args.app)
+        app = await choose_app(await client.get_all_apps(), args.app, args)
         action = args.connections_command
-        if action != "list":
-            connection = select_connection(app, args.connection)
+        if action in {"add", "reconnect"}:
+            from truffile.deploy.native import install_native
+            from .native import InstallPrompts
+            connection = await choose_connection(app, args.connection, args) if action == "reconnect" else None
+            await install_native(client, mode=action, app_uuid=app.uuid,
+                connection_id=connection.connection_id if connection else None,
+                handle_modal=InstallPrompts(args, client.address),
+                progress=lambda text: print(text, file=sys.stderr), timeout=getattr(args, "timeout", 900))
+            app = select_app(await client.get_all_apps(), app.uuid)
+        elif action != "list":
+            connection = await choose_connection(app, args.connection, args)
             if action == "rename":
                 app = await client.update_connection(app.uuid, connection.connection_id, alias=args.alias)
             elif action == "permissions":
@@ -61,6 +93,7 @@ async def cmd_connections(args, storage):
                     permission_flags=PERMISSIONS[args.mode], auto_review_notes=notes,
                 )
             elif action == "delete":
+                await confirm(f"Delete {connection.alias or connection.connection_id} from {app.metadata.name}?", args)
                 app = await client.delete_connection(app.uuid, connection.connection_id)
         result = {"status": "ok", "app": _app_summary(app)}
         if args.json:

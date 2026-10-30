@@ -129,6 +129,7 @@ def _main() -> int:
     # validate
     val_p = sub.add_parser("validate", help="validate app directory")
     val_p.add_argument("path", nargs="?", default=".")
+    val_p.add_argument("--legacy-builder", action="store_true", help="validate the legacy direct-builder schema")
 
     # load bundled agent resources into a workspace
     load_p = sub.add_parser("load", help="copy bundled skills and example apps into the current workspace")
@@ -141,11 +142,17 @@ def _main() -> int:
     dep_p = sub.add_parser("deploy", help="deploy app to device")
     dep_p.add_argument("path", nargs="?", default=".")
     dep_p.add_argument("--shell", action="store_true", help=argparse.SUPPRESS)
-    dep_p.add_argument("--interactive", "-i", action="store_true")
+    dep_p.add_argument("--interactive", "-i", action="store_true", help="open the legacy builder shell for debugging; normal deploy already prompts for sign-in")
     dep_p.add_argument("--dry-run", action="store_true")
     dep_p.add_argument("--json", action="store_true", help="emit structured json")
     dep_p.add_argument("--non-interactive", action="store_true", dest="non_interactive", help="fail instead of prompting for input")
-    dep_p.add_argument("--replace", action="store_true", help="check for an existing app; destructive replacement is no longer supported")
+    deploy_mode = dep_p.add_mutually_exclusive_group()
+    deploy_mode.add_argument("--replace", action="store_true", help="replace the installed app and run fresh account setup")
+    deploy_mode.add_argument("--update", action="store_true", help="update code while preserving installed accounts and settings")
+    dep_p.add_argument("--yes", action="store_true", help="confirm replacement without prompting")
+    dep_p.add_argument("--answers-file", help="JSON file containing install form field values; passwords are never echoed")
+    dep_p.add_argument("--timeout", type=float, default=900, help="maximum install time in seconds")
+    dep_p.add_argument("--legacy-builder", action="store_true", help="use the direct builder for legacy development/debugging")
     dep_p.add_argument("--no-finalize", action="store_true", help=argparse.SUPPRESS)
     dep_p.add_argument("--vault", type=str, default=None, help=argparse.SUPPRESS)
     dep_p.add_argument("--pick-vault", action="store_true", dest="pick_vault", help=argparse.SUPPRESS)
@@ -166,17 +173,22 @@ def _main() -> int:
 
     connections_p = sub.add_parser("connections", help="inspect accounts, aliases, and saved permissions")
     connections_sub = connections_p.add_subparsers(dest="connections_command", required=True)
-    for action in ("list", "rename", "permissions", "delete"):
+    for action in ("list", "rename", "permissions", "delete", "add", "reconnect"):
         cp = connections_sub.add_parser(action)
-        cp.add_argument("app", help="app UUID, bundle ID, or exact name")
-        if action != "list":
-            cp.add_argument("connection", help="connection UUID, exact alias, or 'default'")
+        cp.add_argument("app", help="app UUID, bundle ID, or friendly name")
+        if action not in {"list", "add"}:
+            cp.add_argument("connection", nargs="?", help="account alias/UUID or 'default'; omit to choose interactively")
         if action == "rename":
             cp.add_argument("alias")
         if action == "permissions":
             cp.add_argument("mode", choices=("default", "read-only", "read-write", "auto-review"))
             cp.add_argument("--notes", default=None, help="replace account review notes; omission preserves them")
         cp.add_argument("--json", action="store_true")
+        cp.add_argument("--non-interactive", action="store_true")
+        cp.add_argument("--yes", action="store_true", help="confirm account deletion without prompting")
+        if action in {"add", "reconnect"}:
+            cp.add_argument("--answers-file", help="JSON file containing install form field values")
+            cp.add_argument("--timeout", type=float, default=900)
 
     # users
     users_p = sub.add_parser("users", help="manage users on the connected device")
@@ -361,7 +373,7 @@ def _main() -> int:
     # first-run onboarding: if a device-requiring command was issued and there
     # is no connected device, walk the user through `truffile connect` first.
     if _command_needs_device(args) and not storage.state.last_used_device:
-        if not sys.stdin.isatty():
+        if not sys.stdin.isatty() or getattr(args, "json", False) or getattr(args, "non_interactive", False):
             message = "No device connected. Run truffile connect <device> --user-id <user-id> first."
             if getattr(args, "json", False):
                 import json

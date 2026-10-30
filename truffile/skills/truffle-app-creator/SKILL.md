@@ -11,21 +11,23 @@ description: |
 
 Build Truffle apps step by step — from idea to deployed, tested app.
 
-## Compatibility boundary
+## Current deployment contract
 
-The bundled scaffold and YAML references describe the legacy CLI builder.
-They are not the current native installer schema. This CLI rejects native v3+
-manifests, connectors, and connection-scoped credentials. For a production app
-that needs multiple accounts, reconnect, or credential-preserving updates,
-use the current native app tooling and its versioned manifest contract.
-Do not downgrade a native manifest or put account credentials into shared app
-state to make legacy validation pass.
+Normal `truffile deploy` uploads the original bundle to firmware's native
+installer and builders. It preserves native connection scopes, connectors,
+resources, base images and resource profiles. `validate` performs bundle
+preflight; firmware performs full manifest validation.
 
-The legacy builder supports the minimal base and low resource profile. Its
-background starter is a placeholder. Implement and test the background worker
-before presenting it as functional. `deploy` refuses an installed bundle ID;
-use native update or a new test bundle ID, never delete the existing app to
-redeploy. See `truffile-cli` for existing-account permissions and inspection.
+The bundled older YAML/auth references describe legacy recipes. For native
+multi-account apps, follow `references/native-accounts.md` and current native
+provider recipes. Do not downgrade a manifest or put account secrets into
+shared app state to make the legacy validator pass.
+
+Use `--update` to preserve installed accounts or `--replace` for explicitly
+confirmed fresh setup. Those modes require the matching PyFW capability.
+`--legacy-builder` and `--interactive` retain direct builder debugging; they
+are not needed for ordinary sign-in. The scaffold's background worker remains
+a placeholder that must be implemented before it is described as functional.
 
 ## When to use
 
@@ -69,8 +71,8 @@ Ask the user which approach they prefer.
 
 Based on the user's answers, determine:
 - app shape: foreground only, background only, or hybrid
-- auth type: API key/text config, OAuth, or public. Browser/VNC apps are not
-  supported through the current CLI flow.
+- auth type: public, connection-scoped text/API key, OAuth, or browser setup
+  supported by the target firmware. Verify the provider flow on a device.
 - base image: minimal for API apps
 
 Reference: see references/auth-patterns.md for the decision tree.

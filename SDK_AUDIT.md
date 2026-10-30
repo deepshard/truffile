@@ -1,5 +1,18 @@
 # Truffile SDK/CLI audit — 2026-10-30
 
+## Follow-up implementation
+
+The findings and candidate column below describe the initial audit/first patch.
+The follow-up adds native bundle deployment, separate update/replace modes,
+friendly account pickers, and add/reconnect commands. See
+[NATIVE_INSTALL.md](NATIVE_INSTALL.md) for the current behavior and verification
+limits; the initial limitations below are retained as the audit record.
+
+The native installer still uses builders. Uploaded updates and replacements
+now have explicit public routing with read-only capability negotiation; older
+clients keep their previous catalog-update/reset behavior. Full live testing
+of those new upload routes requires running the accompanying PyFW change.
+
 ## Baseline and scope
 
 Compared the clean PyPI `truffile==0.3.34` install with Truffile remote main

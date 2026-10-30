@@ -9,7 +9,10 @@ store account secrets in app-global variables or bake them into a bundle.
 For native apps, test initial setup, adding a second account, reconnecting one
 account, and updating code while preserving both accounts. Public/no-auth,
 text/API-key, browser OAuth, device-code/custom approval, and browser/VNC flows
-need their own acceptance tests. This CLI does not yet drive all those flows.
+need their own acceptance tests. Normal deployment now drives native forms,
+OAuth approval/callbacks, and browser setup cards. See
+[native-accounts.md](native-accounts.md) for connection-scoped setup; real
+provider sign-in still needs acceptance testing beyond the synthetic fixtures.
 For legacy OAuth URL callbacks, the returned state must match the pending
 request; a missing state is an error. Raw approval-code paste is still supported
 where the provider requires it.

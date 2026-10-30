@@ -78,38 +78,55 @@ truffile deploy ./apps/my-app --interactive
 Use `--dry-run` before a risky deploy. Use `--interactive` only for debugging
 inside the build container before finalizing.
 
-This is the legacy builder flow, for a fresh bundle ID on the minimal base and
-low resource profile. Native v3+ manifests, connectors, connection-scoped
-credentials, and other base/profile choices are rejected. A successful dry run
-does not verify firmware compatibility or provider authentication.
+Normal deploy uploads the original bundle to firmware's native installer, which
+uses builder containers. Local validation/dry run is bundle preflight; firmware
+performs full schema/plan validation. Current native manifests retain their
+account scopes, connectors, resource files, base image, and resource profile.
 
-Deployment refuses an already installed bundle ID. `--replace` does not delete
-or update it. Use the native update flow for existing apps, or a different
-bundle ID for a separate development fixture. Never delete a user's installed
-app just to make a deployment succeed. The public `start_update` RPC only queues
-registry reconciliation; developer uploads currently use the debug app console.
-
-### Existing Connections and Permissions
+For an installed bundle ID, choose explicitly:
 
 ```bash
-truffile list apps --json
-truffile connections list <app-uuid-or-bundle-id> --json
-truffile connections rename <app-uuid> <connection-id> Work --json
-truffile connections permissions <app-uuid> <connection-id> read-only --json
-truffile connections permissions <app-uuid> <connection-id> auto-review --notes "Review external writes" --json
-truffile connections delete <app-uuid> <connection-id> --json
+truffile deploy ./apps/my-app --update
+truffile deploy ./apps/my-app --replace
 ```
 
-Use exact identifiers from the listing. Permission modes are `default`,
-`read-only`, `read-write`, and `auto-review`. The listing reports saved flags.
-`default` inherits the device policy; omitted `--notes` preserves existing notes.
-Changing permissions is a user decision, not an app's automatic setup step.
-Deleting a connection removes that account. Add/reconnect still use the native
-installer in app settings. If another operation is in progress, inspect its
-completion before issuing another mutation; do not automatically retry.
+Update preserves accounts and settings. Replace runs fresh setup and resets
+accounts, with confirmation (`--yes` for scripts). Both require the matching
+PyFW developer-upload capability. Older firmware is rejected before mutation.
+Never fall back to deleting an app when an update is unavailable.
 
-Do not use the device-wide default setter as an initial-install default: it
-resets existing account overrides too.
+`--legacy-builder` retains the older direct builder path for fresh app IDs.
+`--interactive` opens that builder's debug shell; normal deployment already
+prompts for sign-in. Legacy schema limits still apply to that explicit path.
+
+### Connections and Permissions
+
+```bash
+truffile connections list Google
+truffile connections add Google
+truffile connections reconnect Google
+truffile connections delete Google
+truffile connections permissions Google read-only
+truffile connections rename Google Work
+```
+
+Friendly app names and bundle IDs/UUIDs work. Omitting the account opens a
+numbered picker. The rename example picks an account and names it Work. Exact
+account aliases/UUIDs can be supplied before the new name or permission mode.
+`default` also selects the default connection. Delete confirms the selected
+account; `--yes` confirms explicitly for scripts. Never infer all accounts.
+
+Permission modes are `default`, `read-only`, `read-write`, and `auto-review`.
+The listing reports saved flags; default inherits device policy. Omitted
+`--notes` preserves notes. Do not use the device-wide default setter as an
+initial-install preference: it resets existing account overrides too.
+
+Use `--answers-file /private/answers.json` for install/add/reconnect form values.
+Keep credentials outside the app source tree. The named answer file is excluded
+from directory uploads. JSON/noninteractive mode never prompts and requires
+exact account selection. OAuth/browser setup requires interactive sign-in;
+URL callbacks must match state. A timeout/disconnect requests cancellation but
+may have raced a commit: inspect the app before retrying.
 
 ### Delete Installed Apps
 
@@ -159,10 +176,10 @@ app, injects bridge env, and deploys without asking for bridge URL/token again.
 
 ## App Authoring Notes
 
-- Current CLI deploy step types are `bash`, `files`, `text`, `oauth`, and
-  `welcome`.
-- `vnc` steps are rejected by `truffile validate`; browser/VNC apps are not
-  supported through the current CLI flow.
+- Normal deploy delegates step execution and semantic validation to firmware.
+- Text/password, OAuth, and browser/VNC cards are presented by the CLI; actual
+  support depends on the device installer version and provider plan.
+- The explicit legacy builder still supports only its older step subset.
 - Use `truffile.app_runtime` imports in app code.
 - Read-only tools should use MCP annotations, for example:
 

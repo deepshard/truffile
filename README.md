@@ -10,9 +10,9 @@ Python SDK/CLI for Truffle devices.
 - manages installed apps and existing accounts (`list apps`, `connections`, `delete`)
 - talks to the on-device agent (`convo`) or inference directly (`models`, `infer`)
 
-See [the SDK audit](SDK_AUDIT.md) for verified compatibility, known failures,
-and the remaining native installer migration. This checkout fixes CLI behavior;
-the first-deploy builder fix also requires the corresponding PyFW update.
+See [native installation and account management](NATIVE_INSTALL.md) for the
+current workflow and firmware requirements. [The SDK audit](SDK_AUDIT.md) records
+the original failures and follow-up scope.
 
 ## Start making your Own Apps
 
@@ -81,58 +81,41 @@ workspace:
 
 Use `truffile load skills` or `truffile load examples` to copy only one group.
 
-## Installed accounts and permissions
+## Native installation and account management
 
-Use an app UUID or bundle ID and a connection UUID from `list apps --json`.
-Exact names and aliases also work when unambiguous; `default` selects the
-app's default connection.
+Normal deployment packages the app and uses firmware's native installer and
+builder. The original manifest is preserved, including accounts, connection
+credentials, connectors, resources, and base/resource choices.
 
 ```bash
-truffile connections list org.example.mail --json
-truffile connections rename org.example.mail <connection-id> Work --json
-truffile connections permissions org.example.mail <connection-id> read-only --json
-truffile connections permissions org.example.mail <connection-id> auto-review \
-  --notes "Ask before sending external messages" --json
-truffile connections delete org.example.mail <connection-id> --json
+truffile deploy ./my-app
+truffile deploy ./my-app --update
+truffile deploy ./my-app --replace
+truffile connections list Google
+truffile connections add Google
+truffile connections reconnect Google
+truffile connections delete Google
+truffile connections permissions Google read-only
 ```
 
-Permission modes are `default`, `read-only`, `read-write`, and `auto-review`.
-These commands change the selected account's saved permission override;
-omitting `--notes` preserves its existing review notes. `default` clears the
-override so the account follows the device's policy. The listing reports saved
-flags, not a computed effective authorization decision. Tool annotations still
-describe the tool; they do not grant permission to use it.
+`--update` preserves accounts and settings. `--replace` runs fresh setup and
+resets accounts after confirmation. Both require the accompanying PyFW update;
+the CLI checks support before requesting a mutation. Normal deploy refuses an
+existing bundle ID until you choose one of those modes.
 
-Deleting a connection removes that account. Use the native app settings to add
-or reconnect accounts; the CLI does not yet drive those installer flows. App
-operations are serialized on firmware: a command can save successfully while
-runtime publication is still finishing. If firmware reports another operation
-in progress, inspect the app and wait for it to finish before issuing another
-mutation. Do not blindly retry an uncertain mutation.
+Friendly names and exact IDs both work. Omitting an account opens a terminal
+picker; scripts must select explicitly. JSON/noninteractive commands never
+prompt. Use `--answers-file` for scripted text/API-key setup, and interactive
+mode for browser sign-in. Password values are hidden.
 
-The device-wide default-permission setter resets account overrides. It is not
-a setting for future installs only, and this CLI does not invoke it.
+`validate` and `deploy --dry-run` perform bundle preflight; firmware validates
+full manifest semantics. `--legacy-builder` retains the old direct builder path
+and its schema validator. `--interactive` opens that legacy builder's debug
+shell; it is not required for ordinary setup prompts.
 
-## Deployment compatibility
-
-`create`, `validate`, and `deploy` currently target the legacy builder schema:
-foreground/background processes on the minimal base with the low resource
-profile. The background starter is a placeholder to implement, not a working
-monitor. Public apps, legacy text/API-key inputs, and legacy OAuth steps have
-handlers, but legacy credentials do not provide native account isolation or
-reconnection.
-
-Native v3+ manifests, connectors, connection-scoped credentials, and other base
-images/resource profiles require the native bundle installer. Validation now
-rejects these instead of silently dropping their meaning. It does not validate
-the full native schema. Use the native app tooling for modern production apps.
-
-Deploying an already installed bundle ID returns `update_required` before
-building. `--replace` is retained for compatibility but no longer deletes the
-old app. Use the native update flow, or a distinct bundle ID for an independent
-test app. The public install protocol's `start_update` queues registry
-reconciliation; it does not upload developer code. Native developer updates
-currently use the firmware debug app console.
+See [the complete workflow](NATIVE_INSTALL.md) for account selection, permission
+modes, OAuth, packaging rules, cancellation, and test coverage. The background
+starter remains a placeholder that an app author needs to implement.
 
 ## Obsidian Bridge Workflow
 

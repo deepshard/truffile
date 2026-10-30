@@ -175,6 +175,18 @@ class TruffleClient:
         resp: DeleteAppResponse = await self.stub.Apps_DeleteApp(req, metadata=self._metadata)
         return resp
 
+    async def supports_developer_uploads(self) -> bool:
+        """Read-only negotiation before an uploaded update or replacement."""
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = GetAllAppsRequest()
+        req.field_mask.paths.append("uuid")
+        call = self.stub.Apps_GetAll(
+            req, metadata=[*self._metadata, ("truffile-capabilities", "1")], timeout=15,
+        )
+        await call
+        return ("truffile-developer-upload", "1") in tuple(await call.initial_metadata() or ())
+
     async def update_connection(
         self, app_uuid: str, connection_id: str, *,
         alias: str | None = None, permission_flags: int | None = None,
