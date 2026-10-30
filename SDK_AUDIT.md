@@ -128,6 +128,7 @@ uncertain writes would be the wrong fix. The SDK needs operation status.
 | P1 | CLI/SDK native install driver | Drive upload, welcome, text/password, validation, OAuth and supported custom/browser interactions; return actionable interaction-required results instead of hanging |
 | P1 | Add/reconnect commands | Add two accounts; reconnect exactly one; cancel or fail validation without modifying the other; retain permission overrides and intentional aliases according to the firmware contract |
 | P1 | Authentication lifecycle | Use connection credential APIs; support refresh/rotation; keep secrets out of bundle/logs/JSON; validate OAuth state and provider-specific code handoff; exercise actual provider flows |
+| P1 | Upgrade the pinned MCP dependency | Move off 1.26.0 to a version addressing the four open advisories below; verify PyFW/runtime transport compatibility, authenticated sessions, and client shutdown before release |
 | P1 | Operation status, deadlines and cancellation | Expose terminal status and correlation ID; report pending/unknown outcomes; no blind write retries; recover after disconnect/timeout without duplicate install or duplicate chat |
 | P1 | User-controlled initial permissions | Separate per-account overrides, initial-install preferences, and device-wide policy/reset; show effective versus saved permissions; preserve existing users on updates |
 | P2 | Native authoring templates | Provide working public, API-key/text, OAuth, connector and background examples; remove placeholder success impressions; test packaged files and resources |
@@ -139,6 +140,18 @@ uncertain writes would be the wrong fix. The SDK needs operation status.
 
 The current PR intentionally delivers the verified first fixes plus existing
 account controls. It does **not** claim the native installer migration is done.
+
+### Dependency advisories
+
+GitHub reports four open Dependabot alerts for `mcp==1.26.0` in
+`pyproject.toml`: three high and one medium. The listed first patched versions
+are 1.27.2 for [HTTP session principal validation](https://github.com/advisories/GHSA-jpw9-pfvf-9f58)
+and [experimental task ownership](https://github.com/advisories/GHSA-hvrp-rf83-w775),
+1.28.1 for [WebSocket Host/Origin validation](https://github.com/advisories/GHSA-vj7q-gjh5-988w),
+and 1.30.0 for [unbounded StreamableHTTP sessions](https://github.com/advisories/GHSA-84m7-p3x7-pcfv).
+These are confirmed dependency alerts, not a claim that each affected transport
+or feature is exposed by every Truffle app. Exposure and the coordinated
+dependency upgrade remain to be tested; this PR does not change that pin.
 
 ## Authentication coverage
 
