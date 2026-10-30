@@ -11,6 +11,22 @@ description: |
 
 Build Truffle apps step by step — from idea to deployed, tested app.
 
+## Compatibility boundary
+
+The bundled scaffold and YAML references describe the legacy CLI builder.
+They are not the current native installer schema. This CLI rejects native v3+
+manifests, connectors, and connection-scoped credentials. For a production app
+that needs multiple accounts, reconnect, or credential-preserving updates,
+use the current native app tooling and its versioned manifest contract.
+Do not downgrade a native manifest or put account credentials into shared app
+state to make legacy validation pass.
+
+The legacy builder supports the minimal base and low resource profile. Its
+background starter is a placeholder. Implement and test the background worker
+before presenting it as functional. `deploy` refuses an installed bundle ID;
+use native update or a new test bundle ID, never delete the existing app to
+redeploy. See `truffile-cli` for existing-account permissions and inspection.
+
 ## When to use
 
 Activate when the user wants to:

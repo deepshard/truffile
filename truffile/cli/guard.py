@@ -45,9 +45,9 @@ class CLIGuard:
             return True
 
         if issubclass(exc_type, EOFError):
-            sys.stderr.write("\n")
+            sys.stderr.write("Input closed before the operation completed.\n")
             sys.stderr.flush()
-            self.code = 0
+            self.code = 1
             return True
 
         if issubclass(exc_type, Exception):

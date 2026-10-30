@@ -3,7 +3,8 @@ name: truffile-cli
 description: |
   Use the `truffile` CLI to manage Truffle devices and Truffle apps from the
   command line: scan/connect, create, validate, deploy, list installed apps,
-  delete apps, and manage the Obsidian bridge app. Use `truffile-convo` for
+  manage existing connections and permissions, delete apps, and manage the
+  Obsidian bridge app. Use `truffile-convo` for
   the stateful on-device agent and `truffile-infer` for raw model inference.
 ---
 
@@ -70,12 +71,45 @@ Run validation before deploy. Validation is local and does not need a device.
 ```bash
 truffile deploy ./apps/my-app
 truffile deploy ./apps/my-app --dry-run
-truffile deploy ./apps/my-app --json --non-interactive --replace
+truffile deploy ./apps/my-app --json --non-interactive
 truffile deploy ./apps/my-app --interactive
 ```
 
 Use `--dry-run` before a risky deploy. Use `--interactive` only for debugging
 inside the build container before finalizing.
+
+This is the legacy builder flow, for a fresh bundle ID on the minimal base and
+low resource profile. Native v3+ manifests, connectors, connection-scoped
+credentials, and other base/profile choices are rejected. A successful dry run
+does not verify firmware compatibility or provider authentication.
+
+Deployment refuses an already installed bundle ID. `--replace` does not delete
+or update it. Use the native update flow for existing apps, or a different
+bundle ID for a separate development fixture. Never delete a user's installed
+app just to make a deployment succeed. The public `start_update` RPC only queues
+registry reconciliation; developer uploads currently use the debug app console.
+
+### Existing Connections and Permissions
+
+```bash
+truffile list apps --json
+truffile connections list <app-uuid-or-bundle-id> --json
+truffile connections rename <app-uuid> <connection-id> Work --json
+truffile connections permissions <app-uuid> <connection-id> read-only --json
+truffile connections permissions <app-uuid> <connection-id> auto-review --notes "Review external writes" --json
+truffile connections delete <app-uuid> <connection-id> --json
+```
+
+Use exact identifiers from the listing. Permission modes are `default`,
+`read-only`, `read-write`, and `auto-review`. The listing reports saved flags.
+`default` inherits the device policy; omitted `--notes` preserves existing notes.
+Changing permissions is a user decision, not an app's automatic setup step.
+Deleting a connection removes that account. Add/reconnect still use the native
+installer in app settings. If another operation is in progress, inspect its
+completion before issuing another mutation; do not automatically retry.
+
+Do not use the device-wide default setter as an initial-install default: it
+resets existing account overrides too.
 
 ### Delete Installed Apps
 

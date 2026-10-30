@@ -49,6 +49,10 @@ class TestOAuthHelpers(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "state"):
             _parse_callback("https://truffle.net/api/oauth/callback?code=abc&state=wrong", expected_state="state-1")
 
+    def test_parse_callback_requires_state_in_urls(self):
+        with self.assertRaisesRegex(RuntimeError, "state"):
+            _parse_callback("https://truffle.net/api/oauth/callback?code=abc", expected_state="state-1")
+
     def test_build_authorization_url_includes_resource_and_pkce(self):
         url = _build_authorization_url(
             auth_endpoint="https://provider.example/auth",

@@ -7,8 +7,12 @@ Python SDK/CLI for Truffle devices.
 - discovers and connects to your Truffle (`scan`, `connect`, `disconnect`)
 - copies bundled agent resources into your workspace (`load`)
 - validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
-- manages installed apps (`list apps`, `delete`)
+- manages installed apps and existing accounts (`list apps`, `connections`, `delete`)
 - talks to the on-device agent (`convo`) or inference directly (`models`, `infer`)
+
+See [the SDK audit](SDK_AUDIT.md) for verified compatibility, known failures,
+and the remaining native installer migration. This checkout fixes CLI behavior;
+the first-deploy builder fix also requires the corresponding PyFW update.
 
 ## Start making your Own Apps
 
@@ -50,13 +54,14 @@ In practice:
 
 ```bash
 truffile scan
-truffile connect <device>
+truffile connect 6272
 truffile create [app_name]
 truffile load all
 truffile validate [app_dir]
 truffile deploy [app_dir]
 truffile deploy --dry-run [app_dir]
 truffile list apps --json
+truffile connections list <app-uuid-or-bundle-id> --json
 truffile delete <app-name>
 truffile models
 truffile convo
@@ -65,7 +70,7 @@ truffile convo
 `truffile create` scaffolds a hybrid app starter with:
 - `truffile.yaml` (foreground + background process config)
 - copy-file steps for generated `*_foreground.py` and `*_background.py`
-- `icon.png` copied from `docs/Truffle.png` (deploy requires an icon)
+- `icon.png` copied from the package's bundled stock icon (deploy requires an icon)
 
 `truffile load all` copies bundled agent-readable resources into your current
 workspace:
@@ -75,6 +80,59 @@ workspace:
   Obsidian, Viator, WHOOP, and Home Assistant
 
 Use `truffile load skills` or `truffile load examples` to copy only one group.
+
+## Installed accounts and permissions
+
+Use an app UUID or bundle ID and a connection UUID from `list apps --json`.
+Exact names and aliases also work when unambiguous; `default` selects the
+app's default connection.
+
+```bash
+truffile connections list org.example.mail --json
+truffile connections rename org.example.mail <connection-id> Work --json
+truffile connections permissions org.example.mail <connection-id> read-only --json
+truffile connections permissions org.example.mail <connection-id> auto-review \
+  --notes "Ask before sending external messages" --json
+truffile connections delete org.example.mail <connection-id> --json
+```
+
+Permission modes are `default`, `read-only`, `read-write`, and `auto-review`.
+These commands change the selected account's saved permission override;
+omitting `--notes` preserves its existing review notes. `default` clears the
+override so the account follows the device's policy. The listing reports saved
+flags, not a computed effective authorization decision. Tool annotations still
+describe the tool; they do not grant permission to use it.
+
+Deleting a connection removes that account. Use the native app settings to add
+or reconnect accounts; the CLI does not yet drive those installer flows. App
+operations are serialized on firmware: a command can save successfully while
+runtime publication is still finishing. If firmware reports another operation
+in progress, inspect the app and wait for it to finish before issuing another
+mutation. Do not blindly retry an uncertain mutation.
+
+The device-wide default-permission setter resets account overrides. It is not
+a setting for future installs only, and this CLI does not invoke it.
+
+## Deployment compatibility
+
+`create`, `validate`, and `deploy` currently target the legacy builder schema:
+foreground/background processes on the minimal base with the low resource
+profile. The background starter is a placeholder to implement, not a working
+monitor. Public apps, legacy text/API-key inputs, and legacy OAuth steps have
+handlers, but legacy credentials do not provide native account isolation or
+reconnection.
+
+Native v3+ manifests, connectors, connection-scoped credentials, and other base
+images/resource profiles require the native bundle installer. Validation now
+rejects these instead of silently dropping their meaning. It does not validate
+the full native schema. Use the native app tooling for modern production apps.
+
+Deploying an already installed bundle ID returns `update_required` before
+building. `--replace` is retained for compatibility but no longer deletes the
+old app. Use the native update flow, or a distinct bundle ID for an independent
+test app. The public install protocol's `start_update` queues registry
+reconciliation; it does not upload developer code. Native developer updates
+currently use the firmware debug app console.
 
 ## Obsidian Bridge Workflow
 
@@ -181,7 +239,16 @@ a distributable wheel, record the exact source revision used to generate the
 bindings:
 
 ```bash
-git -C "$PYFW_CHECKOUT" rev-parse HEAD > truffle/PROTOCOL_SHA
+cp "$PYFW_CHECKOUT/protos.sha" truffle/PROTOCOL_SHA
+```
+
+`PROTOCOL_SHA` identifies the protocol repository revision, not the PyFW
+revision. The release workflow also stages `truffile/app_runtime` from PyFW
+and writes `truffile/BUILD_INFO.json` with `pyfw_sha`, `truffile_sha`, and
+`protocol_sha`. Source checkouts need that matching runtime staged too:
+
+```bash
+cp -a "$PYFW_CHECKOUT/python/app_runtime" ./truffile/app_runtime
 ```
 
 ## Development Loop
@@ -218,7 +285,7 @@ inspect the wheel. The wheel embeds the staged `truffle` package, including
 `.pyi` files and `PROTOCOL_SHA`, and is self-contained after installation.
 
 ```bash
-git -C "$PYFW_CHECKOUT" rev-parse HEAD > truffle/PROTOCOL_SHA
+cp "$PYFW_CHECKOUT/protos.sha" truffle/PROTOCOL_SHA
 /tmp/truffile-convo-clean/bin/python -m pip wheel --no-deps -w /tmp/truffile-wheel .
 TRUFFILE_WHEEL="$(find /tmp/truffile-wheel -maxdepth 1 -name 'truffile-*.whl' -print -quit)"
 /tmp/truffile-convo-clean/bin/python -m zipfile -l "$TRUFFILE_WHEEL" \

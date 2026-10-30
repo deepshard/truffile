@@ -1,5 +1,19 @@
 # Auth Patterns
 
+These examples describe legacy CLI deployment only. Text values become process
+environment variables and OAuth writes a token file; neither is a replacement
+for native connection-scoped credentials. Production multi-account apps must
+use the native installer's account plan and runtime credential API. Do not
+store account secrets in app-global variables or bake them into a bundle.
+
+For native apps, test initial setup, adding a second account, reconnecting one
+account, and updating code while preserving both accounts. Public/no-auth,
+text/API-key, browser OAuth, device-code/custom approval, and browser/VNC flows
+need their own acceptance tests. This CLI does not yet drive all those flows.
+For legacy OAuth URL callbacks, the returned state must match the pending
+request; a missing state is an error. Raw approval-code paste is still supported
+where the provider requires it.
+
 ## Decision Tree
 
 ```

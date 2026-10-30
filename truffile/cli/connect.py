@@ -4,6 +4,7 @@ from truffile.storage import StorageService
 from truffile.client import TruffleClient, resolve_mdns, NewSessionStatus
 
 from .in_container import probe_in_container_device
+from .device_names import normalize_device_name
 from .ui import C, DOT, Spinner, error, success, info
 
 
@@ -20,7 +21,10 @@ async def cmd_connect(args, storage: StorageService) -> int:
             print(f"  {C.DIM}note: firmware probe was incomplete; commands may surface real errors.{C.RESET}")
         return 0
 
-    device_name = args.device
+    device_name = normalize_device_name(args.device)
+    if not device_name:
+        error("A device name is required")
+        return 1
 
     spinner = Spinner(f"Resolving {device_name}.local")
     spinner.start()
@@ -142,7 +146,7 @@ def cmd_disconnect(args, storage: StorageService) -> int:
         print(f"  {C.DIM}the session token comes from the runtime and lives for the container lifetime.{C.RESET}")
         return 0
 
-    target = getattr(args, "device", "all")
+    target = normalize_device_name(getattr(args, "device", "all"))
     if target == "all":
         storage.clear_all()
         success("All device credentials cleared")

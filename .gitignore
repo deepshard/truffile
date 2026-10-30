@@ -3,6 +3,8 @@
 __pycache__/
 .DS_Store
 dist
+build/
+truffile/BUILD_INFO.json
 whatsapp/
 docs-repo/
 .env

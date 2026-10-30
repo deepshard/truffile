@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 import platformdirs
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -117,8 +119,18 @@ class StorageService:
             "hidden_convo_threads": self.state.hidden_convo_threads,
         })
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.state_file, "w") as f:
-            json.dump(state_dict, f, indent=4)
+        # Pairing tokens and bridge credentials must not inherit a permissive
+        # umask. Replace atomically so interruption cannot truncate them.
+        fd, temporary = tempfile.mkstemp(prefix=".state-", dir=self.state_file.parent)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(state_dict, f, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, self.state_file)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     def get_token(self, device_name: str) -> str | None:
         for device in self.state.devices:

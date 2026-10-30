@@ -56,7 +56,7 @@ def _non_interactive_blockers(plan: dict) -> list[dict[str, str]]:
     return blockers
 
 
-async def _replace_existing_app(
+async def _check_existing_app(
     *,
     address: str,
     token: str,
@@ -89,13 +89,14 @@ async def _replace_existing_app(
             ), None
 
         app = matches[0]
-        delete_spinner = None if json_out else Spinner(f"Replacing existing {app.metadata.name}")
-        if delete_spinner:
-            delete_spinner.start()
-        await client.delete_app(app.uuid)
-        if delete_spinner:
-            delete_spinner.stop(success=True)
-        return 0, {"name": app.metadata.name, "uuid": app.uuid}
+        return _deploy_error(
+            json_out,
+            "update_required",
+            f"{app.metadata.name} is already installed. Builder deployment cannot safely "
+            "update it. Use the native app update flow to retain connections and "
+            "credentials. To install a separate development app, use a new bundle_id.",
+            app_uuid=app.uuid,
+        ), None
     except Exception as exc:
         if spinner:
             spinner.fail(str(exc))
@@ -116,7 +117,6 @@ async def cmd_deploy(args, storage: StorageService) -> int:
     dry_run = bool(getattr(args, "dry_run", False))
     json_out = bool(getattr(args, "json", False))
     non_interactive = bool(getattr(args, "non_interactive", False))
-    replace = bool(getattr(args, "replace", False))
     if interactive and non_interactive:
         return _deploy_error(json_out, "invalid_args", "--interactive and --non-interactive cannot be used together")
     if not app_dir.exists() or not app_dir.is_dir():
@@ -226,19 +226,16 @@ async def cmd_deploy(args, storage: StorageService) -> int:
         return 1
 
     address = f"{ip}:80"
-    replaced_app = None
-    if replace:
-        replace_code, replaced_app = await _replace_existing_app(
-            address=address,
-            token=token,
-            storage=storage,
-            device=device,
-            bundle_id=plan["bundle_id"],
-            json_out=json_out,
-        )
-        if replace_code != 0:
-            return replace_code
-
+    replace_code, replaced_app = await _check_existing_app(
+        address=address,
+        token=token,
+        storage=storage,
+        device=device,
+        bundle_id=plan["bundle_id"],
+        json_out=json_out,
+    )
+    if replace_code != 0:
+        return replace_code
     client = TruffleClient(address, token=token, app_id=storage.app_id_for_device(device))
     deploy_task = None
 

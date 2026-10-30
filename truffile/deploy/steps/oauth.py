@@ -156,7 +156,7 @@ def _parse_callback(value: str, *, expected_state: str) -> str:
         description = (params.get("error_description") or [""])[0]
         raise RuntimeError(f"OAuth provider returned error: {error}" + (f" - {description}" if description else ""))
     state = (params.get("state") or [""])[0]
-    if expected_state and state and state != expected_state:
+    if expected_state and state != expected_state:
         raise RuntimeError("OAuth callback state did not match; aborting install")
     code = (params.get("code") or [""])[0]
     if not code:

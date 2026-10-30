@@ -82,10 +82,29 @@ def validate_app_dir(app_dir: Path) -> tuple[bool, dict[str, Any] | None, str | 
         errors.append("truffile.yaml root must be a mapping")
         return False, None, None, warnings, errors
 
+    # Builder deployment cannot replay native installer connection plans.
+    # Reject these before allocating a build instead of silently dropping
+    # credentials, resource requirements, or account isolation semantics.
+    version = config.get("truffile_version", 1)
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        errors.append("truffile_version must be a positive integer")
+    elif version >= 3:
+        errors.append(
+            "truffile_version 3+ requires the native bundle installer in Settings; "
+            "CLI builder deployment does not support connectors or connection plans yet"
+        )
+    for key in ("connections", "alias_from", "label_from"):
+        if key in config:
+            errors.append(f"{key} requires the native bundle installer in Settings")
+
     meta = config.get("metadata", {})
     if not isinstance(meta, dict):
         errors.append("metadata must be a mapping")
         return False, None, None, warnings, errors
+
+    for key, supported in (("base_image", "minimal"), ("resource_profile", "low")):
+        if key in meta and meta[key] != supported:
+            errors.append(f"CLI builder supports only metadata.{key}: {supported}; use the native bundle installer")
 
     if not meta.get("name"):
         errors.append("metadata.name is required in truffile.yaml")
@@ -162,6 +181,11 @@ def validate_app_dir(app_dir: Path) -> tuple[bool, dict[str, Any] | None, str | 
         if not isinstance(step, dict):
             errors.append(f"steps[{idx}] must be a mapping")
             continue
+        if "scope" in step or "credentials" in step:
+            errors.append(f"steps[{idx}]: connection-scoped steps require the native bundle installer")
+        fields = step.get("fields", [])
+        if isinstance(fields, list) and any(isinstance(f, dict) and "scope" in f for f in fields):
+            errors.append(f"steps[{idx}]: connection-scoped fields require the native bundle installer")
         step_type = step.get("type")
         step_label = step.get("name") or f"steps[{idx}]"
         if not isinstance(step_type, str) or not step_type.strip():

@@ -747,12 +747,17 @@ class ConvoChatSession:
             self.reducer.upsert_node(node)
             user_node_id = int(getattr(node, "id"))
             if draft:
-                if not _has_field(node, "child_thread"):
+                # Current firmware places the accepted user node inside the
+                # new side thread. Older firmware returned its Main anchor.
+                reply_thread_id = int(getattr(node, "thread_id", 0))
+                if reply_thread_id <= 0 and _has_field(node, "child_thread"):
+                    reply_thread_id = int(node.child_thread.thread_id)
+                if reply_thread_id <= 0:
                     self._live_callback = None
                     raise ConvoChatError(
-                        "Convo accepted the opening message but did not return a child thread"
+                        "Convo accepted the opening message but did not return a side thread; "
+                        "inspect thread history before retrying"
                     )
-                reply_thread_id = int(getattr(getattr(node, "child_thread"), "thread_id"))
                 self.selected_thread_id = reply_thread_id
                 if reply_thread_id not in self.reducer.threads_by_id:
                     self.reducer.upsert_thread(
@@ -760,7 +765,7 @@ class ConvoChatSession:
                             thread_id=reply_thread_id,
                             thread_kind="NODE",
                             display_name="Untitled chat",
-                            anchor_node_id=user_node_id,
+                            anchor_node_id=(user_node_id if int(node.thread_id) == 0 else reply_thread_id),
                         )
                     )
             else:
