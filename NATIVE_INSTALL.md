@@ -131,14 +131,17 @@ report that another operation is still finishing.
 
 ## Current verification boundary
 
-On 6272, native CLI installation was exercised with a public fixture and a
-connection-scoped text/password fixture. Add-account, friendly-name rename,
-reconnect, and interactive account selection/deletion were exercised on the
-synthetic accounts. Older firmware's update/replace capability rejection was
-also checked without replacing existing apps.
+On updated 6272, fresh native installs, uploaded updates and replacements pass
+live acceptance. An update preserves two synthetic accounts and their IDs,
+credentials, aliases, permissions and review notes. Failed builds retain the
+previous app. Successful replacement resets the accounts only after its build
+succeeds. Add-account and reconnect are also verified.
 
-The new public upload routes and native update/reset worker selection have
-automated tests. Live uploaded update/replace tests still require a device
-running the accompanying PyFW PR. Real OAuth providers, Windows/macOS, and
-browser/VNC sign-in remain separate acceptance tests. Successful synthetic forms
-do not prove those provider flows.
+Todoist's real OAuth installation works with consent in a Mac browser and a
+pasted localhost callback. Tool discovery and a read-only provider call pass.
+A second distinct Todoist account and Robinhood authorization are still pending.
+See [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md) for exact evidence and limits.
+
+Older firmware's update/replace capability rejection was previously checked
+without replacing existing apps. Windows/macOS CLI execution and browser/VNC
+sign-in remain separate acceptance tests.

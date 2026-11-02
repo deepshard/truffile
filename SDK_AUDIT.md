@@ -1,5 +1,12 @@
 # Truffile SDK/CLI audit — 2026-10-30
 
+## Latest acceptance
+
+See [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md) for the November 2 device
+results, implemented upload/update/reset paths, real Todoist OAuth and patched
+MCP dependency verification. The remaining sections preserve the initial audit;
+their candidate limitations and dependency pin describe the October 30 state.
+
 ## Follow-up implementation
 
 The findings and candidate column below describe the initial audit/first patch.
