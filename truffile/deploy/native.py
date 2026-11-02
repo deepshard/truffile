@@ -151,6 +151,8 @@ async def install_native(client, *, mode: str, handle_modal, progress=None,
     stream = client.stub.Apps_InstallApp(metadata=metadata)
     finished = False
     uploaded = False
+    read_task = None
+    prompt_task = None
     async def abort():
         request = AppInstallRequest()
         request.user_action.abort.SetInParent()
@@ -159,8 +161,25 @@ async def install_native(client, *, mode: str, handle_modal, progress=None,
     try:
         async with asyncio.timeout(timeout):
             await stream.write(initial)
+            read_task = asyncio.create_task(stream.read())
             while True:
-                response = await stream.read()
+                waiting = {read_task}
+                if prompt_task is not None:
+                    waiting.add(prompt_task)
+                done, _ = await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+                # Firmware can expire or finish setup while the terminal is
+                # waiting for input. A received terminal response takes
+                # precedence over any paste that is also ready.
+                if read_task not in done:
+                    action = prompt_task.result()
+                    prompt_task = None
+                    if action is not None:
+                        request = AppInstallRequest()
+                        request.user_action.CopyFrom(action)
+                        await stream.write(request)
+                    continue
+                response = read_task.result()
+                read_task = None
                 if response is grpc.aio.EOF:
                     raise RuntimeError("Installer disconnected before completion. Inspect the app before retrying.")
                 if response.HasField("install_error"):
@@ -168,8 +187,15 @@ async def install_native(client, *, mode: str, handle_modal, progress=None,
                 if response.HasField("install_loading") and progress:
                     progress(response.install_loading.loading_message)
                 if not response.HasField("install_modal"):
+                    read_task = asyncio.create_task(stream.read())
                     continue
                 modal = response.install_modal
+                if prompt_task is not None:
+                    # A newer modal replaces the previous interaction. Its
+                    # cleanup also closes any localhost callback listener.
+                    prompt_task.cancel()
+                    await asyncio.gather(prompt_task, return_exceptions=True)
+                    prompt_task = None
                 if modal.HasField("upload_file_modal"):
                     route = modal.upload_file_modal.upload_uri_path
                     if bundle is None or uploaded or not re.fullmatch(r"/containers/[A-Za-z0-9_-]+/source/upload", route):
@@ -192,14 +218,17 @@ async def install_native(client, *, mode: str, handle_modal, progress=None,
                     return {"app_uuid": finish.app_uuid, "connection_id": finish.connection_id,
                             "mode": mode, "bundle_sha256": bundle.sha256 if bundle else None}
                 else:
-                    action = await handle_modal(modal)
-                    if action is not None:
-                        request = AppInstallRequest()
-                        request.user_action.CopyFrom(action)
-                        await stream.write(request)
+                    prompt_task = asyncio.create_task(handle_modal(modal))
+                read_task = asyncio.create_task(stream.read())
     except TimeoutError as exc:
         raise RuntimeError("Installer timed out. Cancellation was requested; inspect the app before retrying.") from exc
     finally:
+        if prompt_task is not None:
+            prompt_task.cancel()
+            await asyncio.gather(prompt_task, return_exceptions=True)
         if not finished:
             await abort()
         stream.cancel()
+        if read_task is not None:
+            read_task.cancel()
+            await asyncio.gather(read_task, return_exceptions=True)

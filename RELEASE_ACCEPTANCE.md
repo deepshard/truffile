@@ -24,7 +24,7 @@ PyFW runtime and protocol revision `e12791a0795496bf8fec5674664a17f08ebe330a`.
 | Successful replacement | Same app UUID, new account ID and credentials, old accounts removed, uploaded replacement code runs |
 | Reconnect | Selected account ID retained; supplied replacement credentials used by the tool |
 | Todoist provider OAuth | Installed from the CLI; consent on a Mac, pasted localhost callback accepted; 47 tools discovered; read-only `user-info` succeeds |
-| Second distinct Todoist account | Awaiting user authorization; not yet a real-provider isolation pass |
+| Second distinct Todoist account | First attempt expired after 15 minutes; original account unchanged. Fresh authorization pending; not yet a real-provider isolation pass |
 | Robinhood provider OAuth | Discovery, dynamic registration and authorization URL succeed; awaiting user sign-in; no trades attempted |
 | Existing user apps | All 38 baseline apps retain their bundle IDs, connection IDs, status and saved permission flags |
 
@@ -42,7 +42,8 @@ exposed by Truffle.
 
 With MCP 1.30.0:
 
-- Installed-wheel CLI suite: 248 tests and one subtest pass.
+- CLI suite: 255 tests and one subtest pass after the setup-expiry correction
+  below (248 passed in the earlier installed-wheel run).
 - Installed-wheel credential and SIGTERM checks: all four canonical/alias
   variants pass.
 - App-runtime OAuth, foreground and remote-MCP suites: 232 tests and 20
@@ -55,6 +56,22 @@ With MCP 1.30.0:
 The device acceptance above uses the running b4391bb3d firmware. It is not
 validation of a newly rebuilt firmware image containing the dependency bump.
 No firmware update or PyPI publication was performed during these tests.
+
+## Setup-expiry correction
+
+Todoist account addition expired on firmware after 15 minutes, while the CLI
+continued waiting for a paste under its longer command timeout. A later callback
+then produced the misleading `Internal error from Core` instead of showing the
+expiry. No second account was created, and the first account was unchanged.
+
+The SDK now receives installer messages concurrently with terminal input. Server
+errors, disconnects and completion dismiss pending prompts; newer setup cards
+replace older prompts; loading messages keep flowing. A received terminal result
+takes precedence over a paste that is ready simultaneously. All input/callback
+tasks are cleaned up without automatically retrying the installation.
+
+Regression coverage includes a real local gRPC stream expiring while the OAuth
+paste prompt and localhost listener are active, verifying that both are closed.
 
 ## Remaining release evidence
 

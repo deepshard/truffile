@@ -126,6 +126,11 @@ cancellation. Rerun interactively or supply form answers as appropriate.
 `--timeout` defaults to 900 seconds for install/add/reconnect. A timeout or
 disconnect is not permission to retry blindly: cancellation is requested, but
 the operation may already have committed. Inspect the app before retrying.
+The device can expire sign-in before the CLI's deadline; increasing `--timeout`
+does not extend that authorization window. The CLI continues receiving device
+responses while prompting, closes stale prompts/callback listeners on expiry or
+disconnect, and reports the device's error. An expired setup needs a new sign-in
+link.
 Mutations are serialized on firmware, so an immediate follow-up command can
 report that another operation is still finishing.
 

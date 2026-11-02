@@ -8,7 +8,7 @@ import grpc
 import httpx
 import pytest
 from truffle.app.app_pb2 import App
-from truffle.os.installer_pb2 import AppInstallResponse, AppInstallUserAction
+from truffle.os.installer_pb2 import AppInstallRequest, AppInstallResponse, AppInstallUserAction
 from truffile.deploy.native import prepare_bundle, install_native
 from truffile.cli.connections import choose_app, choose_connection
 from truffile.cli.native import InstallPrompts, InteractionRequired
@@ -51,16 +51,24 @@ def test_bundle_rejects_path_escape_and_symlinks(tmp_path):
 
 
 class Stream:
-    def __init__(self, responses):
+    def __init__(self, responses, *, finish_after_action=False):
         self.responses = iter(responses)
         self.writes = []
         self.cancelled = False
+        self.finish_after_action = finish_after_action
+        self.action_received = asyncio.Event()
 
     async def write(self, request):
         self.writes.append(request)
+        if request.HasField("user_action") and not request.user_action.HasField("abort"):
+            self.action_received.set()
 
     async def read(self):
-        return next(self.responses, grpc.aio.EOF)
+        response = next(self.responses, grpc.aio.EOF)
+        if (self.finish_after_action and response is not grpc.aio.EOF
+                and response.install_modal.HasField("finish_modal")):
+            await self.action_received.wait()
+        return response
 
     def cancel(self):
         self.cancelled = True
@@ -83,7 +91,7 @@ def test_native_upload_uses_correct_mode_and_never_writes_after_finish(tmp_path,
     text.install_modal.text_fields_modal.fields["api_key"].is_password = True
     finish = AppInstallResponse()
     finish.install_modal.finish_modal.app_uuid = "installed"
-    stream = Stream([upload, text, finish])
+    stream = Stream([upload, text, finish], finish_after_action=True)
     c = client(stream)
     received = []
     real_http = httpx.AsyncClient
@@ -139,6 +147,166 @@ def test_disconnect_requests_abort_without_retrying():
     assert stream.writes[-1].user_action.HasField("abort")
     c.stub.Apps_InstallApp.assert_called_once()
     assert stream.cancelled
+
+
+@pytest.mark.parametrize("terminal", ["expired", "disconnect", "transport_error", "finish"])
+def test_server_terminal_response_closes_pending_prompt(terminal):
+    async def scenario():
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        modal = AppInstallResponse()
+        modal.install_modal.oauth_modal.auth_url = "https://provider.example/authorize"
+        loading = AppInstallResponse()
+        loading.install_loading.loading_message = "Still waiting"
+        end = AppInstallResponse()
+        if terminal == "expired":
+            end.install_error.error_message = "Sign-in request expired."
+        elif terminal == "finish":
+            end.install_modal.finish_modal.app_uuid = "app"
+        else:
+            end = grpc.aio.EOF
+
+        class PendingStream(Stream):
+            async def read(self):
+                response = await super().read()
+                if response is not modal:
+                    await started.wait()
+                    assert not cancelled.is_set()
+                if response is end and terminal == "transport_error":
+                    raise RuntimeError("transport lost")
+                return response
+
+        async def prompt(_modal):
+            started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+
+        stream = PendingStream([modal, loading, end])
+        progress = []
+        call = install_native(client(stream), mode="add", app_uuid="app",
+                              handle_modal=prompt, progress=progress.append)
+        if terminal == "finish":
+            assert (await asyncio.wait_for(call, 2))["app_uuid"] == "app"
+            assert len(stream.writes) == 1
+        else:
+            message = {"expired": "Sign-in request expired", "disconnect": "disconnected",
+                       "transport_error": "transport lost"}[terminal]
+            with pytest.raises(RuntimeError, match=message):
+                await asyncio.wait_for(call, 2)
+            assert stream.writes[-1].user_action.HasField("abort")
+        assert cancelled.is_set()
+        assert progress == ["Still waiting"]
+        assert stream.cancelled
+        assert not any(r.user_action.HasField("oauth") for r in stream.writes)
+    asyncio.run(scenario())
+
+
+def test_replacement_modal_cancels_stale_input_and_sends_only_new_answer():
+    async def scenario():
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        first, second, finish = AppInstallResponse(), AppInstallResponse(), AppInstallResponse()
+        first.install_modal.step_index = 1
+        first.install_modal.text_fields_modal.fields["email"].label = "Old account"
+        second.install_modal.step_index = 2
+        second.install_modal.text_fields_modal.fields["email"].label = "New account"
+        finish.install_modal.finish_modal.app_uuid = "app"
+
+        class ReplacedStream(Stream):
+            async def read(self):
+                response = await super().read()
+                if response is second:
+                    await started.wait()
+                return response
+
+        async def prompt(modal):
+            if modal.step_index == 1:
+                started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    cancelled.set()
+            assert cancelled.is_set()
+            action = AppInstallUserAction()
+            action.text_fields.field_responses["email"] = "new@example.invalid"
+            return action
+
+        stream = ReplacedStream([first, second, finish], finish_after_action=True)
+        await asyncio.wait_for(install_native(client(stream), mode="add", app_uuid="app",
+                                             handle_modal=prompt), 2)
+        assert len(stream.writes) == 2
+        assert stream.writes[1].user_action.text_fields.field_responses["email"] == "new@example.invalid"
+    asyncio.run(scenario())
+
+
+def test_expiry_wins_over_a_paste_ready_in_the_same_turn():
+    response = AppInstallResponse()
+    response.install_modal.oauth_modal.auth_url = "https://provider.example/authorize"
+    expired = AppInstallResponse()
+    expired.install_error.error_message = "Sign-in request expired."
+    answer = AppInstallUserAction()
+    answer.oauth.code = "must-not-be-sent"
+    stream = Stream([response, expired])
+    with pytest.raises(RuntimeError, match="Sign-in request expired"):
+        asyncio.run(install_native(client(stream), mode="add", app_uuid="app",
+                                   handle_modal=AsyncMock(return_value=answer)))
+    assert not any(r.user_action.HasField("oauth") for r in stream.writes)
+
+
+def test_real_grpc_expiry_closes_oauth_prompt_and_callback_listener(monkeypatch):
+    import os
+    import socket
+    if os.name != "posix":
+        pytest.skip("automatic loopback is currently POSIX only")
+    monkeypatch.setattr("truffile.cli.native.interactive", lambda _: True)
+
+    async def scenario():
+        ready, cancelled = asyncio.Event(), asyncio.Event()
+        async def pending_paste(*args, **kwargs):
+            ready.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+        monkeypatch.setattr("truffile.cli.native.prompt", pending_paste)
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            callback_port = sock.getsockname()[1]
+
+        async def install(requests, context):
+            assert (await anext(requests)).HasField("start_add_connection")
+            response = AppInstallResponse()
+            oauth = response.install_modal.oauth_modal
+            oauth.auth_url, oauth.state = "https://provider.example/authorize", "pending"
+            oauth.loopback_callback.redirect_uri = f"http://127.0.0.1:{callback_port}/callback"
+            yield response
+            await ready.wait()
+            expired = AppInstallResponse()
+            expired.install_error.error_message = "Sign-in request expired."
+            yield expired
+
+        server = grpc.aio.server()
+        server.add_generic_rpc_handlers((grpc.method_handlers_generic_handler("audit", {
+            "Install": grpc.stream_stream_rpc_method_handler(install,
+                request_deserializer=AppInstallRequest.FromString,
+                response_serializer=AppInstallResponse.SerializeToString),
+        }),))
+        port = server.add_insecure_port("127.0.0.1:0")
+        await server.start()
+        try:
+            async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
+                c = SimpleNamespace(_metadata=[], stub=SimpleNamespace(Apps_InstallApp=channel.stream_stream(
+                    "/audit/Install", request_serializer=AppInstallRequest.SerializeToString,
+                    response_deserializer=AppInstallResponse.FromString)))
+                with pytest.raises(RuntimeError, match="Sign-in request expired"):
+                    await asyncio.wait_for(install_native(c, mode="add", app_uuid="app",
+                        handle_modal=InstallPrompts(SimpleNamespace(), "device:80")), 3)
+            assert cancelled.is_set()
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", callback_port))
+        finally:
+            await server.stop(None)
+    asyncio.run(scenario())
 
 
 def test_account_setup_rejects_an_uploaded_bundle_before_mutation(tmp_path):
