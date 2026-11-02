@@ -13,7 +13,8 @@ PyFW runtime and protocol revision `e12791a0795496bf8fec5674664a17f08ebe330a`.
 | Numeric connect with an existing session, device JSON, discovery, model listing | Pass |
 | Direct inference | Expected response returned |
 | New Convo side thread, follow-up, history | Pass; expected responses, same thread |
-| Create, validate, deterministic dry run, deploy generated starter | Pass |
+| Create, validate, deterministic dry run, deploy generated starter | Pass, including its ping tool |
+| Explicit legacy builder deployment | Pass for a fresh foreground/background starter; valid JSON result |
 | Public app installation and tool call | Pass |
 | Text/password native install and second account | Pass with two synthetic identities |
 | Friendly-name account rename and permission controls | Separate aliases, flags and review notes saved |
@@ -34,8 +35,8 @@ credentials and raw device evidence are excluded from this repository.
 ## Dependency and local verification
 
 The SDK now pins MCP 1.30.0, the patched maintenance release for the existing
-1.x API. The accompanying PyFW change aligns its firmware, agent-runtime and
-base-minimal pins. This addresses the four dependency advisories recorded in
+1.x API. [PyFW PR #432](https://github.com/deepshard/pyfw/pull/432) aligns its firmware,
+agent-runtime and base-minimal pins. This addresses the four dependency advisories recorded in
 the initial audit. It does not claim that every affected server transport was
 exposed by Truffle.
 
