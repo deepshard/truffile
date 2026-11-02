@@ -24,7 +24,8 @@ PyFW runtime and protocol revision `e12791a0795496bf8fec5674664a17f08ebe330a`.
 | Successful replacement | Same app UUID, new account ID and credentials, old accounts removed, uploaded replacement code runs |
 | Reconnect | Selected account ID retained; supplied replacement credentials used by the tool |
 | Todoist provider OAuth | Installed from the CLI; consent on a Mac, pasted localhost callback accepted; 47 tools discovered; read-only `user-info` succeeds |
-| Second distinct Todoist account | First attempt expired after 15 minutes; original account unchanged. Fresh authorization pending; not yet a real-provider isolation pass |
+| Second distinct Todoist account | Fresh authorization succeeds; per-account reads return two different provider identities; original connection unchanged |
+| Real OAuth account preservation during upload | Todoist update installs a changed bundle without sign-in; both account IDs, aliases, permissions and authenticated provider identities remain unchanged, verified by post-update reads |
 | Robinhood provider OAuth | Discovery, dynamic registration and authorization URL succeed; awaiting user sign-in; no trades attempted |
 | Existing user apps | All 38 baseline apps retain their bundle IDs, connection IDs, status and saved permission flags |
 
@@ -42,8 +43,8 @@ exposed by Truffle.
 
 With MCP 1.30.0:
 
-- CLI suite: 255 tests and one subtest pass after the setup-expiry correction
-  below (248 passed in the earlier installed-wheel run).
+- Installed-wheel CLI suite: 255 tests and one subtest pass after the setup-expiry
+  correction below.
 - Installed-wheel credential and SIGTERM checks: all four canonical/alias
   variants pass.
 - App-runtime OAuth, foreground and remote-MCP suites: 232 tests and 20
@@ -72,12 +73,13 @@ tasks are cleaned up without automatically retrying the installation.
 
 Regression coverage includes a real local gRPC stream expiring while the OAuth
 paste prompt and localhost listener are active, verifying that both are closed.
+A fresh provider callback completed the second account. The corrected installed
+CLI also passed a normal text/password installation and the real two-account
+Todoist update described above. Disposable fixtures were removed afterward.
 
 ## Remaining release evidence
 
-Finish Todoist with a genuinely different second account, verify per-account
-reads and an uploaded update with those real OAuth accounts, then finish
-Robinhood sign-in and a read-only call. These are pending user interaction,
-not completed tests. Provider refresh/revocation over time, browser/VNC setup,
+Finish Robinhood sign-in and a read-only call. That provider check is pending
+user interaction, not completed. Provider refresh/revocation over time, browser/VNC setup,
 Windows/macOS CLI execution and full Obsidian deployment remain outside this
 pass; a Mac browser callback is not proof of running the CLI on macOS.

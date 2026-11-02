@@ -143,8 +143,9 @@ previous app. Successful replacement resets the accounts only after its build
 succeeds. Add-account and reconnect are also verified.
 
 Todoist's real OAuth installation works with consent in a Mac browser and a
-pasted localhost callback. Tool discovery and a read-only provider call pass.
-A second distinct Todoist account and Robinhood authorization are still pending.
+pasted localhost callback. Two distinct real accounts return their correct
+identities through read-only calls before and after an uploaded update, with
+their IDs, aliases and permissions preserved. Robinhood authorization is pending.
 See [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md) for exact evidence and limits.
 
 Older firmware's update/replace capability rejection was previously checked
