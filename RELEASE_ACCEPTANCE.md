@@ -35,28 +35,22 @@ credentials and raw device evidence are excluded from this repository.
 
 ## Dependency and local verification
 
-The SDK now pins MCP 1.30.0, the patched maintenance release for the existing
-1.x API. [PyFW PR #432](https://github.com/deepshard/pyfw/pull/432) aligns its firmware,
-agent-runtime and base-minimal pins. This addresses the four dependency advisories recorded in
-the initial audit. It does not claim that every affected server transport was
-exposed by Truffle.
+The SDK retains the existing MCP 1.26.0 pin. The coordinated dependency upgrade
+is deferred at the maintainer's request, and the upgrade-only
+[PyFW PR #432](https://github.com/deepshard/pyfw/pull/432) is withdrawn. It is not a
+functional requirement for the SDK install, account or update changes. The
+dependency advisories in the initial audit remain a separate maintenance item.
 
-With MCP 1.30.0:
+Final candidate verification with MCP 1.26.0:
 
 - Installed-wheel CLI suite: 255 tests and one subtest pass after the setup-expiry
   correction below.
 - Installed-wheel credential and SIGTERM checks: all four canonical/alias
   variants pass.
-- App-runtime OAuth, foreground and remote-MCP suites: 232 tests and 20
-  subtests pass, including authenticated HTTP refresh and session cleanup.
-- Firmware MCP client, installer OAuth and agent-runtime MCP wire tests:
-  69 pass. Two checkpoint-bootstrap tests require the full firmware integration
-  environment and were excluded from this isolated dependency run.
 - Installed wheel dependency consistency (`pip check`): pass.
 
-The device acceptance above uses the running b4391bb3d firmware. It is not
-validation of a newly rebuilt firmware image containing the dependency bump.
-No firmware update or PyPI publication was performed during these tests.
+The device acceptance above uses the running b4391bb3d firmware without an MCP
+upgrade. No firmware update or PyPI publication was performed during these tests.
 
 ## Setup-expiry correction
 

@@ -3,8 +3,8 @@
 ## Latest acceptance
 
 See [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md) for the November 2 device
-results, implemented upload/update/reset paths, real Todoist OAuth and patched
-MCP dependency verification. The remaining sections preserve the initial audit;
+results, implemented upload/update/reset paths, real Todoist OAuth and release
+verification. The MCP upgrade is deferred outside this release. The remaining sections preserve the initial audit;
 their candidate limitations and dependency pin describe the October 30 state.
 
 ## Follow-up implementation
@@ -148,7 +148,7 @@ uncertain writes would be the wrong fix. The SDK needs operation status.
 | P1 | CLI/SDK native install driver | Drive upload, welcome, text/password, validation, OAuth and supported custom/browser interactions; return actionable interaction-required results instead of hanging |
 | P1 | Add/reconnect commands | Add two accounts; reconnect exactly one; cancel or fail validation without modifying the other; retain permission overrides and intentional aliases according to the firmware contract |
 | P1 | Authentication lifecycle | Use connection credential APIs; support refresh/rotation; keep secrets out of bundle/logs/JSON; validate OAuth state and provider-specific code handoff; exercise actual provider flows |
-| P1 | Upgrade the pinned MCP dependency | Move off 1.26.0 to a version addressing the four open advisories below; verify PyFW/runtime transport compatibility, authenticated sessions, and client shutdown before release |
+| Deferred follow-up | Upgrade the pinned MCP dependency | Outside this SDK release; assess exposure to the four advisories below and verify PyFW/runtime compatibility before a coordinated upgrade |
 | P1 | Operation status, deadlines and cancellation | Expose terminal status and correlation ID; report pending/unknown outcomes; no blind write retries; recover after disconnect/timeout without duplicate install or duplicate chat |
 | P1 | User-controlled initial permissions | Separate per-account overrides, initial-install preferences, and device-wide policy/reset; show effective versus saved permissions; preserve existing users on updates |
 | P2 | Native authoring templates | Provide working public, API-key/text, OAuth, connector and background examples; remove placeholder success impressions; test packaged files and resources |
