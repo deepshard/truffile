@@ -55,3 +55,38 @@ class TestVaultBridge(unittest.TestCase):
             bridge = VaultBridge(root)
             entries = bridge.list_files("/")
             self.assertEqual(entries, ["visible/"])
+
+    def test_write_rejects_symlink_outside_vault(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "vault"
+            root.mkdir()
+            outside = base / "outside.md"
+            outside.write_text("outside", encoding="utf-8")
+            link = root / "linked.md"
+            try:
+                link.symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+
+            bridge = VaultBridge(root)
+            with self.assertRaises(ValueError):
+                bridge.write_note("linked.md", "overwrite")
+
+            self.assertEqual(outside.read_text(encoding="utf-8"), "outside")
+
+    def test_search_skips_symlink_outside_vault(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "vault"
+            root.mkdir()
+            outside = base / "outside.md"
+            outside.write_text("outside secret", encoding="utf-8")
+            link = root / "linked.md"
+            try:
+                link.symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"symlinks unavailable: {exc}")
+
+            bridge = VaultBridge(root)
+            self.assertEqual(bridge.search("outside secret"), [])
