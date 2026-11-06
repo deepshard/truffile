@@ -300,3 +300,21 @@ def test_notification_loss_during_turn_is_fence_lost_and_never_resends():
         assert len(client.send_calls) == 1
 
     asyncio.run(scenario())
+
+
+def test_new_side_thread_uses_accepted_nodes_thread_id_on_current_firmware():
+    async def scenario():
+        client = FakeClient([existing_user(node_id=100, thread_id=101)])
+        session = ConvoChatSession(client)
+        task = await let_send_wait(session)
+        reply = ai_node(102, 101, "new thread works")
+        client.refresh_nodes = [reply]
+        await session.handle_notification(terminal_notification(reply))
+        result = await asyncio.wait_for(task, 1)
+        assert result.thread_id == 101
+        assert result.user_node_id == 100
+        assert result.content == "new thread works"
+        assert len(client.send_calls) == 1
+        assert client.send_calls[0][1]["agent_should_respond_in_subthread"] is True
+        assert session.reducer.threads_by_id[101].anchor_node_id == 101
+    asyncio.run(scenario())

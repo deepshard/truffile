@@ -175,6 +175,56 @@ class TruffleClient:
         resp: DeleteAppResponse = await self.stub.Apps_DeleteApp(req, metadata=self._metadata)
         return resp
 
+    async def supports_developer_uploads(self) -> bool:
+        """Read-only negotiation before an uploaded update or replacement."""
+        if not self.stub:
+            raise RuntimeError("not connected")
+        req = GetAllAppsRequest()
+        req.field_mask.paths.append("uuid")
+        call = self.stub.Apps_GetAll(
+            req, metadata=[*self._metadata, ("truffile-capabilities", "1")], timeout=15,
+        )
+        await call
+        return ("truffile-developer-upload", "1") in tuple(await call.initial_metadata() or ())
+
+    async def update_connection(
+        self, app_uuid: str, connection_id: str, *,
+        alias: str | None = None, permission_flags: int | None = None,
+        auto_review_notes: str = "",
+    ) -> App:
+        """Rename or change one account's saved permissions, never both."""
+        from truffle.os.app_queries_pb2 import UpdateAppConnectionRequest
+        if not self.stub:
+            raise RuntimeError("not connected")
+        if not app_uuid or not connection_id:
+            raise ValueError("app_uuid and connection_id are required")
+        if (alias is None) == (permission_flags is None):
+            raise ValueError("provide exactly one of alias or permission_flags")
+        req = UpdateAppConnectionRequest(app_uuid=app_uuid, connection_id=connection_id)
+        if alias is not None:
+            if not alias.strip():
+                raise ValueError("connection alias must not be empty")
+            req.alias = alias
+        else:
+            if isinstance(permission_flags, bool) or permission_flags not in (0, 1, 3, 11):
+                raise ValueError("permission_flags must be 0 (default), 1 (read), 3 (read/write), or 11 (reviewed writes)")
+            req.permission.flags = permission_flags
+            req.permission.auto_review_notes = auto_review_notes
+        response = await self.stub.Apps_UpdateConnection(req, metadata=self._metadata)
+        return response.app
+
+    async def delete_connection(self, app_uuid: str, connection_id: str) -> App:
+        from truffle.os.app_queries_pb2 import DeleteAppConnectionRequest
+        if not self.stub:
+            raise RuntimeError("not connected")
+        if not app_uuid or not connection_id:
+            raise ValueError("app_uuid and connection_id are required")
+        response = await self.stub.Apps_DeleteConnection(
+            DeleteAppConnectionRequest(app_uuid=app_uuid, connection_id=connection_id),
+            metadata=self._metadata,
+        )
+        return response.app
+
     async def get_current_user_identity(self) -> UserIDForTokenResponse:
         if not self.stub:
             raise RuntimeError("not connected")

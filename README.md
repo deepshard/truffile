@@ -7,24 +7,41 @@ Python SDK/CLI for Truffle devices.
 - discovers and connects to your Truffle (`scan`, `connect`, `disconnect`)
 - copies bundled agent resources into your workspace (`load`)
 - validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
-- manages installed apps (`list apps`, `delete`)
+- installs and updates apps, adds or reconnects accounts, and manages permissions
+  (`deploy`, `list apps`, `connections`, `delete`)
 - talks to the on-device agent (`convo`) or inference directly (`models`, `infer`)
 
-## Start making your Own Apps
+See [native installation and account management](NATIVE_INSTALL.md) for the
+current workflow and firmware requirements. [The SDK audit](SDK_AUDIT.md) records
+the original failures and follow-up scope.
 
-- app schema and validation: `truffile/truffile/schema/app_config.py`
-- schedule parsing: `truffile/truffile/schedule.py`
-- deploy planning + builder flow: `truffile/truffile/deploy/builder.py`
-- generated TruffleOS protos staged locally in the gitignored repo-root `truffle/`
-- bundled example apps live under `truffile/app-store/`
-- bundled Codex skills live under `truffile/skills/`
+## Start making apps
 
-`truffile.yaml` defines:
-- metadata (`name`, `description`, `type`)
-- process (`cmd`, `working_directory`, `environment`)
-- files to upload
-- optional run/build commands
-- background schedule policy (for BG apps)
+Use Python 3.12 or newer:
+
+```bash
+python -m pip install --upgrade truffile
+truffile connect 6272
+truffile load all
+truffile create my-app --path ./apps
+truffile validate ./apps/my-app
+truffile deploy ./apps/my-app
+```
+
+For first-time pairing, enter your User ID from Symphony Settings and approve
+the session on the device. The CLI reuses the saved session afterward.
+
+The manifest defines app identity, foreground tools or a remote MCP connector,
+optional background work, installation steps, and account setup. Normal deploy
+passes it to firmware's native installer and builders. Use install-scoped steps
+for shared code and connection-scoped steps for account credentials.
+
+Read the [app-building guide](https://docs.truffle.net/sdk/building-apps),
+[account and authentication guide](https://docs.truffle.net/sdk/accounts), and
+[deployment guide](NATIVE_INSTALL.md). The exported skills under
+`./truffile/skills/` teach coding agents the same workflow. Bundled examples
+include older process-based recipes; use the native account guide for new
+multi-account integrations.
 
 ## App Types and Runtime Model
 
@@ -50,13 +67,14 @@ In practice:
 
 ```bash
 truffile scan
-truffile connect <device>
+truffile connect 6272
 truffile create [app_name]
 truffile load all
 truffile validate [app_dir]
 truffile deploy [app_dir]
 truffile deploy --dry-run [app_dir]
 truffile list apps --json
+truffile connections list <app-uuid-or-bundle-id> --json
 truffile delete <app-name>
 truffile models
 truffile convo
@@ -65,7 +83,7 @@ truffile convo
 `truffile create` scaffolds a hybrid app starter with:
 - `truffile.yaml` (foreground + background process config)
 - copy-file steps for generated `*_foreground.py` and `*_background.py`
-- `icon.png` copied from `docs/Truffle.png` (deploy requires an icon)
+- `icon.png` copied from the package's bundled stock icon (deploy requires an icon)
 
 `truffile load all` copies bundled agent-readable resources into your current
 workspace:
@@ -75,6 +93,42 @@ workspace:
   Obsidian, Viator, WHOOP, and Home Assistant
 
 Use `truffile load skills` or `truffile load examples` to copy only one group.
+
+## Native installation and account management
+
+Normal deployment packages the app and uses firmware's native installer and
+builder. The original manifest is preserved, including accounts, connection
+credentials, connectors, resources, and base/resource choices.
+
+```bash
+truffile deploy ./my-app
+truffile deploy ./my-app --update
+truffile deploy ./my-app --replace
+truffile connections list Google
+truffile connections add Google
+truffile connections reconnect Google
+truffile connections delete Google
+truffile connections permissions Google read-only
+```
+
+`--update` preserves accounts and settings. `--replace` runs fresh setup and
+resets accounts after confirmation. Both require firmware with developer-upload support;
+the CLI checks support before requesting a mutation. Normal deploy refuses an
+existing bundle ID until you choose one of those modes.
+
+Friendly names and exact IDs both work. Omitting an account opens a terminal
+picker; scripts must select explicitly. JSON/noninteractive commands never
+prompt. Use `--answers-file` for scripted text/API-key setup, and interactive
+mode for browser sign-in. Password values are hidden.
+
+`validate` and `deploy --dry-run` perform bundle preflight; firmware validates
+full manifest semantics. `--legacy-builder` retains the old direct builder path
+and its schema validator. `--interactive` opens that legacy builder's debug
+shell; it is not required for ordinary setup prompts.
+
+See [the complete workflow](NATIVE_INSTALL.md) for account selection, permission
+modes, OAuth, packaging rules, cancellation, and test coverage. The background
+starter remains a placeholder that an app author needs to implement.
 
 ## Obsidian Bridge Workflow
 
@@ -181,7 +235,16 @@ a distributable wheel, record the exact source revision used to generate the
 bindings:
 
 ```bash
-git -C "$PYFW_CHECKOUT" rev-parse HEAD > truffle/PROTOCOL_SHA
+cp "$PYFW_CHECKOUT/protos.sha" truffle/PROTOCOL_SHA
+```
+
+`PROTOCOL_SHA` identifies the protocol repository revision, not the PyFW
+revision. The release workflow also stages `truffile/app_runtime` from PyFW
+and writes `truffile/BUILD_INFO.json` with `pyfw_sha`, `truffile_sha`, and
+`protocol_sha`. Source checkouts need that matching runtime staged too:
+
+```bash
+cp -a "$PYFW_CHECKOUT/python/app_runtime" ./truffile/app_runtime
 ```
 
 ## Development Loop
@@ -218,7 +281,7 @@ inspect the wheel. The wheel embeds the staged `truffle` package, including
 `.pyi` files and `PROTOCOL_SHA`, and is self-contained after installation.
 
 ```bash
-git -C "$PYFW_CHECKOUT" rev-parse HEAD > truffle/PROTOCOL_SHA
+cp "$PYFW_CHECKOUT/protos.sha" truffle/PROTOCOL_SHA
 /tmp/truffile-convo-clean/bin/python -m pip wheel --no-deps -w /tmp/truffile-wheel .
 TRUFFILE_WHEEL="$(find /tmp/truffile-wheel -maxdepth 1 -name 'truffile-*.whl' -print -quit)"
 /tmp/truffile-convo-clean/bin/python -m zipfile -l "$TRUFFILE_WHEEL" \

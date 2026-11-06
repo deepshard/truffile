@@ -110,8 +110,11 @@ def test_history_covers_user_error_system_forward_and_interaction_fallbacks():
     forward.forward.user_response.content = "forwarded text"
     setup = ConvoNode(id=5, thread_id=0)
     setup.setup.title = "Connect account"
-    action = ConvoNode(id=6, thread_id=0)
-    action.action.title = "Approve action"
+    # Legacy firmware exposed action blocks; current protos have removed
+    # that field. Keep testing the compatibility renderer without requiring
+    # an obsolete generated descriptor.
+    from types import SimpleNamespace
+    action = SimpleNamespace(id=6, thread_id=0, action=SimpleNamespace(title="Approve action"))
     rows = history_rows([user, error, system, forward, setup, action])
     assert [row["kind"] for row in rows] == ["user", "error", "system", "forward", "setup", "action"]
     assert "supported client" in rows[-1]["content"]

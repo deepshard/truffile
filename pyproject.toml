@@ -40,6 +40,7 @@ include = ["truffile*", "truffle*"]
 "*" = ["*.pyi", "py.typed"]
 "truffle" = ["PROTOCOL_SHA"]
 "truffile" = [
+    "BUILD_INFO.json",
     "assets/*.png",
     "assets/**/*",
     "app-store/**/*",

@@ -1,6 +1,8 @@
 import asyncio
 import json
 import sys
+import contextlib
+from google.protobuf.json_format import MessageToDict
 
 from truffile.storage import StorageService
 from truffile.client import TruffleClient
@@ -23,21 +25,39 @@ def _app_slug(name: str) -> str:
     return name.strip().lower().replace(" ", "-")
 
 
-def _app_summary(app) -> dict[str, str]:
-    return {
+def _app_summary(app) -> dict:
+    result = {
         "name": app.metadata.name,
         "uuid": app.uuid,
+        "bundle_id": app.metadata.bundle_id,
+        "kind": _app_kind(app),
+        "connections": [
+            MessageToDict(c, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+            for c in app.connections
+        ],
     }
+    for field in ("installed_bundle", "error"):
+        if app.HasField(field):
+            result[field] = MessageToDict(getattr(app, field), preserving_proto_field_name=True)
+    capability = app.DESCRIPTOR.fields_by_name["connection_capability"].enum_type.values_by_number.get(int(app.connection_capability))
+    result["connection_capability"] = capability.name if capability else int(app.connection_capability)
+    return result
 
 
 async def cmd_list_apps(args, storage: StorageService) -> int:
     json_out = bool(getattr(args, "json", False))
-    device, ip = await _resolve_connected_device(storage)
+    with contextlib.redirect_stdout(sys.stderr) if json_out else contextlib.nullcontext():
+        device, ip = await _resolve_connected_device(storage)
     if not device or not ip:
+        if json_out:
+            print(json.dumps({"status": "error", "error": "device_unavailable"}))
         return 1
 
     token = storage.get_token(device)
     if not token:
+        if json_out:
+            print(json.dumps({"status": "error", "error": "missing_token"}))
+            return 1
         error(f"No token for {device}")
         print(f"  {C.DIM}Run: truffile connect {device}{C.RESET}")
         return 1
@@ -111,6 +131,8 @@ async def cmd_list_apps(args, storage: StorageService) -> int:
     except Exception as e:
         if spinner:
             spinner.fail(str(e))
+        elif json_out:
+            print(json.dumps({"status": "error", "error": str(e)}))
         else:
             error(str(e))
         return 1
@@ -201,7 +223,7 @@ async def cmd_delete(args, storage: StorageService) -> int:
 
         print()
         success(f"Deleted {deleted} app(s)")
-        return 0
+        return 0 if deleted == len(to_delete) else 1
 
     except Exception as e:
         spinner.fail(str(e))
@@ -315,6 +337,9 @@ def cmd_list(args, storage: StorageService) -> int:
         return _run_async(cmd_list_apps(args, storage))
     elif what == "devices":
         devices = storage.list_devices()
+        if bool(getattr(args, "json", False)):
+            print(json.dumps({"devices": [{"name": d, "active": d == storage.state.last_used_device} for d in devices]}))
+            return 0
         if not devices:
             print(f"  {C.DIM}No connected devices{C.RESET}")
         else:

@@ -1,5 +1,23 @@
 # Auth Patterns
 
+These examples describe legacy CLI deployment only. Text values become process
+environment variables and OAuth writes a token file; neither is a replacement
+for native connection-scoped credentials. Production multi-account apps must
+use the native installer's account plan and runtime credential API. Do not
+store account secrets in app-global variables or bake them into a bundle.
+
+For native apps, test initial setup, adding a second account, reconnecting one
+account, and updating code while preserving both accounts. Public/no-auth,
+text/API-key, browser OAuth, device-code/custom approval, and browser/VNC flows
+need their own acceptance tests. Normal deployment now drives native forms,
+OAuth approval/callbacks, and browser setup cards. See
+[native-accounts.md](native-accounts.md) for connection-scoped setup; real
+provider sign-in still needs acceptance testing beyond the synthetic fixtures.
+For legacy OAuth URL callbacks, the returned state must match the pending
+request; a missing state is an error. Raw approval-code paste is still supported
+where the provider requires it. Native OAuth token exchange and persistence
+are owned by firmware; the CLI relays the setup interaction.
+
 ## Decision Tree
 
 ```
@@ -17,7 +35,8 @@ Does the service already have an MCP server?
 
 Use a `text` step for API keys and pasted access tokens. Use an `oauth` step
 when the provider requires a browser authorization flow. Browser/VNC apps are
-not supported through the current CLI flow.
+not supported by the explicit legacy builder. Normal native deployment can
+present the device's browser/VNC setup URL; verify that provider flow separately.
 
 ## API Key (truffile.yaml)
 
