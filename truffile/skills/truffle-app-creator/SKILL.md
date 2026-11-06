@@ -75,7 +75,9 @@ Based on the user's answers, determine:
   supported by the target firmware. Verify the provider flow on a device.
 - base image: minimal for API apps
 
-Reference: see references/auth-patterns.md for the decision tree.
+Read `references/native-accounts.md` for connection-scoped forms, OAuth,
+remote MCP connectors and account lifecycle commands. `references/auth-patterns.md`
+and `references/truffile-yaml.md` describe older process-based examples.
 
 ### Step 4: Scaffold the app
 
@@ -95,7 +97,9 @@ my-app/
     └── test_my_app_app_shells.py
 ```
 
-Generate truffile.yaml with the correct steps for the chosen auth type. Reference: see references/truffile-yaml.md.
+Generate `truffile.yaml` with install-scoped shared code and connection-scoped
+authentication. Start with `references/native-accounts.md` for an authenticated
+app; use the older manifest reference only when adapting a legacy example.
 
 Use the app patterns from references/app-patterns.md for the code structure.
 
@@ -146,7 +150,8 @@ Subclass BackgroundWorkerApp with the 4 required methods. Follow the rules:
 Don't wait until the end. Write tests as you implement:
 
 ```bash
-truffile validate ./my-app                         # yaml + source checks
+truffile validate ./my-app                         # local bundle preflight
+python -m compileall -q ./my-app                   # Python syntax
 python -m pytest ./my-app/tests/ -v                # unit tests
 ```
 
@@ -155,8 +160,9 @@ Use FakeHttpTransport and AppHarness. See references/testing-guide.md.
 ### Step 9: Validate and iterate
 
 Run validation:
-- `truffile validate ./my-app` — check manifest, file references, and Python syntax
-- `truffile deploy --dry-run ./my-app` — inspect the deploy plan without changing the device
+- `truffile validate ./my-app` — check bundle structure and basic metadata
+- `truffile deploy --dry-run ./my-app` — inspect the bundle without changing the device
+- `python -m compileall -q ./my-app` — check Python syntax; firmware validates full manifest semantics during installation
 - `python -m pytest ./my-app/tests/` — run tests
 
 Fix any issues. Repeat until everything passes.
@@ -189,8 +195,8 @@ Ask the user if they want to add skills — workflow guides that teach the agent
 
 Common issues during app creation:
 - yaml parse errors: run `truffile validate` and fix the reported issues
-- python syntax errors: run `truffile validate`
-- missing files in truffile.yaml: run `truffile validate` and compare with the files step
+- python syntax errors: run `python -m compileall -q ./my-app`
+- missing files in truffile.yaml: compare the files step with the bundled source tree and `.truffleignore`
 - import errors: make sure all deps are in the bash install step
 - auth failures during deploy: check env var names match between text step and code
 
@@ -199,15 +205,16 @@ Common issues during app creation:
 | Script | What it does |
 |--------|-------------|
 | `scripts/fetch_docs.py` | pull docs from docs.truffle.net |
-| `truffile validate <path>` | check truffile.yaml, referenced files, and Python syntax |
-| `truffile deploy --dry-run <path>` | inspect the deploy plan without changing the device |
+| `truffile validate <path>` | check bundle structure and basic manifest metadata |
+| `truffile deploy --dry-run <path>` | inspect the bundle without changing the device |
 
 ## Reference docs
 
 | Doc | What it covers |
 |-----|---------------|
 | `references/app-patterns.md` | FG, BG, hybrid, proxy code patterns |
-| `references/auth-patterns.md` | API key and public auth patterns with yaml examples |
+| `references/native-accounts.md` | Native accounts, credentials, OAuth connectors, update and replacement |
+| `references/auth-patterns.md` | Older process-based API key and OAuth recipes |
 | `references/testing-guide.md` | how to write tests with fakes and harness |
-| `references/truffile-yaml.md` | full manifest format reference |
+| `references/truffile-yaml.md` | Legacy process manifest examples |
 | `references/rules.md` | all rules for foreground, background, and general app development |

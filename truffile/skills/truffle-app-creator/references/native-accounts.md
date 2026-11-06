@@ -96,3 +96,77 @@ to that same pending operation. Legacy token-file examples in `auth-patterns.md`
 describe the explicit legacy builder path; do not use them as a multi-account
 credential design. Browser/device-code recipes likewise depend on the native
 installer version and require provider-specific acceptance testing.
+
+## Native remote MCP OAuth example
+
+A connector uses manifest version 5 and needs no Python proxy. This Todoist
+recipe follows the verified two-account CLI flow. Include `icon.png`; use a
+unique bundle ID for your integration. Identity mappings are provider-specific.
+
+```yaml
+truffile_version: 5
+connections: multi
+metadata:
+  name: Todoist Tutorial
+  bundle_id: org.example.todoist.tutorial
+  description: Connect Todoist accounts through its remote MCP service.
+  icon_file: icon.png
+  foreground:
+    connector:
+      upstream_url: https://ai.todoist.net/mcp
+      transport:
+        request_timeout_seconds: 45
+        max_read_retries: 1
+        retry_delay_seconds: 1
+      auth:
+        mode: oauth
+        app_var_key: todoist_oauth_state
+        token_endpoint: https://todoist.com/oauth/access_token
+        resource: https://ai.todoist.net/mcp
+      overlay: {}
+      identity:
+        sources:
+        - tool: user-info
+          map:
+            provider_subject: userId
+            email: email
+            display_name: fullName
+steps:
+- name: Sign in to Todoist
+  type: oauth
+  scope: connection
+  provider: remote_mcp
+  description: Authorize Todoist, then return to the terminal.
+  redirect_uri: http://localhost:18791/callback
+  scopes:
+  - data:read_write
+  dynamic_client_registration: true
+  resource_metadata_endpoint: https://ai.todoist.net/.well-known/oauth-protected-resource/mcp
+  authorization_server_metadata_endpoint: https://todoist.com/.well-known/oauth-authorization-server
+  registration_endpoint: https://todoist.com/oauth/register
+  oauth_resource: https://ai.todoist.net/mcp
+  client_name: Todoist Tutorial
+  auth_endpoint: https://todoist.com/oauth/authorize
+  token_endpoint: https://todoist.com/oauth/access_token
+  token_endpoint_auth_method: none
+  client_id_env: TODOIST_CLIENT_ID
+  client_secret_env: null
+  app_var_key: todoist_oauth_state
+  prompt: null
+  access_type: null
+  include_granted_scopes: false
+alias_from:
+- identity.email
+- identity.display_name
+```
+
+Firmware owns OAuth exchange and connection-scoped token storage. The connector
+and setup step must use the same `app_var_key`. A localhost redirect can arrive
+at the CLI listener or be pasted from a browser on another computer. Require
+matching OAuth state, and start a fresh setup after expiry.
+
+New connections inherit device permission policy; use `connections permissions`
+for per-account overrides after setup. There is no atomic install-time permission
+flag in this CLI. `default` removes the override. Tool hints do not grant access.
+
+The public authoring guide is https://docs.truffle.net/sdk/accounts.

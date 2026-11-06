@@ -1,5 +1,14 @@
 # SDK release acceptance — 2026-11-02
 
+## Release scope — 2026-11-05
+
+Release 0.3.35 proceeds with the completed SDK and Todoist lifecycle acceptance
+below. Robinhood sign-in/read remains unverified and is outside this release's
+provider claims. Public docs and bundled authoring skills now describe native
+deployment, updates, account setup, credentials and permission controls.
+The final release wheel is checked against current PyFW main's generated
+protocols; the device results below retain their original firmware revision.
+
 This continues the [October audit](SDK_AUDIT.md). The SDK candidate is PR #53;
 PyFW PR #425 is merged. Live tests use 6272 on
 `2026.10.31.4200+gb4391bb3d`, which advertises developer-upload support. They do
@@ -71,9 +80,9 @@ A fresh provider callback completed the second account. The corrected installed
 CLI also passed a normal text/password installation and the real two-account
 Todoist update described above. Disposable fixtures were removed afterward.
 
-## Remaining release evidence
+## Coverage limits
 
-Finish Robinhood sign-in and a read-only call. That provider check is pending
-user interaction, not completed. Provider refresh/revocation over time, browser/VNC setup,
+Robinhood sign-in and a read-only call remain unverified. Provider
+refresh/revocation over time, browser/VNC setup,
 Windows/macOS CLI execution and full Obsidian deployment remain outside this
 pass; a Mac browser callback is not proof of running the CLI on macOS.

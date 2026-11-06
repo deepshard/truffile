@@ -65,6 +65,9 @@ directly in the current workspace. Use `truffile load skills` or
 `truffile load examples` for only one resource group.
 
 Run validation before deploy. Validation is local and does not need a device.
+Normal validation checks bundle structure and basic metadata; run
+`python -m compileall -q ./apps/my-app` separately for Python syntax. Firmware
+performs full manifest and install-plan validation during deployment.
 
 ### Deploy a Local App Directory
 
@@ -120,6 +123,8 @@ Permission modes are `default`, `read-only`, `read-write`, and `auto-review`.
 The listing reports saved flags; default inherits device policy. Omitted
 `--notes` preserves notes. Do not use the device-wide default setter as an
 initial-install preference: it resets existing account overrides too.
+New accounts inherit device policy. There is no atomic install-time permission
+option in this CLI; apply account overrides after setup.
 
 Use `--answers-file /private/answers.json` for install/add/reconnect form values.
 Keep credentials outside the app source tree. The named answer file is excluded

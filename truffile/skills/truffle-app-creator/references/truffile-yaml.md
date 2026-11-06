@@ -1,5 +1,11 @@
 # truffile.yaml Reference
 
+This page describes the older process-based schema used by bundled examples
+and `--legacy-builder`. For new authenticated apps, start with
+[native-accounts.md](native-accounts.md). Normal deployment preserves the native
+manifest and delegates full validation to firmware, including connectors,
+connection scopes, resource profiles and browser setup.
+
 ## Full Structure
 
 ```yaml
@@ -80,8 +86,8 @@ steps:
 - every source file must be listed in a files step
 - use --no-cache-dir for pip installs
 - PYTHONUNBUFFERED=1 should be set in all process environments
-- supported CLI deploy step types are bash, files, text, oauth, and welcome
-- browser/VNC apps are not supported through the current CLI flow
+- the explicit legacy builder supports bash, files, text, oauth, and welcome
+- browser/VNC setup requires normal native deployment and compatible firmware
 
 ## Files Step
 

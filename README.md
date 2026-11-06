@@ -7,28 +7,41 @@ Python SDK/CLI for Truffle devices.
 - discovers and connects to your Truffle (`scan`, `connect`, `disconnect`)
 - copies bundled agent resources into your workspace (`load`)
 - validates and deploys apps from `truffile.yaml` (`validate`, `deploy`)
-- manages installed apps and existing accounts (`list apps`, `connections`, `delete`)
+- installs and updates apps, adds or reconnects accounts, and manages permissions
+  (`deploy`, `list apps`, `connections`, `delete`)
 - talks to the on-device agent (`convo`) or inference directly (`models`, `infer`)
 
 See [native installation and account management](NATIVE_INSTALL.md) for the
 current workflow and firmware requirements. [The SDK audit](SDK_AUDIT.md) records
 the original failures and follow-up scope.
 
-## Start making your Own Apps
+## Start making apps
 
-- app schema and validation: `truffile/truffile/schema/app_config.py`
-- schedule parsing: `truffile/truffile/schedule.py`
-- deploy planning + builder flow: `truffile/truffile/deploy/builder.py`
-- generated TruffleOS protos staged locally in the gitignored repo-root `truffle/`
-- bundled example apps live under `truffile/app-store/`
-- bundled Codex skills live under `truffile/skills/`
+Use Python 3.12 or newer:
 
-`truffile.yaml` defines:
-- metadata (`name`, `description`, `type`)
-- process (`cmd`, `working_directory`, `environment`)
-- files to upload
-- optional run/build commands
-- background schedule policy (for BG apps)
+```bash
+python -m pip install --upgrade truffile
+truffile connect 6272
+truffile load all
+truffile create my-app --path ./apps
+truffile validate ./apps/my-app
+truffile deploy ./apps/my-app
+```
+
+For first-time pairing, enter your User ID from Symphony Settings and approve
+the session on the device. The CLI reuses the saved session afterward.
+
+The manifest defines app identity, foreground tools or a remote MCP connector,
+optional background work, installation steps, and account setup. Normal deploy
+passes it to firmware's native installer and builders. Use install-scoped steps
+for shared code and connection-scoped steps for account credentials.
+
+Read the [app-building guide](https://docs.truffle.net/sdk/building-apps),
+[account and authentication guide](https://docs.truffle.net/sdk/accounts), and
+[deployment guide](NATIVE_INSTALL.md). The exported skills under
+`./truffile/skills/` teach coding agents the same workflow. Bundled examples
+include older process-based recipes; use the native account guide for new
+multi-account integrations.
 
 ## App Types and Runtime Model
 
@@ -99,7 +112,7 @@ truffile connections permissions Google read-only
 ```
 
 `--update` preserves accounts and settings. `--replace` runs fresh setup and
-resets accounts after confirmation. Both require the accompanying PyFW update;
+resets accounts after confirmation. Both require firmware with developer-upload support;
 the CLI checks support before requesting a mutation. Normal deploy refuses an
 existing bundle ID until you choose one of those modes.
 

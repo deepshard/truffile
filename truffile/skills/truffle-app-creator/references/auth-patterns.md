@@ -15,7 +15,8 @@ OAuth approval/callbacks, and browser setup cards. See
 provider sign-in still needs acceptance testing beyond the synthetic fixtures.
 For legacy OAuth URL callbacks, the returned state must match the pending
 request; a missing state is an error. Raw approval-code paste is still supported
-where the provider requires it.
+where the provider requires it. Native OAuth token exchange and persistence
+are owned by firmware; the CLI relays the setup interaction.
 
 ## Decision Tree
 
@@ -34,7 +35,8 @@ Does the service already have an MCP server?
 
 Use a `text` step for API keys and pasted access tokens. Use an `oauth` step
 when the provider requires a browser authorization flow. Browser/VNC apps are
-not supported through the current CLI flow.
+not supported by the explicit legacy builder. Normal native deployment can
+present the device's browser/VNC setup URL; verify that provider flow separately.
 
 ## API Key (truffile.yaml)
 
