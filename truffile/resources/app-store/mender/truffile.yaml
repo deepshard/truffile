@@ -1,0 +1,26 @@
+truffile_version: 2
+metadata:
+  name: Mender
+  bundle_id: org.deepshard.mender
+  description: Mender IoT — device management and deployments
+  icon_file: ./icon.png
+  foreground:
+    process:
+      cmd:
+        - python
+        - mender_foreground.py
+      working_directory: /
+      environment:
+        PYTHONUNBUFFERED: "1"
+
+steps:
+  - name: Copy app files
+    type: files
+    update_policy: run_on_update
+    files:
+      - source: ./mender_foreground.py
+        destination: ./mender_foreground.py
+      - source: ./tools.py
+        destination: ./tools.py
+      - source: ./icon.png
+        destination: ./icon.png
